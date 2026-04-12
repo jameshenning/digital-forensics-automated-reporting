@@ -1,0 +1,91 @@
+{% extends "base.html" %}
+{% block title %}DFARS - Two-Factor Authentication{% endblock %}
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-md-6 col-lg-4">
+        <div class="card mt-5">
+            <div class="card-header">
+                <i class="bi bi-shield-lock"></i> Two-Factor Authentication
+            </div>
+            <div class="card-body">
+                <p class="text-muted small mb-3">
+                    Signed in as <code>{{ username }}</code>. Enter the 6-digit code from your
+                    authenticator app to continue.
+                </p>
+
+                <form method="POST" action="{{ url_for('auth.mfa_verify') }}" id="mfa-form">
+                    <input type="hidden" name="use_recovery" id="use_recovery" value="0">
+
+                    <div class="mb-3" id="totp-input">
+                        <label class="form-label">Authenticator code</label>
+                        <input type="text" name="code" class="form-control text-center font-monospace fs-4"
+                               inputmode="numeric" pattern="[0-9 ]*" autocomplete="one-time-code"
+                               placeholder="000000" required autofocus>
+                    </div>
+
+                    <div class="mb-3 d-none" id="recovery-input">
+                        <label class="form-label">Recovery code</label>
+                        <input type="text" class="form-control text-center font-monospace"
+                               placeholder="xxxxx-xxxxx" autocomplete="off">
+                        <div class="form-text">Each recovery code can only be used once.</div>
+                    </div>
+
+                    <button type="submit" class="btn btn-accent w-100 mb-2">
+                        <i class="bi bi-box-arrow-in-right"></i> Verify &amp; Sign In
+                    </button>
+                </form>
+
+                <div class="text-center small">
+                    <a href="#" onclick="toggleMode(event)" id="toggle-link">
+                        Use a recovery code instead
+                    </a>
+                </div>
+                <div class="text-center small mt-2">
+                    <a href="{{ url_for('auth.logout') }}" class="text-muted">Cancel and sign out</a>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+let recoveryMode = false;
+const totpDiv = document.getElementById('totp-input');
+const recoveryDiv = document.getElementById('recovery-input');
+const totpField = totpDiv.querySelector('input[name="code"]');
+const recoveryField = recoveryDiv.querySelector('input');
+const useRecoveryHidden = document.getElementById('use_recovery');
+const toggleLink = document.getElementById('toggle-link');
+
+function toggleMode(e) {
+    e.preventDefault();
+    recoveryMode = !recoveryMode;
+
+    if (recoveryMode) {
+        totpDiv.classList.add('d-none');
+        totpField.removeAttribute('required');
+        totpField.removeAttribute('name');
+
+        recoveryDiv.classList.remove('d-none');
+        recoveryField.setAttribute('name', 'code');
+        recoveryField.setAttribute('required', '');
+        recoveryField.focus();
+
+        useRecoveryHidden.value = '1';
+        toggleLink.textContent = 'Use authenticator code instead';
+    } else {
+        recoveryDiv.classList.add('d-none');
+        recoveryField.removeAttribute('required');
+        recoveryField.removeAttribute('name');
+
+        totpDiv.classList.remove('d-none');
+        totpField.setAttribute('name', 'code');
+        totpField.setAttribute('required', '');
+        totpField.focus();
+
+        useRecoveryHidden.value = '0';
+        toggleLink.textContent = 'Use a recovery code instead';
+    }
+}
+</script>
+{% endblock %}

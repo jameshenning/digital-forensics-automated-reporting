@@ -1,0 +1,47 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+.venv/
+env/
+ENV/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+
+# PyInstaller build artifacts
+build/
+dist/
+*.manifest
+*.spec.bak
+
+# SQLite
+*.db
+*.db-shm
+*.db-wal
+
+# IDE / editor
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# OS
+$RECYCLE.BIN/
+ehthumbs.db
+Desktop.ini
+
+# Local config / secrets
+.env
+.env.local
+instance/
+local_config/
+
+# Release signing private key — NEVER commit
+packaging/release_private_key.pem
+packaging/*.pem

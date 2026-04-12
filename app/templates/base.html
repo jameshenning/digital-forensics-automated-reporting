@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}DFARS{% endblock %}</title>
+    <link rel="icon" href="{{ url_for('static', filename='dfars.ico') }}" type="image/x-icon">
+    <link href="{{ url_for('static', filename='vendor/bootstrap/bootstrap.min.css') }}" rel="stylesheet">
+    <link href="{{ url_for('static', filename='vendor/bootstrap-icons/bootstrap-icons.css') }}" rel="stylesheet">
+    <style>
+        :root {
+            --bg: #1a1c20; --card: #24272e; --border: #343a40;
+            --text: #e9ecef; --muted: #adb5bd;
+            --accent: #0096c7; --accent2: #0d6efd;
+        }
+        body { background: var(--bg); color: var(--text); font-family: 'Segoe UI', sans-serif; }
+        .navbar { background: #12203a !important; border-bottom: 2px solid var(--accent); }
+        .navbar-brand { font-weight: 700; color: var(--accent) !important; letter-spacing: 1px; }
+        .nav-link { color: var(--muted) !important; }
+        .nav-link:hover, .nav-link.active { color: #fff !important; }
+        .card { background: var(--card); border: 1px solid var(--border); border-radius: .5rem; }
+        .card-header { background: #12203a; border-bottom: 1px solid var(--border); color: var(--accent); font-weight: 600; }
+        .stat-card { text-align: center; padding: 1.5rem; }
+        .stat-card .num { font-size: 2.5rem; font-weight: 700; color: var(--accent); }
+        .stat-card .label { color: var(--muted); font-size: .85rem; text-transform: uppercase; letter-spacing: .5px; }
+        .form-control, .form-select { background: #1e2127; border: 1px solid var(--border); color: var(--text); }
+        .form-control:focus, .form-select:focus { background: #1e2127; border-color: var(--accent); box-shadow: 0 0 0 .2rem rgba(0,150,199,.25); color: var(--text); }
+        .form-label { color: var(--muted); font-size: .85rem; font-weight: 500; }
+        .table { color: var(--text); }
+        .table th { background: #12203a; border-color: var(--border); font-size: .8rem; text-transform: uppercase; letter-spacing: .5px; }
+        .table td { border-color: var(--border); vertical-align: middle; }
+        .table-striped tbody tr:nth-of-type(odd) { background: rgba(255,255,255,.03); }
+        .badge-active { background: #198754; }
+        .badge-closed { background: #6c757d; }
+        .badge-high { background: #dc3545; }
+        .badge-medium { background: #ffc107; color: #000; }
+        .badge-low { background: #0dcaf0; color: #000; }
+        .nav-tabs .nav-link { color: var(--muted); border: none; }
+        .nav-tabs .nav-link.active { color: var(--accent); background: transparent; border-bottom: 2px solid var(--accent); }
+        .tab-pane { padding-top: 1.5rem; }
+        .footer { text-align: center; padding: 1rem 0; color: var(--muted); font-size: .8rem; border-top: 1px solid var(--border); margin-top: 2rem; }
+        .report-preview { background: #1e2127; border: 1px solid var(--border); border-radius: .375rem; padding: 1.5rem; max-height: 600px; overflow-y: auto; font-family: 'Courier New', monospace; font-size: .85rem; white-space: pre-wrap; }
+        .btn-accent { background: var(--accent); border-color: var(--accent); color: #fff; }
+        .btn-accent:hover { background: #007ea8; border-color: #007ea8; color: #fff; }
+        a { color: var(--accent); }
+        a:hover { color: #fff; }
+    </style>
+    {% block styles %}{% endblock %}
+</head>
+<body>
+    <nav class="navbar navbar-expand-lg navbar-dark">
+        <div class="container-fluid">
+            {% if session.username %}
+            <a class="navbar-brand" href="{{ url_for('dfars.dashboard') }}"><i class="bi bi-shield-lock"></i> DFARS</a>
+            {% else %}
+            <span class="navbar-brand"><i class="bi bi-shield-lock"></i> DFARS</span>
+            {% endif %}
+            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#nav">
+                <span class="navbar-toggler-icon"></span>
+            </button>
+            <div class="collapse navbar-collapse" id="nav">
+                {% if session.username %}
+                <ul class="navbar-nav me-auto">
+                    <li class="nav-item"><a class="nav-link" href="{{ url_for('dfars.dashboard') }}"><i class="bi bi-speedometer2"></i> Dashboard</a></li>
+                    <li class="nav-item"><a class="nav-link" href="{{ url_for('dfars.new_case') }}"><i class="bi bi-plus-circle"></i> New Case</a></li>
+                </ul>
+                <ul class="navbar-nav ms-auto">
+                    <li class="nav-item dropdown">
+                        <a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown">
+                            <i class="bi bi-person-circle"></i> {{ session.username }}
+                        </a>
+                        <ul class="dropdown-menu dropdown-menu-end dropdown-menu-dark">
+                            <li><a class="dropdown-item" href="{{ url_for('auth.security') }}"><i class="bi bi-shield-check"></i> Security</a></li>
+                            <li><a class="dropdown-item" href="{{ url_for('auth.change_password') }}"><i class="bi bi-key"></i> Change Password</a></li>
+                            <li><hr class="dropdown-divider"></li>
+                            <li><a class="dropdown-item" href="{{ url_for('auth.logout') }}"><i class="bi bi-box-arrow-right"></i> Sign Out</a></li>
+                        </ul>
+                    </li>
+                </ul>
+                {% endif %}
+            </div>
+        </div>
+    </nav>
+
+    <div class="container mt-3">
+        {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+            {% for cat, msg in messages %}
+            <div class="alert alert-{{ cat }} alert-dismissible fade show" role="alert">
+                {{ msg }}
+                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+            </div>
+            {% endfor %}
+        {% endif %}
+        {% endwith %}
+    </div>
+
+    <div class="container mt-2 mb-4">
+        {% block content %}{% endblock %}
+    </div>
+
+    <footer class="footer">
+        <div class="container">DFARS - Digital Forensics Automated Reporting System &middot; v1.0 &middot; SWGDE/NIST Compliant</div>
+    </footer>
+
+    <script src="{{ url_for('static', filename='vendor/bootstrap/bootstrap.bundle.min.js') }}"></script>
+    {% block scripts %}{% endblock %}
+</body>
+</html>

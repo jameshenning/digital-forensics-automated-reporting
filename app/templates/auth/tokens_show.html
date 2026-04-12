@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+{% block title %}DFARS - New API Token{% endblock %}
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-md-8 col-lg-7">
+        <div class="card mt-3">
+            <div class="card-header bg-warning text-dark">
+                <i class="bi bi-exclamation-triangle"></i> Save Your API Token
+            </div>
+            <div class="card-body">
+                <div class="alert alert-warning small py-2 mb-3">
+                    <strong>This is the only time you'll see this token.</strong>
+                    Copy it now and store it somewhere safe (a password manager, environment
+                    file, or secrets manager). If you lose it, revoke it from the Security page
+                    and generate a new one — there is no recovery.
+                </div>
+
+                <div class="mb-3">
+                    <label class="form-label small text-muted">Token name</label>
+                    <div class="fs-5">{{ token.name }}</div>
+                </div>
+
+                <div class="mb-3">
+                    <label class="form-label small text-muted">Token (full plaintext)</label>
+                    <div class="input-group">
+                        <input type="text" class="form-control font-monospace"
+                               value="{{ token.plaintext }}" readonly id="api-token">
+                        <button type="button" class="btn btn-outline-secondary" onclick="copyToken()">
+                            <i class="bi bi-clipboard"></i> Copy
+                        </button>
+                    </div>
+                </div>
+
+                <div class="mb-3">
+                    <label class="form-label small text-muted">Usage</label>
+                    <pre class="bg-dark border border-secondary rounded p-2 small mb-0"><code>curl -H "Authorization: Bearer {{ token.plaintext }}" \
+     http://127.0.0.1:5099/api/v1/whoami</code></pre>
+                </div>
+
+                <div class="form-check mb-3">
+                    <input class="form-check-input" type="checkbox" id="acknowledge">
+                    <label class="form-check-label small" for="acknowledge">
+                        I've saved this token. I understand it will not be shown again.
+                    </label>
+                </div>
+
+                <a href="{{ url_for('auth.security') }}" id="continue-btn" class="btn btn-accent disabled" aria-disabled="true">
+                    <i class="bi bi-check-lg"></i> Done
+                </a>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+function copyToken() {
+    const input = document.getElementById('api-token');
+    input.select();
+    input.setSelectionRange(0, 99999);
+    navigator.clipboard.writeText(input.value).catch(() => document.execCommand('copy'));
+}
+
+document.getElementById('continue-btn').addEventListener('click', function(e) {
+    if (this.classList.contains('disabled')) {
+        e.preventDefault();
+    }
+});
+document.getElementById('acknowledge').addEventListener('change', function() {
+    const btn = document.getElementById('continue-btn');
+    if (this.checked) {
+        btn.classList.remove('disabled');
+        btn.removeAttribute('aria-disabled');
+    } else {
+        btn.classList.add('disabled');
+        btn.setAttribute('aria-disabled', 'true');
+    }
+});
+</script>
+{% endblock %}

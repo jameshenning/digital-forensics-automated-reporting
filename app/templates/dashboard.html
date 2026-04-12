@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% block title %}DFARS - Dashboard{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h4 class="mb-0"><i class="bi bi-speedometer2"></i> Dashboard</h4>
+    <a href="{{ url_for('dfars.new_case') }}" class="btn btn-accent"><i class="bi bi-plus-circle"></i> New Case</a>
+</div>
+
+<div class="row g-3 mb-4">
+    <div class="col-md-3"><div class="card stat-card"><div class="num">{{ stats.total_cases }}</div><div class="label">Total Cases</div></div></div>
+    <div class="col-md-3"><div class="card stat-card"><div class="num">{{ stats.active_cases }}</div><div class="label">Active Cases</div></div></div>
+    <div class="col-md-3"><div class="card stat-card"><div class="num">{{ stats.total_evidence }}</div><div class="label">Evidence Items</div></div></div>
+    <div class="col-md-3"><div class="card stat-card"><div class="num">{{ stats.total_notes }}</div><div class="label">Analysis Notes</div></div></div>
+</div>
+
+<div class="card">
+    <div class="card-header"><i class="bi bi-folder2-open"></i> Cases</div>
+    <div class="card-body p-0">
+        {% if cases %}
+        <table class="table table-striped mb-0">
+            <thead>
+                <tr><th>Case ID</th><th>Name</th><th>Investigator</th><th>Status</th><th>Priority</th><th>Date</th><th></th></tr>
+            </thead>
+            <tbody>
+                {% for c in cases %}
+                <tr>
+                    <td><a href="{{ url_for('dfars.view_case', case_id=c.case_id) }}"><code>{{ c.case_id }}</code></a></td>
+                    <td>{{ c.case_name }}</td>
+                    <td>{{ c.investigator }}</td>
+                    <td><span class="badge badge-{{ c.status|lower }}">{{ c.status }}</span></td>
+                    <td><span class="badge badge-{{ c.priority|lower }}">{{ c.priority }}</span></td>
+                    <td>{{ (c.start_date|string)[:10] if c.start_date else '' }}</td>
+                    <td><a href="{{ url_for('dfars.view_case', case_id=c.case_id) }}" class="btn btn-sm btn-outline-light">View</a></td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <div class="text-center text-muted py-5">
+            <i class="bi bi-inbox" style="font-size: 3rem;"></i>
+            <p class="mt-2">No cases yet. <a href="{{ url_for('dfars.new_case') }}">Create one</a>.</p>
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

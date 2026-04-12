@@ -1,0 +1,110 @@
+{% extends "base.html" %}
+{% block title %}DFARS - Edit {{ case.case_id }}{% endblock %}
+{% block content %}
+<h4 class="mb-4"><i class="bi bi-pencil"></i> Edit Case <code>{{ case.case_id }}</code></h4>
+
+<div class="card">
+    <div class="card-header">Case Metadata</div>
+    <div class="card-body">
+        <form method="POST" action="{{ url_for('dfars.edit_case', case_id=case.case_id) }}">
+            <div class="row g-3">
+                <div class="col-md-4">
+                    <label class="form-label">Case ID</label>
+                    <input type="text" class="form-control" value="{{ case.case_id }}" readonly disabled>
+                    <div class="form-text">Immutable.</div>
+                </div>
+                <div class="col-md-8">
+                    <label class="form-label">Case Name *</label>
+                    <input type="text" name="case_name" class="form-control" value="{{ case.case_name }}" required>
+                </div>
+
+                <div class="col-md-6">
+                    <label class="form-label">Investigator</label>
+                    <input type="text" class="form-control" value="{{ case.investigator }}" readonly disabled>
+                    <div class="form-text">Immutable for chain-of-custody integrity.</div>
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label">Agency</label>
+                    <input type="text" name="agency" class="form-control" value="{{ case.agency }}">
+                </div>
+
+                <div class="col-md-3">
+                    <label class="form-label">Start Date</label>
+                    <input type="date" name="start_date" class="form-control"
+                           value="{{ (case.start_date|string)[:10] if case.start_date else '' }}">
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label">End Date</label>
+                    <input type="date" name="end_date" class="form-control"
+                           value="{{ (case.end_date|string)[:10] if case.end_date else '' }}">
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label">Status</label>
+                    <select name="status" class="form-select">
+                        {% for s in ['Active', 'Pending', 'Closed', 'Archived'] %}
+                        <option {% if case.status == s %}selected{% endif %}>{{ s }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label">Priority</label>
+                    <select name="priority" class="form-select">
+                        {% for p in ['Critical', 'High', 'Medium', 'Low'] %}
+                        <option {% if case.priority == p %}selected{% endif %}>{{ p }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <div class="col-12">
+                    <label class="form-label">Description</label>
+                    <textarea name="description" class="form-control" rows="6">{{ case.description }}</textarea>
+                </div>
+
+                <div class="col-md-6">
+                    <label class="form-label">Classification</label>
+                    <select name="classification" class="form-select">
+                        <option value="">— None —</option>
+                        {% for v, label in [
+                            ('top_secret', 'Top Secret'),
+                            ('secret', 'Secret'),
+                            ('confidential', 'Confidential'),
+                            ('unclassified', 'Unclassified'),
+                            ('sbu', 'Sensitive But Unclassified (SBU)'),
+                            ('cui', 'Controlled Unclassified Information (CUI)'),
+                            ('proprietary', 'Proprietary'),
+                            ('business_confidential', 'Business Confidential'),
+                            ('internal_use', 'Internal Use Only'),
+                            ('public', 'Public'),
+                        ] %}
+                        <option value="{{ v }}" {% if case.classification == v %}selected{% endif %}>{{ label }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label">Tags (comma-separated)</label>
+                    <input type="text" name="tags" class="form-control" value="{{ tags }}"
+                           placeholder="#forensics, #case-type">
+                </div>
+
+                <div class="col-12">
+                    <button type="submit" class="btn btn-accent">
+                        <i class="bi bi-check-lg"></i> Save Changes
+                    </button>
+                    <a href="{{ url_for('dfars.view_case', case_id=case.case_id) }}" class="btn btn-secondary ms-2">
+                        Cancel
+                    </a>
+                </div>
+            </div>
+        </form>
+
+        <hr class="my-4">
+        <p class="text-muted small mb-0">
+            <i class="bi bi-info-circle"></i>
+            Evidence, chain-of-custody events, hash verifications, tool usage, and analysis
+            notes are append-only and cannot be edited from this screen — that's intentional
+            for forensic integrity. Add a superseding record from the case detail page if a
+            correction is needed.
+        </p>
+    </div>
+</div>
+{% endblock %}

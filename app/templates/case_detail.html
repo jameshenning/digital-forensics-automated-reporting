@@ -1,0 +1,526 @@
+{% extends "base.html" %}
+{% block title %}DFARS - {{ case.case_id }}{% endblock %}
+{% block content %}
+{# ── Case Header ── #}
+<div class="d-flex justify-content-between align-items-start mb-3">
+    <div>
+        <h4 class="mb-1"><i class="bi bi-folder2-open"></i> {{ case.case_name }}</h4>
+        <code>{{ case.case_id }}</code>
+        <span class="badge badge-{{ case.status|lower }} ms-2">{{ case.status }}</span>
+        <span class="badge badge-{{ case.priority|lower }}">{{ case.priority }}</span>
+        {% for tag in tags %}<span class="badge bg-secondary ms-1">{{ tag }}</span>{% endfor %}
+    </div>
+    <div class="btn-group">
+        <a href="{{ url_for('dfars.link_analysis', case_id=case.case_id) }}" class="btn btn-sm btn-outline-light"><i class="bi bi-diagram-3"></i> Link Analysis</a>
+        <a href="{{ url_for('dfars.edit_case', case_id=case.case_id) }}" class="btn btn-sm btn-outline-light"><i class="bi bi-pencil"></i> Edit</a>
+        <a href="{{ url_for('dfars.preview_report', case_id=case.case_id) }}" class="btn btn-sm btn-outline-light"><i class="bi bi-eye"></i> Preview</a>
+        <a href="{{ url_for('dfars.download_report', case_id=case.case_id, fmt='markdown') }}" class="btn btn-sm btn-accent"><i class="bi bi-download"></i> Markdown</a>
+        <a href="{{ url_for('dfars.download_report', case_id=case.case_id, fmt='json') }}" class="btn btn-sm btn-outline-info"><i class="bi bi-filetype-json"></i> JSON</a>
+    </div>
+</div>
+
+<div class="row g-3 mb-3">
+    <div class="col-md-3"><div class="card stat-card py-2"><div class="num fs-3">{{ stats.evidence_count }}</div><div class="label">Evidence</div></div></div>
+    <div class="col-md-3"><div class="card stat-card py-2"><div class="num fs-3">{{ stats.custody_count }}</div><div class="label">Custody</div></div></div>
+    <div class="col-md-3"><div class="card stat-card py-2"><div class="num fs-3">{{ stats.hash_count }}</div><div class="label">Hashes</div></div></div>
+    <div class="col-md-3"><div class="card stat-card py-2"><div class="num fs-3">{{ stats.analysis_notes_count }}</div><div class="label">Notes</div></div></div>
+</div>
+
+{# ── Tabs ── #}
+<ul class="nav nav-tabs" role="tablist">
+    <li class="nav-item"><a class="nav-link active" data-bs-toggle="tab" href="#evidence">Evidence</a></li>
+    <li class="nav-item"><a class="nav-link" data-bs-toggle="tab" href="#custody">Chain of Custody</a></li>
+    <li class="nav-item"><a class="nav-link" data-bs-toggle="tab" href="#hashes">Hash Verification</a></li>
+    <li class="nav-item"><a class="nav-link" data-bs-toggle="tab" href="#tools">Tool Usage</a></li>
+    <li class="nav-item"><a class="nav-link" data-bs-toggle="tab" href="#analysis">Analysis Notes</a></li>
+    <li class="nav-item"><a class="nav-link" data-bs-toggle="tab" href="#entities"><i class="bi bi-person-badge"></i> Entities</a></li>
+    <li class="nav-item"><a class="nav-link" data-bs-toggle="tab" href="#links"><i class="bi bi-diagram-3"></i> Links</a></li>
+    <li class="nav-item"><a class="nav-link" data-bs-toggle="tab" href="#events"><i class="bi bi-clock-history"></i> Events</a></li>
+</ul>
+
+<div class="tab-content">
+
+{# ── Evidence Tab ── #}
+<div class="tab-pane fade show active" id="evidence">
+    {% if evidence %}
+    <table class="table table-striped table-sm">
+        <thead><tr><th>ID</th><th>Description</th><th>Type</th><th>Collected By</th><th>Date</th><th>Location</th><th>Status</th></tr></thead>
+        <tbody>
+        {% for e in evidence %}
+        <tr>
+            <td><code>{{ e.evidence_id }}</code></td>
+            <td>{{ e.description }}</td>
+            <td>{{ e.evidence_type }}</td>
+            <td>{{ e.collected_by }}</td>
+            <td>{{ (e.collection_datetime|string)[:16] if e.collection_datetime else '' }}</td>
+            <td>{{ e.location }}</td>
+            <td>{{ e.status }}</td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p class="text-muted">No evidence items yet.</p>
+    {% endif %}
+
+    <div class="card mt-3">
+        <div class="card-header"><i class="bi bi-plus"></i> Add Evidence</div>
+        <div class="card-body">
+            <form method="POST" action="{{ url_for('dfars.add_evidence', case_id=case.case_id) }}">
+                <div class="row g-2">
+                    <div class="col-md-3"><input name="evidence_id" class="form-control form-control-sm" placeholder="Evidence ID *" required></div>
+                    <div class="col-md-5"><input name="description" class="form-control form-control-sm" placeholder="Description *" required></div>
+                    <div class="col-md-4"><input name="collected_by" class="form-control form-control-sm" placeholder="Collected By *" required></div>
+                    <div class="col-md-3"><input name="evidence_type" class="form-control form-control-sm" placeholder="Type (e.g. Mobile Device)"></div>
+                    <div class="col-md-3"><input name="collection_datetime" type="datetime-local" class="form-control form-control-sm"></div>
+                    <div class="col-md-3"><input name="location" class="form-control form-control-sm" placeholder="Collection Location"></div>
+                    <div class="col-md-3"><input name="make_model" class="form-control form-control-sm" placeholder="Make/Model"></div>
+                    <div class="col-md-3"><input name="serial_number" class="form-control form-control-sm" placeholder="Serial Number"></div>
+                    <div class="col-md-3"><input name="storage_location" class="form-control form-control-sm" placeholder="Storage Location"></div>
+                    <div class="col-md-3">
+                        <select name="status" class="form-select form-select-sm"><option>Collected</option><option>In Analysis</option><option>Returned</option></select>
+                    </div>
+                    <div class="col-md-3"><button type="submit" class="btn btn-accent btn-sm w-100"><i class="bi bi-plus"></i> Add</button></div>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+{# ── Custody Tab ── #}
+<div class="tab-pane fade" id="custody">
+    {% if custody %}
+    <table class="table table-striped table-sm">
+        <thead><tr><th>Evidence</th><th>#</th><th>Action</th><th>From</th><th>To</th><th>Date/Time</th><th>Location</th><th>Purpose</th></tr></thead>
+        <tbody>
+        {% for c in custody %}
+        <tr>
+            <td><code>{{ c.evidence_id }}</code></td>
+            <td>{{ c.custody_sequence }}</td>
+            <td>{{ c.action }}</td>
+            <td>{{ c.from_party }}</td>
+            <td>{{ c.to_party }}</td>
+            <td>{{ (c.custody_datetime|string)[:16] if c.custody_datetime else '' }}</td>
+            <td>{{ c.location }}</td>
+            <td>{{ c.purpose }}</td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p class="text-muted">No custody events yet.</p>
+    {% endif %}
+
+    <div class="card mt-3">
+        <div class="card-header"><i class="bi bi-plus"></i> Add Custody Event</div>
+        <div class="card-body">
+            <form method="POST" action="{{ url_for('dfars.add_custody', case_id=case.case_id) }}">
+                <div class="row g-2">
+                    <div class="col-md-3">
+                        <select name="evidence_id" class="form-select form-select-sm" required>
+                            <option value="">Select Evidence *</option>
+                            {% for e in evidence %}<option value="{{ e.evidence_id }}">{{ e.evidence_id }}</option>{% endfor %}
+                        </select>
+                    </div>
+                    <div class="col-md-3"><input name="action" class="form-control form-control-sm" placeholder="Action *" required></div>
+                    <div class="col-md-3"><input name="from_party" class="form-control form-control-sm" placeholder="From Party"></div>
+                    <div class="col-md-3"><input name="to_party" class="form-control form-control-sm" placeholder="To Party"></div>
+                    <div class="col-md-3"><input name="custody_datetime" type="datetime-local" class="form-control form-control-sm"></div>
+                    <div class="col-md-3"><input name="location" class="form-control form-control-sm" placeholder="Location"></div>
+                    <div class="col-md-3"><input name="purpose" class="form-control form-control-sm" placeholder="Purpose"></div>
+                    <div class="col-md-3"><button type="submit" class="btn btn-accent btn-sm w-100"><i class="bi bi-plus"></i> Add</button></div>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+{# ── Hash Tab ── #}
+<div class="tab-pane fade" id="hashes">
+    {% if hashes %}
+    <table class="table table-striped table-sm">
+        <thead><tr><th>Evidence</th><th>Algorithm</th><th>Hash Value</th><th>Verified By</th><th>Date</th></tr></thead>
+        <tbody>
+        {% for h in hashes %}
+        <tr>
+            <td><code>{{ h.evidence_id }}</code></td>
+            <td>{{ h.algorithm }}</td>
+            <td><code style="font-size:.75rem">{{ h.hash_value }}</code></td>
+            <td>{{ h.verified_by }}</td>
+            <td>{{ (h.verification_datetime|string)[:16] if h.verification_datetime else '' }}</td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p class="text-muted">No hash verifications yet.</p>
+    {% endif %}
+
+    <div class="card mt-3">
+        <div class="card-header"><i class="bi bi-plus"></i> Add Hash Verification</div>
+        <div class="card-body">
+            <form method="POST" action="{{ url_for('dfars.add_hash', case_id=case.case_id) }}">
+                <div class="row g-2">
+                    <div class="col-md-3">
+                        <select name="evidence_id" class="form-select form-select-sm" required>
+                            <option value="">Select Evidence *</option>
+                            {% for e in evidence %}<option value="{{ e.evidence_id }}">{{ e.evidence_id }}</option>{% endfor %}
+                        </select>
+                    </div>
+                    <div class="col-md-2">
+                        <select name="algorithm" class="form-select form-select-sm"><option>SHA-256</option><option>MD5</option><option>SHA-1</option><option>SHA-512</option></select>
+                    </div>
+                    <div class="col-md-4"><input name="hash_value" class="form-control form-control-sm" placeholder="Hash Value *" required></div>
+                    <div class="col-md-3"><input name="verified_by" class="form-control form-control-sm" placeholder="Verified By *" required></div>
+                    <div class="col-md-3"><input name="verification_datetime" type="datetime-local" class="form-control form-control-sm"></div>
+                    <div class="col-md-6"><input name="notes" class="form-control form-control-sm" placeholder="Notes"></div>
+                    <div class="col-md-3"><button type="submit" class="btn btn-accent btn-sm w-100"><i class="bi bi-plus"></i> Add</button></div>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+{# ── Tools Tab ── #}
+<div class="tab-pane fade" id="tools">
+    {% if tools %}
+    <table class="table table-striped table-sm">
+        <thead><tr><th>Tool</th><th>Version</th><th>Purpose</th><th>Command</th><th>Output</th><th>Operator</th></tr></thead>
+        <tbody>
+        {% for t in tools %}
+        <tr>
+            <td>{{ t.tool_name }}</td>
+            <td>{{ t.version }}</td>
+            <td>{{ t.purpose }}</td>
+            <td><code style="font-size:.75rem">{{ t.command_used }}</code></td>
+            <td>{{ t.output_file }}</td>
+            <td>{{ t.operator }}</td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p class="text-muted">No tool usage logged yet.</p>
+    {% endif %}
+
+    <div class="card mt-3">
+        <div class="card-header"><i class="bi bi-plus"></i> Log Tool Usage</div>
+        <div class="card-body">
+            <form method="POST" action="{{ url_for('dfars.add_tool', case_id=case.case_id) }}">
+                <div class="row g-2">
+                    <div class="col-md-3"><input name="tool_name" class="form-control form-control-sm" placeholder="Tool Name *" required></div>
+                    <div class="col-md-2"><input name="version" class="form-control form-control-sm" placeholder="Version"></div>
+                    <div class="col-md-4"><input name="purpose" class="form-control form-control-sm" placeholder="Purpose *" required></div>
+                    <div class="col-md-3"><input name="operator" class="form-control form-control-sm" placeholder="Operator"></div>
+                    <div class="col-md-4"><input name="command_used" class="form-control form-control-sm" placeholder="Command Used"></div>
+                    <div class="col-md-4"><input name="output_file" class="form-control form-control-sm" placeholder="Output File"></div>
+                    <div class="col-md-4"><button type="submit" class="btn btn-accent btn-sm w-100"><i class="bi bi-plus"></i> Add</button></div>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+{# ── Analysis Tab ── #}
+<div class="tab-pane fade" id="analysis">
+    {% if analysis %}
+    <table class="table table-striped table-sm">
+        <thead><tr><th>Category</th><th>Finding</th><th>Confidence</th><th>Evidence</th><th>Description</th></tr></thead>
+        <tbody>
+        {% for n in analysis %}
+        <tr>
+            <td>{{ n.category }}</td>
+            <td><strong>{{ n.finding }}</strong></td>
+            <td><span class="badge badge-{{ n.confidence_level|lower }}">{{ n.confidence_level }}</span></td>
+            <td><code>{{ n.evidence_id or '—' }}</code></td>
+            <td style="max-width:300px">{{ n.description[:120] }}{% if n.description|length > 120 %}...{% endif %}</td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p class="text-muted">No analysis notes yet.</p>
+    {% endif %}
+
+    <div class="card mt-3">
+        <div class="card-header"><i class="bi bi-plus"></i> Add Analysis Note</div>
+        <div class="card-body">
+            <form method="POST" action="{{ url_for('dfars.add_analysis', case_id=case.case_id) }}">
+                <div class="row g-2">
+                    <div class="col-md-3"><input name="category" class="form-control form-control-sm" placeholder="Category *" required></div>
+                    <div class="col-md-5"><input name="finding" class="form-control form-control-sm" placeholder="Finding *" required></div>
+                    <div class="col-md-2">
+                        <select name="confidence_level" class="form-select form-select-sm"><option>High</option><option selected>Medium</option><option>Low</option></select>
+                    </div>
+                    <div class="col-md-2">
+                        <select name="evidence_id" class="form-select form-select-sm">
+                            <option value="">Evidence (opt)</option>
+                            {% for e in evidence %}<option value="{{ e.evidence_id }}">{{ e.evidence_id }}</option>{% endfor %}
+                        </select>
+                    </div>
+                    <div class="col-md-9"><textarea name="description" class="form-control form-control-sm" rows="2" placeholder="Detailed description"></textarea></div>
+                    <div class="col-md-3"><button type="submit" class="btn btn-accent btn-sm w-100 h-100"><i class="bi bi-plus"></i> Add</button></div>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+{# ── Entities Tab ── #}
+<div class="tab-pane fade" id="entities">
+    {% if entities %}
+    <table class="table table-striped table-sm">
+        <thead><tr><th>Type</th><th>Name</th><th>Role</th><th>Rank</th><th>Reports To</th><th>Notes</th><th></th></tr></thead>
+        <tbody>
+        {% for ent in entities %}
+        <tr>
+            <td><span class="badge bg-secondary">{{ ent.entity_type }}</span></td>
+            <td><strong>{{ ent.display_name }}</strong></td>
+            <td>{{ ent.subtype or '' }}</td>
+            <td>{{ ent.organizational_rank or '' }}</td>
+            <td>
+                {% if ent.parent_entity_id and ent.parent_entity_id in entity_lookup %}
+                    {{ entity_lookup[ent.parent_entity_id].display_name }}
+                {% endif %}
+            </td>
+            <td style="max-width:240px">{{ (ent.notes or '')[:80] }}{% if (ent.notes or '')|length > 80 %}...{% endif %}</td>
+            <td>
+                <form method="POST" action="{{ url_for('dfars.delete_entity', case_id=case.case_id, entity_id=ent.entity_id) }}" style="display:inline" onsubmit="return confirm('Remove this entity?');">
+                    <button type="submit" class="btn btn-sm btn-outline-danger" title="Remove"><i class="bi bi-trash"></i></button>
+                </form>
+            </td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p class="text-muted">No entities yet. Add a person, business, phone, email, or alias below to start building the link graph.</p>
+    {% endif %}
+
+    <div class="card mt-3">
+        <div class="card-header"><i class="bi bi-plus"></i> Add Entity</div>
+        <div class="card-body">
+            <form method="POST" action="{{ url_for('dfars.add_entity', case_id=case.case_id) }}">
+                <div class="row g-2">
+                    <div class="col-md-2">
+                        <select name="entity_type" id="entity-type-select" class="form-select form-select-sm" required>
+                            <option value="person" selected>Person</option>
+                            <option value="business">Business</option>
+                            <option value="phone">Phone</option>
+                            <option value="email">Email</option>
+                            <option value="alias">Alias</option>
+                            <option value="address">Address</option>
+                            <option value="account">Account</option>
+                            <option value="vehicle">Vehicle</option>
+                        </select>
+                    </div>
+                    <div class="col-md-4"><input name="display_name" class="form-control form-control-sm" placeholder="Name / Identifier *" required></div>
+                    <div class="col-md-2 entity-person-field">
+                        <select name="subtype" class="form-select form-select-sm">
+                            <option value="">Role (person)</option>
+                            <option value="suspect">Suspect</option>
+                            <option value="victim">Victim</option>
+                            <option value="witness">Witness</option>
+                            <option value="investigator">Investigator</option>
+                            <option value="poi">Person of Interest</option>
+                            <option value="other">Other</option>
+                        </select>
+                    </div>
+                    <div class="col-md-2 entity-person-field"><input name="organizational_rank" class="form-control form-control-sm" placeholder="Rank (e.g. Boss)"></div>
+                    <div class="col-md-2 entity-person-field">
+                        <select name="parent_entity_id" class="form-select form-select-sm">
+                            <option value="">Reports To (opt)</option>
+                            {% for ent in entities if ent.entity_type == 'person' %}
+                            <option value="{{ ent.entity_id }}">{{ ent.display_name }}{% if ent.organizational_rank %} ({{ ent.organizational_rank }}){% endif %}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="col-md-10"><input name="notes" class="form-control form-control-sm" placeholder="Notes (optional)"></div>
+                    <div class="col-md-2"><button type="submit" class="btn btn-accent btn-sm w-100"><i class="bi bi-plus"></i> Add</button></div>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+{# ── Links Tab ── #}
+<div class="tab-pane fade" id="links">
+    {% if links %}
+    <table class="table table-striped table-sm">
+        <thead><tr><th>Source</th><th></th><th>Target</th><th>Label</th><th>Notes</th><th></th></tr></thead>
+        <tbody>
+        {% for lk in links %}
+        <tr>
+            <td>
+                {% if lk.source_type == 'entity' %}
+                    {% set sid = lk.source_id|int %}
+                    {% if sid in entity_lookup %}<strong>{{ entity_lookup[sid].display_name }}</strong> <small class="text-muted">({{ entity_lookup[sid].entity_type }})</small>{% else %}<em>missing entity</em>{% endif %}
+                {% else %}
+                    <code>{{ lk.source_id }}</code> <small class="text-muted">(evidence)</small>
+                {% endif %}
+            </td>
+            <td>{% if lk.directional %}→{% else %}—{% endif %}</td>
+            <td>
+                {% if lk.target_type == 'entity' %}
+                    {% set tid = lk.target_id|int %}
+                    {% if tid in entity_lookup %}<strong>{{ entity_lookup[tid].display_name }}</strong> <small class="text-muted">({{ entity_lookup[tid].entity_type }})</small>{% else %}<em>missing entity</em>{% endif %}
+                {% else %}
+                    <code>{{ lk.target_id }}</code> <small class="text-muted">(evidence)</small>
+                {% endif %}
+            </td>
+            <td>{{ lk.link_label or '' }}</td>
+            <td style="max-width:240px">{{ (lk.notes or '')[:80] }}</td>
+            <td>
+                <form method="POST" action="{{ url_for('dfars.delete_link', case_id=case.case_id, link_id=lk.link_id) }}" style="display:inline" onsubmit="return confirm('Remove this link?');">
+                    <button type="submit" class="btn btn-sm btn-outline-danger" title="Remove"><i class="bi bi-trash"></i></button>
+                </form>
+            </td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p class="text-muted">No links yet. Create entities first, then connect them with a relationship.</p>
+    {% endif %}
+
+    <div class="card mt-3">
+        <div class="card-header"><i class="bi bi-plus"></i> Add Link</div>
+        <div class="card-body">
+            {% if entities or evidence %}
+            <form method="POST" action="{{ url_for('dfars.add_link', case_id=case.case_id) }}">
+                <div class="row g-2">
+                    <div class="col-md-3">
+                        <select name="source" class="form-select form-select-sm" required>
+                            <option value="">Source *</option>
+                            {% if entities %}<optgroup label="Entities">
+                                {% for ent in entities %}<option value="entity:{{ ent.entity_id }}">{{ ent.display_name }} ({{ ent.entity_type }})</option>{% endfor %}
+                            </optgroup>{% endif %}
+                            {% if evidence %}<optgroup label="Evidence">
+                                {% for e in evidence %}<option value="evidence:{{ e.evidence_id }}">{{ e.evidence_id }} - {{ e.description[:40] }}</option>{% endfor %}
+                            </optgroup>{% endif %}
+                        </select>
+                    </div>
+                    <div class="col-md-3">
+                        <select name="target" class="form-select form-select-sm" required>
+                            <option value="">Target *</option>
+                            {% if entities %}<optgroup label="Entities">
+                                {% for ent in entities %}<option value="entity:{{ ent.entity_id }}">{{ ent.display_name }} ({{ ent.entity_type }})</option>{% endfor %}
+                            </optgroup>{% endif %}
+                            {% if evidence %}<optgroup label="Evidence">
+                                {% for e in evidence %}<option value="evidence:{{ e.evidence_id }}">{{ e.evidence_id }} - {{ e.description[:40] }}</option>{% endfor %}
+                            </optgroup>{% endif %}
+                        </select>
+                    </div>
+                    <div class="col-md-2"><input name="link_label" class="form-control form-control-sm" placeholder="Label (e.g. owns)"></div>
+                    <div class="col-md-2">
+                        <select name="directional" class="form-select form-select-sm">
+                            <option value="1" selected>Directed →</option>
+                            <option value="0">Undirected —</option>
+                        </select>
+                    </div>
+                    <div class="col-md-2"><button type="submit" class="btn btn-accent btn-sm w-100"><i class="bi bi-plus"></i> Add</button></div>
+                    <div class="col-md-12"><input name="notes" class="form-control form-control-sm" placeholder="Notes (optional)"></div>
+                </div>
+            </form>
+            {% else %}
+            <p class="text-muted mb-0">Add at least one entity or evidence item before creating links.</p>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+{# ── Events Tab (Crime Line source data) ── #}
+<div class="tab-pane fade" id="events">
+    {% if events %}
+    <table class="table table-striped table-sm">
+        <thead><tr><th>When</th><th>Title</th><th>Category</th><th>Entity</th><th>Evidence</th><th>Description</th><th></th></tr></thead>
+        <tbody>
+        {% for ev in events %}
+        <tr>
+            <td><small>{{ (ev.event_datetime|string)[:16] if ev.event_datetime else '' }}</small></td>
+            <td><strong>{{ ev.title }}</strong></td>
+            <td>{{ ev.category or '' }}</td>
+            <td>
+                {% if ev.related_entity_id and ev.related_entity_id in entity_lookup %}
+                    {{ entity_lookup[ev.related_entity_id].display_name }}
+                {% endif %}
+            </td>
+            <td>{% if ev.related_evidence_id %}<code>{{ ev.related_evidence_id }}</code>{% endif %}</td>
+            <td style="max-width:260px">{{ (ev.description or '')[:100] }}{% if (ev.description or '')|length > 100 %}...{% endif %}</td>
+            <td>
+                <form method="POST" action="{{ url_for('dfars.delete_event', case_id=case.case_id, event_id=ev.event_id) }}" style="display:inline" onsubmit="return confirm('Remove this event?');">
+                    <button type="submit" class="btn btn-sm btn-outline-danger" title="Remove"><i class="bi bi-trash"></i></button>
+                </form>
+            </td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p class="text-muted">No events yet. Log investigator-observed events here; they'll appear on the Crime Line timeline.</p>
+    {% endif %}
+
+    <div class="card mt-3">
+        <div class="card-header"><i class="bi bi-plus"></i> Add Event</div>
+        <div class="card-body">
+            <form method="POST" action="{{ url_for('dfars.add_event', case_id=case.case_id) }}">
+                <div class="row g-2">
+                    <div class="col-md-4"><input name="title" class="form-control form-control-sm" placeholder="Event title *" required></div>
+                    <div class="col-md-3"><input name="event_datetime" type="datetime-local" class="form-control form-control-sm" required></div>
+                    <div class="col-md-3"><input name="event_end_datetime" type="datetime-local" class="form-control form-control-sm" placeholder="End (optional)"></div>
+                    <div class="col-md-2">
+                        <select name="category" class="form-select form-select-sm">
+                            <option value="">Category</option>
+                            <option value="observation">Observation</option>
+                            <option value="communication">Communication</option>
+                            <option value="movement">Movement</option>
+                            <option value="custodial">Custodial</option>
+                            <option value="other">Other</option>
+                        </select>
+                    </div>
+                    <div class="col-md-4">
+                        <select name="related_entity_id" class="form-select form-select-sm">
+                            <option value="">Related entity (opt)</option>
+                            {% for ent in entities %}<option value="{{ ent.entity_id }}">{{ ent.display_name }} ({{ ent.entity_type }})</option>{% endfor %}
+                        </select>
+                    </div>
+                    <div class="col-md-4">
+                        <select name="related_evidence_id" class="form-select form-select-sm">
+                            <option value="">Related evidence (opt)</option>
+                            {% for e in evidence %}<option value="{{ e.evidence_id }}">{{ e.evidence_id }}</option>{% endfor %}
+                        </select>
+                    </div>
+                    <div class="col-md-2"><button type="submit" class="btn btn-accent btn-sm w-100"><i class="bi bi-plus"></i> Add</button></div>
+                    <div class="col-md-12"><textarea name="description" class="form-control form-control-sm" rows="2" placeholder="Description (optional)"></textarea></div>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+</div>{# end tab-content #}
+
+{% endblock %}
+{% block scripts %}
+<script>
+// Activate tab from URL hash
+const hash = window.location.hash;
+if (hash) {
+    const tab = document.querySelector('.nav-tabs a[href="' + hash + '"]');
+    if (tab) new bootstrap.Tab(tab).show();
+}
+
+// Show person-specific fields (role, rank, parent) only when entity_type === 'person'
+(function () {
+    const sel = document.getElementById('entity-type-select');
+    if (!sel) return;
+    const personFields = document.querySelectorAll('.entity-person-field');
+    function sync() {
+        const isPerson = sel.value === 'person';
+        personFields.forEach(el => { el.style.display = isPerson ? '' : 'none'; });
+    }
+    sel.addEventListener('change', sync);
+    sync();
+})();
+</script>
+{% endblock %}
