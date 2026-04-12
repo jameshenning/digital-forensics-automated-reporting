@@ -12,6 +12,17 @@
             --bg: #1a1c20; --card: #24272e; --border: #343a40;
             --text: #e9ecef; --muted: #adb5bd;
             --accent: #0096c7; --accent2: #0d6efd;
+            /* Override Bootstrap 5.3 light-theme defaults so dark cards
+               don't inherit near-black (#212529) text color. */
+            --bs-body-color: #e9ecef;
+            --bs-body-color-rgb: 233,236,239;
+            --bs-body-bg: #1a1c20;
+            --bs-body-bg-rgb: 26,28,32;
+            --bs-secondary-color: #adb5bd;
+            --bs-secondary-color-rgb: 173,181,189;
+            --bs-tertiary-color: #8b949e;
+            --bs-border-color: #343a40;
+            --bs-border-color-translucent: rgba(173,181,189,.175);
         }
         body { background: var(--bg); color: var(--text); font-family: 'Segoe UI', sans-serif; }
         .navbar { background: #12203a !important; border-bottom: 2px solid var(--accent); }
@@ -44,6 +55,16 @@
         .btn-accent:hover { background: #007ea8; border-color: #007ea8; color: #fff; }
         a { color: var(--accent); }
         a:hover { color: #fff; }
+        /* Force Bootstrap tooltips to be readable on dark theme */
+        .tooltip-inner { background: #f8f9fa; color: #1a1c20; font-size: .82rem; max-width: 360px; text-align: left; padding: .5rem .75rem; }
+        .tooltip .tooltip-arrow::before { border-top-color: #f8f9fa; }
+        .bs-tooltip-bottom .tooltip-arrow::before { border-bottom-color: #f8f9fa; }
+        .bs-tooltip-start .tooltip-arrow::before { border-left-color: #f8f9fa; }
+        .bs-tooltip-end .tooltip-arrow::before { border-right-color: #f8f9fa; }
+        /* Dropdown menus — force dark theme */
+        .dropdown-menu { background: #24272e; border-color: var(--border); }
+        .dropdown-item { color: var(--text); }
+        .dropdown-item:hover, .dropdown-item:focus { background: #343a40; color: #fff; }
     </style>
     {% block styles %}{% endblock %}
 </head>

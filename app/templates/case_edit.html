@@ -87,6 +87,28 @@
                 </div>
 
                 <div class="col-12">
+                    <label class="form-label fw-semibold"><i class="bi bi-hdd"></i> Evidence Drive</label>
+                    <div class="input-group">
+                        <input type="text" name="evidence_drive_path" id="evidence-drive-input"
+                               class="form-control" value="{{ case.evidence_drive_path or '' }}"
+                               placeholder="Select an external drive…" readonly>
+                        <select id="evidence-drive-select" class="form-select" style="max-width:50%"
+                                onchange="document.getElementById('evidence-drive-input').value=this.value">
+                            <option value="">— Change drive —</option>
+                        </select>
+                        <button type="button" class="btn btn-outline-secondary" onclick="refreshDrives()">
+                            <i class="bi bi-arrow-clockwise"></i>
+                        </button>
+                    </div>
+                    <div class="form-text">
+                        <i class="bi bi-exclamation-triangle text-warning"></i>
+                        All evidence files are stored on this external drive.
+                        Changing the drive does NOT move existing files — do that manually if needed.
+                    </div>
+                    <div id="drive-status" class="small mt-1"></div>
+                </div>
+
+                <div class="col-12">
                     <button type="submit" class="btn btn-accent">
                         <i class="bi bi-check-lg"></i> Save Changes
                     </button>
@@ -107,4 +129,31 @@
         </p>
     </div>
 </div>
+
+<script>
+async function refreshDrives() {
+    const sel = document.getElementById('evidence-drive-select');
+    const status = document.getElementById('drive-status');
+    sel.innerHTML = '<option value="">Scanning…</option>';
+    try {
+        const resp = await fetch('/api/internal/drives');
+        const data = await resp.json();
+        sel.innerHTML = '<option value="">— Change drive —</option>';
+        if (!data.drives || data.drives.length === 0) {
+            status.innerHTML = '<span class="text-danger"><i class="bi bi-x-circle"></i> No external drives detected.</span>';
+        } else {
+            for (const d of data.drives) {
+                const opt = document.createElement('option');
+                opt.value = d.root;
+                opt.textContent = d.display;
+                sel.appendChild(opt);
+            }
+            status.innerHTML = '<span class="text-success"><i class="bi bi-check-circle"></i> ' + data.drives.length + ' external drive(s) available.</span>';
+        }
+    } catch (e) {
+        status.innerHTML = '<span class="text-danger">Drive detection failed.</span>';
+    }
+}
+document.addEventListener('DOMContentLoaded', function() { refreshDrives(); });
+</script>
 {% endblock %}

@@ -126,9 +126,28 @@
                 <i class="bi bi-robot"></i> Agent Zero Integration
             </div>
             <div class="card-body">
+                {# ── One-click auto-setup ── #}
+                <div class="alert alert-info py-2 mb-3">
+                    <div class="d-flex align-items-center justify-content-between">
+                        <div class="small">
+                            <strong>Quick Setup</strong> — Generates an API token, writes the Agent Zero plugin config,
+                            restarts the container, and tests the connection. One click.
+                        </div>
+                        <form method="POST" action="{{ url_for('auth.agent_zero_auto_setup') }}" class="ms-3">
+                            <button type="submit" class="btn btn-sm btn-warning text-nowrap"
+                                    onclick="this.disabled=true;this.innerHTML='<span class=\'spinner-border spinner-border-sm\'></span> Setting up...';this.form.submit();">
+                                <i class="bi bi-lightning-charge"></i> Auto-Connect Agent Zero
+                            </button>
+                        </form>
+                    </div>
+                </div>
+
+                <details class="mb-3">
+                    <summary class="small text-muted" style="cursor:pointer"><i class="bi bi-gear"></i> Advanced: Manual configuration</summary>
+                    <div class="mt-2">
+
                 <p class="text-muted small">
-                    DFARS calls Agent Zero for AI-assisted features (case description enhancement,
-                    classification, summary generation). Configure the Agent Zero URL and the
+                    Configure the Agent Zero URL and the
                     <code>mcp_server_token</code> from <code>agent-zero/settings.json</code>.
                     The key is encrypted at rest using the same key store as your TOTP secret.
                 </p>
@@ -174,6 +193,79 @@
                             <i class="bi bi-trash"></i> Remove Key
                         </button>
                         {% endif %}
+                    </div>
+                </form>
+
+                    </div>{# /details content #}
+                </details>
+            </div>
+        </div>
+
+        <div class="card mb-3">
+            <div class="card-header">
+                <i class="bi bi-envelope"></i> Email Settings (SMTP)
+            </div>
+            <div class="card-body">
+                <p class="text-muted small mb-2">
+                    Configure SMTP to send record exports (evidence, custody, hashes, tools, analysis)
+                    directly from DFARS as email with the .md file attached and SHA-256 hashed.
+                    {% if smtp_configured %}
+                    <span class="badge bg-success">Configured</span>
+                    {% else %}
+                    <span class="badge bg-warning text-dark">Not configured</span>
+                    {% endif %}
+                </p>
+
+                <form method="POST" action="{{ url_for('auth.smtp_save') }}">
+                    <div class="row g-2">
+                        <div class="col-md-6">
+                            <label class="form-label small">SMTP Server</label>
+                            <input type="text" name="smtp_server" class="form-control form-control-sm"
+                                   value="{{ smtp_server }}" placeholder="smtp.gmail.com">
+                            <div class="form-text" style="font-size:.7rem">
+                                Gmail: <code>smtp.gmail.com</code> &nbsp;
+                                Outlook: <code>smtp.office365.com</code> &nbsp;
+                                Yahoo: <code>smtp.mail.yahoo.com</code>
+                            </div>
+                        </div>
+                        <div class="col-md-3">
+                            <label class="form-label small">Port</label>
+                            <input type="number" name="smtp_port" class="form-control form-control-sm"
+                                   value="{{ smtp_port }}" placeholder="587">
+                        </div>
+                        <div class="col-md-3">
+                            <label class="form-label small">TLS</label>
+                            <div class="form-check mt-1">
+                                <input class="form-check-input" type="checkbox" name="smtp_use_tls" value="1"
+                                       id="smtp-tls" {{ 'checked' if smtp_use_tls else '' }}>
+                                <label class="form-check-label small" for="smtp-tls">Use STARTTLS</label>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label small">From Address</label>
+                            <input type="email" name="smtp_from_address" class="form-control form-control-sm"
+                                   value="{{ smtp_from_address }}" placeholder="dfars@yourdomain.com">
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label small">Username</label>
+                            <input type="text" name="smtp_username" class="form-control form-control-sm"
+                                   value="{{ smtp_username }}" placeholder="Same as from-address for most providers">
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label small">Password {% if smtp_has_password %}<span class="badge bg-success" style="font-size:.65rem">stored</span>{% endif %}</label>
+                            <input type="password" name="smtp_password" class="form-control form-control-sm"
+                                   placeholder="{{ 'Leave blank to keep existing' if smtp_has_password else 'App password or SMTP password' }}">
+                            <div class="form-text" style="font-size:.7rem">
+                                For Gmail, use an <strong>App Password</strong> (Google Account &gt; Security &gt; App Passwords).
+                                Password is encrypted at rest.
+                            </div>
+                        </div>
+                    </div>
+                    <div class="mt-2">
+                        <button type="submit" class="btn btn-sm btn-accent">Save Email Settings</button>
+                        <form method="POST" action="{{ url_for('auth.smtp_test') }}" class="d-inline">
+                            <button type="submit" class="btn btn-sm btn-outline-info ms-1">Test Connection</button>
+                        </form>
                     </div>
                 </form>
             </div>

@@ -1,5 +1,88 @@
 {% extends "base.html" %}
 {% block title %}DFARS - {{ case.case_id }}{% endblock %}
+
+{% block styles %}
+<style>
+    .dfars-workspace .section-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: .6rem .9rem;
+        background: var(--panel, #1a1f27);
+        border: 1px solid var(--border, #2d333b);
+        border-radius: .5rem;
+        cursor: pointer;
+        user-select: none;
+        margin-bottom: .6rem;
+    }
+    .dfars-workspace .section-header:hover { border-color: var(--accent, #0d6efd); }
+    .dfars-workspace .section-header h5 { margin: 0; font-size: 1rem; }
+    .dfars-workspace .section-header .chev { transition: transform .15s; }
+    .dfars-workspace .section-header[aria-expanded="false"] .chev { transform: rotate(-90deg); }
+    .dfars-workspace .section-header .count {
+        font-weight: 400;
+        color: var(--muted, #adb5bd);
+        margin-left: .4rem;
+        font-size: .88rem;
+    }
+    .dfars-workspace .section-body { padding: 0 .25rem 1.2rem; }
+    .dfars-workspace .evidence-card {
+        background: var(--panel, #1a1f27);
+        border: 1px solid var(--border, #2d333b);
+        border-radius: .45rem;
+        padding: .75rem .95rem;
+        margin-bottom: .55rem;
+    }
+    .dfars-workspace .evidence-card .ev-title code { font-size: .92rem; }
+    .dfars-workspace .evidence-card .ev-meta { font-size: .82rem; color: var(--muted, #adb5bd); }
+    .dfars-workspace .evidence-card .ev-icons { font-size: .82rem; color: var(--muted, #adb5bd); }
+    .dfars-workspace .evidence-card .detail-label {
+        text-transform: uppercase;
+        font-size: .72rem;
+        letter-spacing: .04em;
+        color: var(--muted, #adb5bd);
+        margin: .9rem 0 .35rem;
+    }
+    .dfars-workspace .report-md {
+        white-space: pre-wrap;
+        word-break: break-word;
+        background: #12151a;
+        color: var(--text, #e9ecef);
+        border: 1px solid var(--border, #2d333b);
+        border-radius: .35rem;
+        padding: .8rem .95rem;
+        font-family: 'JetBrains Mono', Consolas, monospace;
+        font-size: .8rem;
+        line-height: 1.5;
+        max-height: 420px;
+        overflow-y: auto;
+    }
+    .dfars-workspace .add-form .form-label {
+        font-size: .8rem;
+        margin-bottom: .2rem;
+        color: var(--muted, #adb5bd);
+    }
+    .dfars-workspace .add-form .form-text {
+        font-size: .72rem;
+        color: var(--muted, #adb5bd);
+    }
+    .dfars-workspace .more-toggle {
+        font-size: .82rem;
+        padding: 0;
+        color: var(--accent, #0d6efd);
+        text-decoration: none;
+    }
+    .dfars-workspace .more-toggle:hover { text-decoration: underline; }
+    .dfars-workspace .quick-add .btn { margin-right: .35rem; margin-bottom: .35rem; }
+    .dfars-workspace .compact-table { font-size: .85rem; }
+    .dfars-workspace .compact-table th { font-weight: 500; color: var(--muted, #adb5bd); }
+    #summary-result {
+        max-height: 420px;
+        overflow-y: auto;
+    }
+</style>
+{% endblock %}
+
 {% block content %}
 {# ── Case Header ── #}
 <div class="d-flex justify-content-between align-items-start mb-3">
@@ -11,14 +94,24 @@
         {% for tag in tags %}<span class="badge bg-secondary ms-1">{{ tag }}</span>{% endfor %}
     </div>
     <div class="btn-group">
-        <a href="{{ url_for('dfars.link_analysis', case_id=case.case_id) }}" class="btn btn-sm btn-outline-light"><i class="bi bi-diagram-3"></i> Link Analysis</a>
+        <a href="{{ url_for('dfars.link_analysis', case_id=case.case_id) }}" class="btn btn-sm btn-outline-info"><i class="bi bi-diagram-3"></i> Link Analysis</a>
+        <button type="button" id="summarize-case-btn" class="btn btn-sm btn-outline-success"><i class="bi bi-robot"></i> AI Summary</button>
         <a href="{{ url_for('dfars.edit_case', case_id=case.case_id) }}" class="btn btn-sm btn-outline-light"><i class="bi bi-pencil"></i> Edit</a>
         <a href="{{ url_for('dfars.preview_report', case_id=case.case_id) }}" class="btn btn-sm btn-outline-light"><i class="bi bi-eye"></i> Preview</a>
-        <a href="{{ url_for('dfars.download_report', case_id=case.case_id, fmt='markdown') }}" class="btn btn-sm btn-accent"><i class="bi bi-download"></i> Markdown</a>
+        <a href="{{ url_for('dfars.download_report', case_id=case.case_id, fmt='markdown') }}" class="btn btn-sm btn-accent"><i class="bi bi-download"></i> MD</a>
         <a href="{{ url_for('dfars.download_report', case_id=case.case_id, fmt='json') }}" class="btn btn-sm btn-outline-info"><i class="bi bi-filetype-json"></i> JSON</a>
     </div>
 </div>
 
+{# ── AI Summary result (hidden until Summarize button fires) ── #}
+<div id="summary-result" class="alert alert-info d-none mb-3">
+    <button type="button" class="btn-close float-end" aria-label="Close" onclick="document.getElementById('summary-result').classList.add('d-none')"></button>
+    <h6 class="mb-2"><i class="bi bi-robot"></i> Agent Zero Case Summary</h6>
+    <div><strong>Executive Summary:</strong> <span id="summary-exec"></span></div>
+    <div class="mt-2"><strong>Conclusion:</strong> <span id="summary-concl"></span></div>
+</div>
+
+{# ── Stat cards ── #}
 <div class="row g-3 mb-3">
     <div class="col-md-3"><div class="card stat-card py-2"><div class="num fs-3">{{ stats.evidence_count }}</div><div class="label">Evidence</div></div></div>
     <div class="col-md-3"><div class="card stat-card py-2"><div class="num fs-3">{{ stats.custody_count }}</div><div class="label">Custody</div></div></div>
@@ -26,491 +119,1560 @@
     <div class="col-md-3"><div class="card stat-card py-2"><div class="num fs-3">{{ stats.analysis_notes_count }}</div><div class="label">Notes</div></div></div>
 </div>
 
-{# ── Tabs ── #}
-<ul class="nav nav-tabs" role="tablist">
-    <li class="nav-item"><a class="nav-link active" data-bs-toggle="tab" href="#evidence">Evidence</a></li>
-    <li class="nav-item"><a class="nav-link" data-bs-toggle="tab" href="#custody">Chain of Custody</a></li>
-    <li class="nav-item"><a class="nav-link" data-bs-toggle="tab" href="#hashes">Hash Verification</a></li>
-    <li class="nav-item"><a class="nav-link" data-bs-toggle="tab" href="#tools">Tool Usage</a></li>
-    <li class="nav-item"><a class="nav-link" data-bs-toggle="tab" href="#analysis">Analysis Notes</a></li>
-    <li class="nav-item"><a class="nav-link" data-bs-toggle="tab" href="#entities"><i class="bi bi-person-badge"></i> Entities</a></li>
-    <li class="nav-item"><a class="nav-link" data-bs-toggle="tab" href="#links"><i class="bi bi-diagram-3"></i> Links</a></li>
-    <li class="nav-item"><a class="nav-link" data-bs-toggle="tab" href="#events"><i class="bi bi-clock-history"></i> Events</a></li>
-</ul>
+{# ── Evidence Drive Status ── #}
+{% if evidence_drive_path %}
+<div class="alert {{ 'alert-success' if evidence_drive_present else 'alert-danger' }} d-flex align-items-center mb-3" role="alert">
+    <i class="bi {{ 'bi-hdd-fill' if evidence_drive_present else 'bi-exclamation-triangle-fill' }} me-2 fs-5"></i>
+    <div class="flex-grow-1">
+        {% if evidence_drive_present %}
+            <strong>Evidence Drive Connected:</strong> <code>{{ evidence_drive_path }}</code>
+        {% else %}
+            <strong>Evidence Drive Disconnected:</strong> <code>{{ evidence_drive_path }}</code> is not accessible.
+            Connect the external evidence drive to upload files or run analysis.
+        {% endif %}
+    </div>
+    <div class="ms-2 d-flex gap-2 flex-nowrap">
+        {% if evidence_drive_present %}
+        <form method="POST" action="{{ url_for('dfars.scan_evidence_drive', case_id=case.case_id) }}" class="d-inline">
+            <button type="submit" class="btn btn-sm btn-accent" onclick="this.disabled=true;this.innerHTML='<span class=\'spinner-border spinner-border-sm\'></span> Scanning…';this.form.submit();">
+                <i class="bi bi-search"></i> Scan Drive
+            </button>
+        </form>
+        <form method="POST" action="{{ url_for('dfars.auto_analyze_all', case_id=case.case_id) }}" class="d-inline">
+            <button type="submit" class="btn btn-sm btn-outline-success" onclick="this.disabled=true;this.innerHTML='<span class=\'spinner-border spinner-border-sm\'></span> Analyzing…';this.form.submit();">
+                <i class="bi bi-robot"></i> Auto-Analyze All
+            </button>
+        </form>
+        {% endif %}
+        <a href="{{ url_for('dfars.edit_case', case_id=case.case_id) }}" class="btn btn-sm btn-outline-light">Change Drive</a>
+    </div>
+</div>
+{% else %}
+<div class="alert alert-warning d-flex align-items-center mb-3" role="alert">
+    <i class="bi bi-exclamation-triangle-fill me-2 fs-5"></i>
+    <div class="flex-grow-1">
+        <strong>No Evidence Drive Configured.</strong>
+        Set an external evidence drive before uploading files.
+    </div>
+    <a href="{{ url_for('dfars.edit_case', case_id=case.case_id) }}" class="btn btn-sm btn-outline-warning ms-2">Configure Drive</a>
+</div>
+{% endif %}
 
-<div class="tab-content">
+{# ── Quick-add jump bar ── #}
+<div class="dfars-workspace">
 
-{# ── Evidence Tab ── #}
-<div class="tab-pane fade show active" id="evidence">
-    {% if evidence %}
-    <table class="table table-striped table-sm">
-        <thead><tr><th>ID</th><th>Description</th><th>Type</th><th>Collected By</th><th>Date</th><th>Location</th><th>Status</th></tr></thead>
-        <tbody>
+<div class="quick-add mb-3">
+    <a href="#add-evidence" class="btn btn-sm btn-outline-light">+ Evidence</a>
+    <a href="#add-custody"  class="btn btn-sm btn-outline-light">+ Custody</a>
+    <a href="#add-hash"     class="btn btn-sm btn-outline-light">+ Hash</a>
+    <a href="#add-tool"     class="btn btn-sm btn-outline-light">+ Tool</a>
+    <a href="#add-analysis" class="btn btn-sm btn-outline-light">+ Analysis</a>
+</div>
+
+
+{# ════════════════════════════════════════════════════════
+   EVIDENCE SECTION
+   ════════════════════════════════════════════════════════ #}
+<div class="section mb-3" id="evidence">
+    <div class="section-header" role="button" data-bs-toggle="collapse" data-bs-target="#sec-evidence" aria-expanded="true" aria-controls="sec-evidence">
+        <h5><i class="bi bi-chevron-down chev"></i> Evidence <span class="count">({{ evidence|length }})</span></h5>
+        <span class="small text-muted">Digital artifacts and hardware</span>
+    </div>
+    <div class="collapse show" id="sec-evidence">
+        <div class="section-body">
+
         {% for e in evidence %}
-        <tr>
-            <td><code>{{ e.evidence_id }}</code></td>
-            <td>{{ e.description }}</td>
-            <td>{{ e.evidence_type }}</td>
-            <td>{{ e.collected_by }}</td>
-            <td>{{ (e.collection_datetime|string)[:16] if e.collection_datetime else '' }}</td>
-            <td>{{ e.location }}</td>
-            <td>{{ e.status }}</td>
-        </tr>
-        {% endfor %}
-        </tbody>
-    </table>
-    {% else %}
-    <p class="text-muted">No evidence items yet.</p>
-    {% endif %}
-
-    <div class="card mt-3">
-        <div class="card-header"><i class="bi bi-plus"></i> Add Evidence</div>
-        <div class="card-body">
-            <form method="POST" action="{{ url_for('dfars.add_evidence', case_id=case.case_id) }}">
-                <div class="row g-2">
-                    <div class="col-md-3"><input name="evidence_id" class="form-control form-control-sm" placeholder="Evidence ID *" required></div>
-                    <div class="col-md-5"><input name="description" class="form-control form-control-sm" placeholder="Description *" required></div>
-                    <div class="col-md-4"><input name="collected_by" class="form-control form-control-sm" placeholder="Collected By *" required></div>
-                    <div class="col-md-3"><input name="evidence_type" class="form-control form-control-sm" placeholder="Type (e.g. Mobile Device)"></div>
-                    <div class="col-md-3"><input name="collection_datetime" type="datetime-local" class="form-control form-control-sm"></div>
-                    <div class="col-md-3"><input name="location" class="form-control form-control-sm" placeholder="Collection Location"></div>
-                    <div class="col-md-3"><input name="make_model" class="form-control form-control-sm" placeholder="Make/Model"></div>
-                    <div class="col-md-3"><input name="serial_number" class="form-control form-control-sm" placeholder="Serial Number"></div>
-                    <div class="col-md-3"><input name="storage_location" class="form-control form-control-sm" placeholder="Storage Location"></div>
-                    <div class="col-md-3">
-                        <select name="status" class="form-select form-select-sm"><option>Collected</option><option>In Analysis</option><option>Returned</option></select>
+        {% set files_for_e = files_by_evidence.get(e.evidence_id) or [] %}
+        {% set latest = latest_analysis_by_evidence.get(e.evidence_id) %}
+        <div class="evidence-card">
+            <div class="d-flex justify-content-between align-items-start">
+                <div class="flex-grow-1">
+                    <div class="ev-title">
+                        <code>{{ e.evidence_id }}</code>
+                        {% if e.evidence_type %}<span class="badge bg-secondary ms-1">{{ e.evidence_type }}</span>{% endif %}
+                        <span class="badge bg-secondary ms-1">{{ e.status }}</span>
                     </div>
-                    <div class="col-md-3"><button type="submit" class="btn btn-accent btn-sm w-100"><i class="bi bi-plus"></i> Add</button></div>
+                    <div class="ev-meta mt-1">{{ e.description }}</div>
+                    <div class="ev-meta">
+                        Collected by {{ e.collected_by }}
+                        {% if e.collection_datetime %} · {{ (e.collection_datetime|string)[:16] }}{% endif %}
+                        {% if e.location %} · {{ e.location }}{% endif %}
+                    </div>
                 </div>
-            </form>
-        </div>
-    </div>
-</div>
-
-{# ── Custody Tab ── #}
-<div class="tab-pane fade" id="custody">
-    {% if custody %}
-    <table class="table table-striped table-sm">
-        <thead><tr><th>Evidence</th><th>#</th><th>Action</th><th>From</th><th>To</th><th>Date/Time</th><th>Location</th><th>Purpose</th></tr></thead>
-        <tbody>
-        {% for c in custody %}
-        <tr>
-            <td><code>{{ c.evidence_id }}</code></td>
-            <td>{{ c.custody_sequence }}</td>
-            <td>{{ c.action }}</td>
-            <td>{{ c.from_party }}</td>
-            <td>{{ c.to_party }}</td>
-            <td>{{ (c.custody_datetime|string)[:16] if c.custody_datetime else '' }}</td>
-            <td>{{ c.location }}</td>
-            <td>{{ c.purpose }}</td>
-        </tr>
-        {% endfor %}
-        </tbody>
-    </table>
-    {% else %}
-    <p class="text-muted">No custody events yet.</p>
-    {% endif %}
-
-    <div class="card mt-3">
-        <div class="card-header"><i class="bi bi-plus"></i> Add Custody Event</div>
-        <div class="card-body">
-            <form method="POST" action="{{ url_for('dfars.add_custody', case_id=case.case_id) }}">
-                <div class="row g-2">
-                    <div class="col-md-3">
-                        <select name="evidence_id" class="form-select form-select-sm" required>
-                            <option value="">Select Evidence *</option>
-                            {% for e in evidence %}<option value="{{ e.evidence_id }}">{{ e.evidence_id }}</option>{% endfor %}
-                        </select>
+                <div class="text-end ms-2" style="white-space:nowrap">
+                    <div class="ev-icons">
+                        <i class="bi bi-paperclip"></i> {{ files_for_e|length }}
+                        {% if latest %}
+                            {% if latest.status == 'completed' %}<i class="bi bi-robot text-success ms-2" title="AI analysis completed"></i>
+                            {% elif latest.status == 'failed' %}<i class="bi bi-robot text-danger ms-2" title="AI analysis failed"></i>
+                            {% endif %}
+                        {% endif %}
+                        <button type="button" class="btn btn-sm btn-outline-info py-0 px-1 ms-2 share-btn"
+                                data-type="evidence" data-id="{{ e.evidence_id }}"
+                                data-summary="Evidence {{ e.evidence_id }}: {{ e.description[:50] }}"
+                                title="Share / Print"><i class="bi bi-share"></i></button>
+                        <button type="button" class="btn btn-sm btn-outline-danger py-0 px-1 ms-1 delete-evidence-btn"
+                                data-eid="{{ e.evidence_id }}"
+                                data-summary="{{ e.evidence_id }} — {{ e.description[:80]|e }}"
+                                data-files="{{ files_for_e|length }}"
+                                data-url="{{ url_for('dfars.delete_evidence', case_id=case.case_id, evidence_id=e.evidence_id) }}"
+                                title="Delete evidence (audited)"><i class="bi bi-trash"></i></button>
                     </div>
-                    <div class="col-md-3"><input name="action" class="form-control form-control-sm" placeholder="Action *" required></div>
-                    <div class="col-md-3"><input name="from_party" class="form-control form-control-sm" placeholder="From Party"></div>
-                    <div class="col-md-3"><input name="to_party" class="form-control form-control-sm" placeholder="To Party"></div>
-                    <div class="col-md-3"><input name="custody_datetime" type="datetime-local" class="form-control form-control-sm"></div>
-                    <div class="col-md-3"><input name="location" class="form-control form-control-sm" placeholder="Location"></div>
-                    <div class="col-md-3"><input name="purpose" class="form-control form-control-sm" placeholder="Purpose"></div>
-                    <div class="col-md-3"><button type="submit" class="btn btn-accent btn-sm w-100"><i class="bi bi-plus"></i> Add</button></div>
+                    <button class="btn btn-sm btn-outline-light mt-2" type="button" data-bs-toggle="collapse" data-bs-target="#ev-detail-{{ loop.index }}" aria-expanded="false">
+                        Details <i class="bi bi-chevron-down"></i>
+                    </button>
                 </div>
-            </form>
-        </div>
-    </div>
-</div>
+            </div>
 
-{# ── Hash Tab ── #}
-<div class="tab-pane fade" id="hashes">
-    {% if hashes %}
-    <table class="table table-striped table-sm">
-        <thead><tr><th>Evidence</th><th>Algorithm</th><th>Hash Value</th><th>Verified By</th><th>Date</th></tr></thead>
-        <tbody>
-        {% for h in hashes %}
-        <tr>
-            <td><code>{{ h.evidence_id }}</code></td>
-            <td>{{ h.algorithm }}</td>
-            <td><code style="font-size:.75rem">{{ h.hash_value }}</code></td>
-            <td>{{ h.verified_by }}</td>
-            <td>{{ (h.verification_datetime|string)[:16] if h.verification_datetime else '' }}</td>
-        </tr>
-        {% endfor %}
-        </tbody>
-    </table>
-    {% else %}
-    <p class="text-muted">No hash verifications yet.</p>
-    {% endif %}
-
-    <div class="card mt-3">
-        <div class="card-header"><i class="bi bi-plus"></i> Add Hash Verification</div>
-        <div class="card-body">
-            <form method="POST" action="{{ url_for('dfars.add_hash', case_id=case.case_id) }}">
-                <div class="row g-2">
-                    <div class="col-md-3">
-                        <select name="evidence_id" class="form-select form-select-sm" required>
-                            <option value="">Select Evidence *</option>
-                            {% for e in evidence %}<option value="{{ e.evidence_id }}">{{ e.evidence_id }}</option>{% endfor %}
-                        </select>
-                    </div>
-                    <div class="col-md-2">
-                        <select name="algorithm" class="form-select form-select-sm"><option>SHA-256</option><option>MD5</option><option>SHA-1</option><option>SHA-512</option></select>
-                    </div>
-                    <div class="col-md-4"><input name="hash_value" class="form-control form-control-sm" placeholder="Hash Value *" required></div>
-                    <div class="col-md-3"><input name="verified_by" class="form-control form-control-sm" placeholder="Verified By *" required></div>
-                    <div class="col-md-3"><input name="verification_datetime" type="datetime-local" class="form-control form-control-sm"></div>
-                    <div class="col-md-6"><input name="notes" class="form-control form-control-sm" placeholder="Notes"></div>
-                    <div class="col-md-3"><button type="submit" class="btn btn-accent btn-sm w-100"><i class="bi bi-plus"></i> Add</button></div>
+            <div class="collapse mt-2" id="ev-detail-{{ loop.index }}">
+                {# Extended metadata #}
+                {% if e.make_model or e.serial_number or e.storage_location %}
+                <div class="row small g-1 ev-meta border-top pt-2 mt-2">
+                    {% if e.make_model %}<div class="col-md-4"><strong>Make/Model:</strong> {{ e.make_model }}</div>{% endif %}
+                    {% if e.serial_number %}<div class="col-md-4"><strong>Serial:</strong> {{ e.serial_number }}</div>{% endif %}
+                    {% if e.storage_location %}<div class="col-md-4"><strong>Storage:</strong> {{ e.storage_location }}</div>{% endif %}
                 </div>
-            </form>
-        </div>
-    </div>
-</div>
-
-{# ── Tools Tab ── #}
-<div class="tab-pane fade" id="tools">
-    {% if tools %}
-    <table class="table table-striped table-sm">
-        <thead><tr><th>Tool</th><th>Version</th><th>Purpose</th><th>Command</th><th>Output</th><th>Operator</th></tr></thead>
-        <tbody>
-        {% for t in tools %}
-        <tr>
-            <td>{{ t.tool_name }}</td>
-            <td>{{ t.version }}</td>
-            <td>{{ t.purpose }}</td>
-            <td><code style="font-size:.75rem">{{ t.command_used }}</code></td>
-            <td>{{ t.output_file }}</td>
-            <td>{{ t.operator }}</td>
-        </tr>
-        {% endfor %}
-        </tbody>
-    </table>
-    {% else %}
-    <p class="text-muted">No tool usage logged yet.</p>
-    {% endif %}
-
-    <div class="card mt-3">
-        <div class="card-header"><i class="bi bi-plus"></i> Log Tool Usage</div>
-        <div class="card-body">
-            <form method="POST" action="{{ url_for('dfars.add_tool', case_id=case.case_id) }}">
-                <div class="row g-2">
-                    <div class="col-md-3"><input name="tool_name" class="form-control form-control-sm" placeholder="Tool Name *" required></div>
-                    <div class="col-md-2"><input name="version" class="form-control form-control-sm" placeholder="Version"></div>
-                    <div class="col-md-4"><input name="purpose" class="form-control form-control-sm" placeholder="Purpose *" required></div>
-                    <div class="col-md-3"><input name="operator" class="form-control form-control-sm" placeholder="Operator"></div>
-                    <div class="col-md-4"><input name="command_used" class="form-control form-control-sm" placeholder="Command Used"></div>
-                    <div class="col-md-4"><input name="output_file" class="form-control form-control-sm" placeholder="Output File"></div>
-                    <div class="col-md-4"><button type="submit" class="btn btn-accent btn-sm w-100"><i class="bi bi-plus"></i> Add</button></div>
-                </div>
-            </form>
-        </div>
-    </div>
-</div>
-
-{# ── Analysis Tab ── #}
-<div class="tab-pane fade" id="analysis">
-    {% if analysis %}
-    <table class="table table-striped table-sm">
-        <thead><tr><th>Category</th><th>Finding</th><th>Confidence</th><th>Evidence</th><th>Description</th></tr></thead>
-        <tbody>
-        {% for n in analysis %}
-        <tr>
-            <td>{{ n.category }}</td>
-            <td><strong>{{ n.finding }}</strong></td>
-            <td><span class="badge badge-{{ n.confidence_level|lower }}">{{ n.confidence_level }}</span></td>
-            <td><code>{{ n.evidence_id or '—' }}</code></td>
-            <td style="max-width:300px">{{ n.description[:120] }}{% if n.description|length > 120 %}...{% endif %}</td>
-        </tr>
-        {% endfor %}
-        </tbody>
-    </table>
-    {% else %}
-    <p class="text-muted">No analysis notes yet.</p>
-    {% endif %}
-
-    <div class="card mt-3">
-        <div class="card-header"><i class="bi bi-plus"></i> Add Analysis Note</div>
-        <div class="card-body">
-            <form method="POST" action="{{ url_for('dfars.add_analysis', case_id=case.case_id) }}">
-                <div class="row g-2">
-                    <div class="col-md-3"><input name="category" class="form-control form-control-sm" placeholder="Category *" required></div>
-                    <div class="col-md-5"><input name="finding" class="form-control form-control-sm" placeholder="Finding *" required></div>
-                    <div class="col-md-2">
-                        <select name="confidence_level" class="form-select form-select-sm"><option>High</option><option selected>Medium</option><option>Low</option></select>
-                    </div>
-                    <div class="col-md-2">
-                        <select name="evidence_id" class="form-select form-select-sm">
-                            <option value="">Evidence (opt)</option>
-                            {% for e in evidence %}<option value="{{ e.evidence_id }}">{{ e.evidence_id }}</option>{% endfor %}
-                        </select>
-                    </div>
-                    <div class="col-md-9"><textarea name="description" class="form-control form-control-sm" rows="2" placeholder="Detailed description"></textarea></div>
-                    <div class="col-md-3"><button type="submit" class="btn btn-accent btn-sm w-100 h-100"><i class="bi bi-plus"></i> Add</button></div>
-                </div>
-            </form>
-        </div>
-    </div>
-</div>
-
-{# ── Entities Tab ── #}
-<div class="tab-pane fade" id="entities">
-    {% if entities %}
-    <table class="table table-striped table-sm">
-        <thead><tr><th>Type</th><th>Name</th><th>Role</th><th>Rank</th><th>Reports To</th><th>Notes</th><th></th></tr></thead>
-        <tbody>
-        {% for ent in entities %}
-        <tr>
-            <td><span class="badge bg-secondary">{{ ent.entity_type }}</span></td>
-            <td><strong>{{ ent.display_name }}</strong></td>
-            <td>{{ ent.subtype or '' }}</td>
-            <td>{{ ent.organizational_rank or '' }}</td>
-            <td>
-                {% if ent.parent_entity_id and ent.parent_entity_id in entity_lookup %}
-                    {{ entity_lookup[ent.parent_entity_id].display_name }}
                 {% endif %}
-            </td>
-            <td style="max-width:240px">{{ (ent.notes or '')[:80] }}{% if (ent.notes or '')|length > 80 %}...{% endif %}</td>
-            <td>
-                <form method="POST" action="{{ url_for('dfars.delete_entity', case_id=case.case_id, entity_id=ent.entity_id) }}" style="display:inline" onsubmit="return confirm('Remove this entity?');">
-                    <button type="submit" class="btn btn-sm btn-outline-danger" title="Remove"><i class="bi bi-trash"></i></button>
-                </form>
-            </td>
-        </tr>
-        {% endfor %}
-        </tbody>
-    </table>
-    {% else %}
-    <p class="text-muted">No entities yet. Add a person, business, phone, email, or alias below to start building the link graph.</p>
-    {% endif %}
 
-    <div class="card mt-3">
-        <div class="card-header"><i class="bi bi-plus"></i> Add Entity</div>
-        <div class="card-body">
-            <form method="POST" action="{{ url_for('dfars.add_entity', case_id=case.case_id) }}">
-                <div class="row g-2">
-                    <div class="col-md-2">
-                        <select name="entity_type" id="entity-type-select" class="form-select form-select-sm" required>
-                            <option value="person" selected>Person</option>
-                            <option value="business">Business</option>
-                            <option value="phone">Phone</option>
-                            <option value="email">Email</option>
-                            <option value="alias">Alias</option>
-                            <option value="address">Address</option>
-                            <option value="account">Account</option>
-                            <option value="vehicle">Vehicle</option>
-                        </select>
-                    </div>
-                    <div class="col-md-4"><input name="display_name" class="form-control form-control-sm" placeholder="Name / Identifier *" required></div>
-                    <div class="col-md-2 entity-person-field">
-                        <select name="subtype" class="form-select form-select-sm">
-                            <option value="">Role (person)</option>
-                            <option value="suspect">Suspect</option>
-                            <option value="victim">Victim</option>
-                            <option value="witness">Witness</option>
-                            <option value="investigator">Investigator</option>
-                            <option value="poi">Person of Interest</option>
-                            <option value="other">Other</option>
-                        </select>
-                    </div>
-                    <div class="col-md-2 entity-person-field"><input name="organizational_rank" class="form-control form-control-sm" placeholder="Rank (e.g. Boss)"></div>
-                    <div class="col-md-2 entity-person-field">
-                        <select name="parent_entity_id" class="form-select form-select-sm">
-                            <option value="">Reports To (opt)</option>
-                            {% for ent in entities if ent.entity_type == 'person' %}
-                            <option value="{{ ent.entity_id }}">{{ ent.display_name }}{% if ent.organizational_rank %} ({{ ent.organizational_rank }}){% endif %}</option>
-                            {% endfor %}
-                        </select>
-                    </div>
-                    <div class="col-md-10"><input name="notes" class="form-control form-control-sm" placeholder="Notes (optional)"></div>
-                    <div class="col-md-2"><button type="submit" class="btn btn-accent btn-sm w-100"><i class="bi bi-plus"></i> Add</button></div>
-                </div>
-            </form>
-        </div>
-    </div>
-</div>
-
-{# ── Links Tab ── #}
-<div class="tab-pane fade" id="links">
-    {% if links %}
-    <table class="table table-striped table-sm">
-        <thead><tr><th>Source</th><th></th><th>Target</th><th>Label</th><th>Notes</th><th></th></tr></thead>
-        <tbody>
-        {% for lk in links %}
-        <tr>
-            <td>
-                {% if lk.source_type == 'entity' %}
-                    {% set sid = lk.source_id|int %}
-                    {% if sid in entity_lookup %}<strong>{{ entity_lookup[sid].display_name }}</strong> <small class="text-muted">({{ entity_lookup[sid].entity_type }})</small>{% else %}<em>missing entity</em>{% endif %}
+                {# Files panel #}
+                <div class="detail-label">Attached Files</div>
+                {% if files_for_e %}
+                <table class="table table-sm compact-table align-middle mb-2">
+                    <thead><tr><th>Filename</th><th>Type</th><th>Size</th><th>SHA-256</th><th></th></tr></thead>
+                    <tbody>
+                    {% for f in files_for_e %}
+                    <tr>
+                        <td><code>{{ f.original_filename }}</code></td>
+                        <td><small class="text-muted">{{ f.mime_type or '—' }}</small></td>
+                        <td><small>{% if f.size_bytes < 1024 %}{{ f.size_bytes }} B{% elif f.size_bytes < 1048576 %}{{ '%.1f' % (f.size_bytes / 1024) }} KB{% else %}{{ '%.1f' % (f.size_bytes / 1048576) }} MB{% endif %}</small></td>
+                        <td><code title="{{ f.sha256 }}">{{ f.sha256[:16] }}…</code></td>
+                        <td>
+                            <form method="POST" action="{{ url_for('dfars.delete_evidence_file', case_id=case.case_id, evidence_id=e.evidence_id, file_id=f.file_id) }}" style="display:inline" onsubmit="return confirm('Remove this file?');">
+                                <button class="btn btn-sm btn-outline-danger" type="submit"><i class="bi bi-trash"></i></button>
+                            </form>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
                 {% else %}
-                    <code>{{ lk.source_id }}</code> <small class="text-muted">(evidence)</small>
+                <p class="small text-muted mb-2">No files attached.</p>
                 {% endif %}
-            </td>
-            <td>{% if lk.directional %}→{% else %}—{% endif %}</td>
-            <td>
-                {% if lk.target_type == 'entity' %}
-                    {% set tid = lk.target_id|int %}
-                    {% if tid in entity_lookup %}<strong>{{ entity_lookup[tid].display_name }}</strong> <small class="text-muted">({{ entity_lookup[tid].entity_type }})</small>{% else %}<em>missing entity</em>{% endif %}
+
+                {% if evidence_drive_present %}
+                <form method="POST" action="{{ url_for('dfars.upload_evidence_files', case_id=case.case_id, evidence_id=e.evidence_id) }}" enctype="multipart/form-data" class="mb-3">
+                    <div class="input-group input-group-sm">
+                        <input type="file" name="files" class="form-control" multiple required>
+                        <button class="btn btn-accent" type="submit"><i class="bi bi-upload"></i> Upload</button>
+                    </div>
+                    <div class="form-text small">Max 200 MB per request. Files stored on evidence drive: <code>{{ evidence_drive_path }}</code></div>
+                </form>
                 {% else %}
-                    <code>{{ lk.target_id }}</code> <small class="text-muted">(evidence)</small>
-                {% endif %}
-            </td>
-            <td>{{ lk.link_label or '' }}</td>
-            <td style="max-width:240px">{{ (lk.notes or '')[:80] }}</td>
-            <td>
-                <form method="POST" action="{{ url_for('dfars.delete_link', case_id=case.case_id, link_id=lk.link_id) }}" style="display:inline" onsubmit="return confirm('Remove this link?');">
-                    <button type="submit" class="btn btn-sm btn-outline-danger" title="Remove"><i class="bi bi-trash"></i></button>
-                </form>
-            </td>
-        </tr>
-        {% endfor %}
-        </tbody>
-    </table>
-    {% else %}
-    <p class="text-muted">No links yet. Create entities first, then connect them with a relationship.</p>
-    {% endif %}
-
-    <div class="card mt-3">
-        <div class="card-header"><i class="bi bi-plus"></i> Add Link</div>
-        <div class="card-body">
-            {% if entities or evidence %}
-            <form method="POST" action="{{ url_for('dfars.add_link', case_id=case.case_id) }}">
-                <div class="row g-2">
-                    <div class="col-md-3">
-                        <select name="source" class="form-select form-select-sm" required>
-                            <option value="">Source *</option>
-                            {% if entities %}<optgroup label="Entities">
-                                {% for ent in entities %}<option value="entity:{{ ent.entity_id }}">{{ ent.display_name }} ({{ ent.entity_type }})</option>{% endfor %}
-                            </optgroup>{% endif %}
-                            {% if evidence %}<optgroup label="Evidence">
-                                {% for e in evidence %}<option value="evidence:{{ e.evidence_id }}">{{ e.evidence_id }} - {{ e.description[:40] }}</option>{% endfor %}
-                            </optgroup>{% endif %}
-                        </select>
-                    </div>
-                    <div class="col-md-3">
-                        <select name="target" class="form-select form-select-sm" required>
-                            <option value="">Target *</option>
-                            {% if entities %}<optgroup label="Entities">
-                                {% for ent in entities %}<option value="entity:{{ ent.entity_id }}">{{ ent.display_name }} ({{ ent.entity_type }})</option>{% endfor %}
-                            </optgroup>{% endif %}
-                            {% if evidence %}<optgroup label="Evidence">
-                                {% for e in evidence %}<option value="evidence:{{ e.evidence_id }}">{{ e.evidence_id }} - {{ e.description[:40] }}</option>{% endfor %}
-                            </optgroup>{% endif %}
-                        </select>
-                    </div>
-                    <div class="col-md-2"><input name="link_label" class="form-control form-control-sm" placeholder="Label (e.g. owns)"></div>
-                    <div class="col-md-2">
-                        <select name="directional" class="form-select form-select-sm">
-                            <option value="1" selected>Directed →</option>
-                            <option value="0">Undirected —</option>
-                        </select>
-                    </div>
-                    <div class="col-md-2"><button type="submit" class="btn btn-accent btn-sm w-100"><i class="bi bi-plus"></i> Add</button></div>
-                    <div class="col-md-12"><input name="notes" class="form-control form-control-sm" placeholder="Notes (optional)"></div>
+                <div class="small text-danger mb-3">
+                    <i class="bi bi-exclamation-triangle"></i>
+                    {% if evidence_drive_path %}
+                        Evidence drive <code>{{ evidence_drive_path }}</code> is not connected. Connect the drive to upload files.
+                    {% else %}
+                        No evidence drive configured. <a href="{{ url_for('dfars.edit_case', case_id=case.case_id) }}">Configure one</a> before uploading.
+                    {% endif %}
                 </div>
-            </form>
-            {% else %}
-            <p class="text-muted mb-0">Add at least one entity or evidence item before creating links.</p>
-            {% endif %}
+                {% endif %}
+
+                {# ──────────────────────────────────────────────── #}
+                {# EVIDENCE NARRATIVE — investigator-supplied context #}
+                {# Sits ABOVE the forensic tool analysis so the user  #}
+                {# provides narrative BEFORE running Analyze Evidence #}
+                {# ──────────────────────────────────────────────── #}
+                <div class="detail-label">Evidence Narrative</div>
+                <div class="mb-3">
+                    <textarea id="evidence-narrative-{{ e.evidence_id }}"
+                              class="form-control form-control-sm mb-2 evidence-narrative-input"
+                              rows="4"
+                              data-evidence="{{ e.evidence_id }}"
+                              placeholder="What this evidence is, where it came from, why it matters to the case. The Analyze Evidence button will use this narrative as context for the final AI report.">{{ latest.osint_narrative if latest else '' }}</textarea>
+                    <span class="form-text small">This narrative is sent to Agent Zero AI alongside the forensic tool output to produce the final Evidence Narrative report.</span>
+                </div>
+
+                {# ──────────────────────────────────────────────── #}
+                {# Forensic Tool Analysis — Agent Zero + Kali toolkit #}
+                {# ──────────────────────────────────────────────── #}
+                {% if files_for_e %}
+                <div class="detail-label">Forensic Tool Analysis</div>
+                <div class="mb-3" id="forensic-panel-{{ loop.index }}">
+                    <button class="btn btn-warning btn-sm forensic-analyze-btn"
+                            data-url="{{ url_for('dfars.forensic_analyze_evidence', case_id=case.case_id, evidence_id=e.evidence_id) }}"
+                            data-panel="forensic-panel-{{ loop.index }}"
+                            data-evidence="{{ e.evidence_id }}"
+                            data-narrative-id="evidence-narrative-{{ e.evidence_id }}"
+                            data-filecount="{{ files_for_e|length }}">
+                        <i class="bi bi-terminal"></i> Analyze Evidence
+                    </button>
+                    <span class="form-text small ms-2">
+                        Runs Kali forensic tools, then synthesizes the results
+                        with your Evidence Narrative into a single AI report.
+                        Tool Usage and Analysis Notes auto-populate.
+                    </span>
+                    {# Progress panel — hidden until analysis starts #}
+                    <div class="forensic-progress mt-2" style="display:none">
+                        <div class="card" style="background:#12151a;border-color:var(--border)">
+                            <div class="card-body py-2 px-3">
+                                <div class="d-flex align-items-center mb-2">
+                                    <span class="spinner-border spinner-border-sm text-warning me-2 forensic-spinner"></span>
+                                    <strong class="forensic-status-text small">Initializing forensic analysis...</strong>
+                                </div>
+                                <div class="progress mb-2" style="height:6px;background:#2d333b">
+                                    <div class="progress-bar bg-warning progress-bar-striped progress-bar-animated forensic-bar" style="width:5%"></div>
+                                </div>
+                                <div class="forensic-log small" style="max-height:250px;overflow-y:auto;font-family:monospace;font-size:.75rem;color:var(--muted);white-space:pre-wrap"></div>
+                            </div>
+                        </div>
+                    </div>
+                    {# Results panel — hidden until analysis completes #}
+                    <div class="forensic-results mt-2" style="display:none"></div>
+                </div>
+                {% endif %}
+
+                {# Latest analysis result with edit / save / share / print #}
+                {% if latest %}
+                <div class="detail-label d-flex justify-content-between align-items-center">
+                    <span>Latest Analysis
+                        {% if latest.status == 'completed' %}<span class="badge bg-success ms-1">Completed</span>
+                        {% elif latest.status == 'failed' %}<span class="badge bg-danger ms-1">Failed</span>
+                        {% else %}<span class="badge bg-secondary ms-1">{{ latest.status }}</span>{% endif %}
+                    </span>
+                    <small>{{ (latest.created_at|string)[:16] if latest.created_at else '' }}</small>
+                </div>
+                {% if latest.status == 'failed' %}
+                    <div class="alert alert-danger small mb-0">{{ latest.error_message or 'Unknown error.' }}</div>
+                {% else %}
+                    {% if latest.tools_used %}<div class="small mb-1"><strong>Tools:</strong> {{ latest.tools_used }}</div>{% endif %}
+                    {% if latest.platforms_used %}<div class="small mb-2"><strong>Platforms:</strong> {{ latest.platforms_used }}</div>{% endif %}
+
+                    {# Toolbar: edit / save / cancel / share / print #}
+                    <div class="btn-group btn-group-sm mb-2 analysis-toolbar"
+                         data-analysis-id="{{ latest.analysis_id }}"
+                         data-save-url="{{ url_for('dfars.save_analysis_report', case_id=case.case_id, evidence_id=e.evidence_id, analysis_id=latest.analysis_id) }}">
+                        <button class="btn btn-outline-light analysis-edit-btn" type="button">
+                            <i class="bi bi-pencil"></i> Edit
+                        </button>
+                        <button class="btn btn-success analysis-save-btn" type="button" style="display:none">
+                            <i class="bi bi-check-lg"></i> Save
+                        </button>
+                        <button class="btn btn-outline-secondary analysis-cancel-btn" type="button" style="display:none">
+                            <i class="bi bi-x"></i> Cancel
+                        </button>
+                        <button class="btn btn-outline-info share-btn"
+                                type="button"
+                                data-type="evidence_analysis"
+                                data-id="{{ latest.analysis_id }}"
+                                data-summary="Evidence Narrative for {{ e.evidence_id }}">
+                            <i class="bi bi-share"></i> Share
+                        </button>
+                        <button class="btn btn-outline-light analysis-print-btn" type="button">
+                            <i class="bi bi-printer"></i> Print
+                        </button>
+                    </div>
+
+                    {# Display mode #}
+                    <pre class="report-md analysis-report-display">{{ latest.report_markdown }}</pre>
+
+                    {# Edit mode (hidden by default) #}
+                    <textarea class="form-control form-control-sm analysis-report-edit"
+                              rows="14"
+                              style="display:none;font-family:monospace;font-size:.78rem">{{ latest.report_markdown }}</textarea>
+                {% endif %}
+                {% endif %}
+
+                {# Quick-jump to add custody/hash pre-filled for this evidence #}
+                <div class="border-top pt-2 mt-2">
+                    <a href="#add-custody" class="btn btn-sm btn-outline-light prefill-evidence" data-eid="{{ e.evidence_id }}" data-target="add-custody">+ Custody for this item</a>
+                    <a href="#add-hash" class="btn btn-sm btn-outline-light prefill-evidence" data-eid="{{ e.evidence_id }}" data-target="add-hash">+ Hash for this item</a>
+                </div>
+            </div>
+        </div>
+        {% else %}
+        <p class="text-muted small">No evidence items yet. Add the first one below.</p>
+        {% endfor %}
+
+        {# ── Delete Evidence Modal ── #}
+        <div class="modal fade" id="deleteEvidenceModal" tabindex="-1">
+            <div class="modal-dialog">
+                <div class="modal-content bg-dark text-light">
+                    <div class="modal-header border-secondary">
+                        <h5 class="modal-title text-danger"><i class="bi bi-trash"></i> Delete Evidence</h5>
+                        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                    </div>
+                    <form id="deleteEvidenceForm" method="POST">
+                        <div class="modal-body">
+                            <div class="alert alert-danger small py-2">
+                                <i class="bi bi-exclamation-triangle"></i>
+                                <strong>Permanent, audited action.</strong> Deleting an evidence item also removes
+                                ALL of its attached files, custody events, hash verifications, analyses,
+                                and tool usage records for that item. This cannot be undone.
+                                The deletion and your justification are permanently recorded in the audit log.
+                            </div>
+
+                            <p id="delete-ev-summary" class="mb-2"></p>
+                            <p id="delete-ev-cascade" class="mb-3 small text-warning"></p>
+
+                            <div class="mb-0">
+                                <label class="form-label fw-semibold text-danger">
+                                    <i class="bi bi-shield-exclamation"></i> Justification for deletion *
+                                    <span class="text-muted fw-normal">(minimum 25 characters)</span>
+                                </label>
+                                <textarea name="justification" id="delete-ev-justification" class="form-control" rows="3" required minlength="25"
+                                          placeholder="Explain why this evidence must be deleted (e.g., duplicate entry, test data, wrong case, evidence withdrawn by court order)..."></textarea>
+                                <div class="form-text"><span id="delete-ev-charcount">0</span> / 25 minimum characters</div>
+                            </div>
+                        </div>
+                        <div class="modal-footer border-secondary">
+                            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                            <button type="submit" class="btn btn-danger" id="delete-ev-submit-btn" disabled>
+                                <i class="bi bi-trash"></i> Delete Permanently
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+
+        {# ── Add Evidence form ── #}
+        <div class="card mt-3 add-form" id="add-evidence">
+            <div class="card-header"><i class="bi bi-plus"></i> Add Evidence</div>
+            <div class="card-body">
+                <form method="POST" action="{{ url_for('dfars.add_evidence', case_id=case.case_id) }}">
+                    <div class="row g-3">
+                        <div class="col-md-4">
+                            <label for="ev-id" class="form-label">Evidence ID *</label>
+                            <input id="ev-id" name="evidence_id" class="form-control" required>
+                            <div class="form-text">Agency-specific scheme — e.g. <code>CASE-2026-001-E1</code>.</div>
+                        </div>
+                        <div class="col-md-8">
+                            <label for="ev-desc" class="form-label">Description *</label>
+                            <input id="ev-desc" name="description" class="form-control" required>
+                        </div>
+                        <div class="col-md-6">
+                            <label for="ev-cb" class="form-label">Collected By *</label>
+                            <input id="ev-cb" name="collected_by" class="form-control" required>
+                        </div>
+                    </div>
+                    <button type="button" class="btn btn-link more-toggle mt-2" data-bs-toggle="collapse" data-bs-target="#ev-more">Show more fields ▾</button>
+                    <div class="collapse" id="ev-more">
+                        <div class="row g-3 mt-1">
+                            <div class="col-md-4">
+                                <label for="ev-type" class="form-label">Type</label>
+                                <input id="ev-type" name="evidence_type" class="form-control" placeholder="Mobile Device">
+                            </div>
+                            <div class="col-md-4">
+                                <label for="ev-cdt" class="form-label">Collection Date/Time</label>
+                                <input id="ev-cdt" name="collection_datetime" type="datetime-local" class="form-control">
+                            </div>
+                            <div class="col-md-4">
+                                <label for="ev-loc" class="form-label">Collection Location</label>
+                                <input id="ev-loc" name="location" class="form-control">
+                            </div>
+                            <div class="col-md-4">
+                                <label for="ev-mm" class="form-label">Make / Model</label>
+                                <input id="ev-mm" name="make_model" class="form-control">
+                            </div>
+                            <div class="col-md-4">
+                                <label for="ev-sn" class="form-label">Serial Number</label>
+                                <input id="ev-sn" name="serial_number" class="form-control">
+                            </div>
+                            <div class="col-md-4">
+                                <label for="ev-sl" class="form-label">Storage Location</label>
+                                <input id="ev-sl" name="storage_location" class="form-control">
+                            </div>
+                            <div class="col-md-4">
+                                <label for="ev-status" class="form-label">Status</label>
+                                <select id="ev-status" name="status" class="form-select">
+                                    <option>Collected</option>
+                                    <option>In Analysis</option>
+                                    <option>Returned</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="mt-3">
+                        <button type="submit" class="btn btn-accent"><i class="bi bi-plus"></i> Add Evidence</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        </div>{# /section-body #}
+    </div>{# /collapse #}
+</div>
+
+
+{# ════════════════════════════════════════════════════════
+   CHAIN OF CUSTODY SECTION
+   ════════════════════════════════════════════════════════ #}
+<div class="section mb-3" id="custody">
+    <div class="section-header" role="button" data-bs-toggle="collapse" data-bs-target="#sec-custody" aria-expanded="true" aria-controls="sec-custody">
+        <h5><i class="bi bi-chevron-down chev"></i> Chain of Custody <span class="count">({{ custody|length }})</span></h5>
+        <span class="small text-muted">Every change of possession for every item</span>
+    </div>
+    <div class="collapse show" id="sec-custody">
+        <div class="section-body">
+
+        {% if custody %}
+        <table class="table table-sm compact-table">
+            <thead><tr><th>Evidence</th><th>#</th><th>Action</th><th>From</th><th>To</th><th>When</th><th>Location</th><th>Purpose</th><th style="width:90px"></th></tr></thead>
+            <tbody>
+            {% for c in custody %}
+            <tr>
+                <td><code>{{ c.evidence_id }}</code></td>
+                <td>{{ c.custody_sequence }}</td>
+                <td>{{ c.action }}</td>
+                <td>{{ c.from_party }}</td>
+                <td>{{ c.to_party }}</td>
+                <td><small>{{ (c.custody_datetime|string)[:16] if c.custody_datetime else '' }}</small></td>
+                <td>{{ c.location }}</td>
+                <td><small>{{ c.purpose }}</small></td>
+                <td class="text-end text-nowrap">
+                    <button type="button" class="btn btn-sm btn-outline-info py-0 px-1 share-btn"
+                            data-type="custody" data-id="{{ c.custody_id }}"
+                            data-summary="Custody #{{ c.custody_sequence }} ({{ c.action }}) on {{ c.evidence_id }}"
+                            title="Share / Print"><i class="bi bi-share"></i></button>
+                    <button type="button" class="btn btn-sm btn-outline-light py-0 px-1 custody-edit-btn"
+                            data-id="{{ c.custody_id }}"
+                            data-evidence="{{ c.evidence_id }}"
+                            data-action="{{ c.action }}"
+                            data-from="{{ c.from_party }}"
+                            data-to="{{ c.to_party }}"
+                            data-dt="{{ (c.custody_datetime|string)[:16] if c.custody_datetime else '' }}"
+                            data-location="{{ c.location }}"
+                            data-purpose="{{ c.purpose }}"
+                            data-notes="{{ c.notes }}"
+                            title="Edit"><i class="bi bi-pencil"></i></button>
+                    <button type="button" class="btn btn-sm btn-outline-danger py-0 px-1 custody-delete-btn"
+                            data-id="{{ c.custody_id }}"
+                            data-evidence="{{ c.evidence_id }}"
+                            data-action="{{ c.action }}"
+                            data-seq="{{ c.custody_sequence }}"
+                            title="Delete"><i class="bi bi-trash"></i></button>
+                </td>
+            </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <p class="text-muted small">No custody events yet. Every evidence item needs at least one custody event documenting who received it and when.</p>
+        {% endif %}
+
+        {# ── Edit Custody Modal ── #}
+        <div class="modal fade" id="editCustodyModal" tabindex="-1">
+            <div class="modal-dialog modal-lg">
+                <div class="modal-content bg-dark text-light">
+                    <div class="modal-header border-secondary">
+                        <h5 class="modal-title"><i class="bi bi-pencil"></i> Edit Custody Event</h5>
+                        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                    </div>
+                    <form id="editCustodyForm" method="POST">
+                        <div class="modal-body">
+                            <div class="alert alert-warning small py-2">
+                                <i class="bi bi-exclamation-triangle"></i>
+                                <strong>Audited action.</strong> Editing chain of custody is a legally significant change.
+                                You must explain why this edit is necessary. This justification is permanently recorded in the audit log.
+                            </div>
+
+                            <div class="row g-3">
+                                <div class="col-md-6">
+                                    <label class="form-label">Action *</label>
+                                    <select name="action" id="edit-cu-action" class="form-select" required>
+                                        <optgroup label="Acquisition">
+                                            <option value="Collected">Collected</option>
+                                            <option value="Received">Received</option>
+                                            <option value="Seized">Seized</option>
+                                        </optgroup>
+                                        <optgroup label="Preservation">
+                                            <option value="Sealed">Sealed</option>
+                                            <option value="Stored">Stored</option>
+                                            <option value="Logged In">Logged In</option>
+                                        </optgroup>
+                                        <optgroup label="Processing">
+                                            <option value="Imaged">Imaged</option>
+                                            <option value="Examined">Examined</option>
+                                            <option value="Photographed">Photographed</option>
+                                            <option value="Extracted">Extracted</option>
+                                        </optgroup>
+                                        <optgroup label="Transfer">
+                                            <option value="Transferred">Transferred</option>
+                                            <option value="Shipped">Shipped</option>
+                                            <option value="Checked Out">Checked Out</option>
+                                        </optgroup>
+                                        <optgroup label="Disposition">
+                                            <option value="Returned">Returned</option>
+                                            <option value="Released">Released</option>
+                                            <option value="Destroyed">Destroyed</option>
+                                        </optgroup>
+                                    </select>
+                                </div>
+                                <div class="col-md-6">
+                                    <label class="form-label">Date / Time *</label>
+                                    <input name="custody_datetime" id="edit-cu-dt" type="datetime-local" class="form-control" required>
+                                </div>
+                                <div class="col-md-6">
+                                    <label class="form-label">From Party *</label>
+                                    <input name="from_party" id="edit-cu-from" class="form-control" required list="cu-parties-list">
+                                </div>
+                                <div class="col-md-6">
+                                    <label class="form-label">To Party *</label>
+                                    <input name="to_party" id="edit-cu-to" class="form-control" required list="cu-parties-list">
+                                </div>
+                                <div class="col-md-6">
+                                    <label class="form-label">Location
+                                        <i class="bi bi-question-circle text-info" style="cursor:help"
+                                           data-bs-toggle="tooltip" data-bs-placement="top"
+                                           title="The physical location where this handoff took place. Examples: '123 Main St, Suite 200', 'FBI Field Office, Baltimore', 'Evidence Room B-12', 'Client premises'. Be specific enough that someone could verify the location later."></i>
+                                    </label>
+                                    <input name="location" id="edit-cu-loc" class="form-control" list="cu-locations-list">
+                                </div>
+                                <div class="col-md-6">
+                                    <label class="form-label">Purpose
+                                        <i class="bi bi-question-circle text-info" style="cursor:help"
+                                           data-bs-toggle="tooltip" data-bs-placement="top"
+                                           title="Why this custody event occurred. Examples: 'Initial evidence collection from scene', 'Transfer to forensic lab for imaging', 'Forensic examination of mobile device', 'Return to evidence room after analysis'. Establishes the reason for each handoff in the chain."></i>
+                                    </label>
+                                    <input name="purpose" id="edit-cu-purpose" class="form-control" list="cu-purpose-list">
+                                </div>
+                                <div class="col-12">
+                                    <label class="form-label">Notes
+                                        <i class="bi bi-question-circle text-info" style="cursor:help"
+                                           data-bs-toggle="tooltip" data-bs-placement="top"
+                                           title="Any additional observations about the condition or state of the evidence at the time of this event. Examples: 'Device powered off, no visible damage', 'Tamper-evident seal intact, bag #TE-4421', 'Screen cracked in lower-left corner, photographed before examination'. These notes may be referenced in court to establish evidence integrity."></i>
+                                    </label>
+                                    <input name="notes" id="edit-cu-notes" class="form-control"
+                                           placeholder="Condition of evidence, seal numbers, observations...">
+                                </div>
+                            </div>
+
+                            <hr class="border-secondary">
+                            <div class="mb-0">
+                                <label class="form-label fw-semibold text-warning">
+                                    <i class="bi bi-shield-exclamation"></i> Justification for this edit * <span class="text-muted fw-normal">(minimum 25 characters)</span>
+                                </label>
+                                <textarea name="justification" id="edit-cu-justification" class="form-control" rows="3" required minlength="25"
+                                          placeholder="Explain why this custody record needs to be changed (e.g., correcting a data entry error, updating party name, fixing timestamp)..."></textarea>
+                                <div class="form-text"><span id="edit-cu-charcount">0</span> / 25 minimum characters</div>
+                            </div>
+                        </div>
+                        <div class="modal-footer border-secondary">
+                            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                            <button type="submit" class="btn btn-warning" id="edit-cu-submit-btn" disabled>
+                                <i class="bi bi-pencil"></i> Save Changes
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+
+        {# ── Delete Custody Modal ── #}
+        <div class="modal fade" id="deleteCustodyModal" tabindex="-1">
+            <div class="modal-dialog">
+                <div class="modal-content bg-dark text-light">
+                    <div class="modal-header border-secondary">
+                        <h5 class="modal-title text-danger"><i class="bi bi-trash"></i> Delete Custody Event</h5>
+                        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                    </div>
+                    <form id="deleteCustodyForm" method="POST">
+                        <div class="modal-body">
+                            <div class="alert alert-danger small py-2">
+                                <i class="bi bi-exclamation-triangle"></i>
+                                <strong>Permanent, audited action.</strong> Deleting a chain of custody event is a legally significant change.
+                                The deletion and your justification are permanently recorded in the audit log. This cannot be undone.
+                            </div>
+
+                            <p id="delete-cu-summary" class="mb-3"></p>
+
+                            <div class="mb-0">
+                                <label class="form-label fw-semibold text-danger">
+                                    <i class="bi bi-shield-exclamation"></i> Justification for deletion * <span class="text-muted fw-normal">(minimum 25 characters)</span>
+                                </label>
+                                <textarea name="justification" id="delete-cu-justification" class="form-control" rows="3" required minlength="25"
+                                          placeholder="Explain why this custody record must be deleted (e.g., duplicate entry, entered on wrong evidence item, data entry error)..."></textarea>
+                                <div class="form-text"><span id="delete-cu-charcount">0</span> / 25 minimum characters</div>
+                            </div>
+                        </div>
+                        <div class="modal-footer border-secondary">
+                            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                            <button type="submit" class="btn btn-danger" id="delete-cu-submit-btn" disabled>
+                                <i class="bi bi-trash"></i> Delete Permanently
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+
+        {# Add Custody — guided step-by-step form #}
+        <div class="card mt-3 add-form" id="add-custody">
+            <div class="card-header"><i class="bi bi-plus"></i> Record Custody Event</div>
+            <div class="card-body">
+
+                <div class="alert alert-info small py-2 mb-3">
+                    <i class="bi bi-info-circle"></i>
+                    <strong>What is Chain of Custody?</strong>
+                    Every time evidence changes hands — collected at a scene, sealed in a bag,
+                    transferred to a lab, examined by an analyst, returned to storage — that
+                    handoff must be recorded here. This unbroken record proves the evidence
+                    was not tampered with.
+                </div>
+
+                <form method="POST" action="{{ url_for('dfars.add_custody', case_id=case.case_id) }}" id="custody-form">
+
+                    {# ── Step 1: Which evidence? ── #}
+                    <fieldset class="mb-3">
+                        <legend class="form-label fw-semibold" style="font-size:.9rem"><span class="badge bg-secondary me-1">1</span> Which evidence item?</legend>
+                        <select id="cu-eid" name="evidence_id" class="form-select" required onchange="custodyEvidenceChanged(this.value)">
+                            <option value="">— Select evidence item —</option>
+                            {% for e in evidence %}<option value="{{ e.evidence_id }}">{{ e.evidence_id }} — {{ e.description[:60] }}</option>{% endfor %}
+                        </select>
+                        <div id="cu-last-event" class="small mt-1 text-muted" style="display:none"></div>
+                    </fieldset>
+
+                    {# ── Step 2: What happened? ── #}
+                    <fieldset class="mb-3">
+                        <legend class="form-label fw-semibold" style="font-size:.9rem"><span class="badge bg-secondary me-1">2</span> What happened to it?</legend>
+                        <select id="cu-action" name="action" class="form-select" required onchange="custodyActionChanged(this.value)">
+                            <option value="">— Select action —</option>
+                            <optgroup label="Acquisition">
+                                <option value="Collected">Collected — picked up from scene / source</option>
+                                <option value="Received">Received — accepted from another party</option>
+                                <option value="Seized">Seized — taken under legal authority</option>
+                            </optgroup>
+                            <optgroup label="Preservation">
+                                <option value="Sealed">Sealed — placed in tamper-evident packaging</option>
+                                <option value="Stored">Stored — placed in secure storage</option>
+                                <option value="Logged In">Logged In — checked into evidence room</option>
+                            </optgroup>
+                            <optgroup label="Processing">
+                                <option value="Imaged">Imaged — forensic image / copy created</option>
+                                <option value="Examined">Examined — forensic analysis performed</option>
+                                <option value="Photographed">Photographed — documented visually</option>
+                                <option value="Extracted">Extracted — data extracted from device</option>
+                            </optgroup>
+                            <optgroup label="Transfer">
+                                <option value="Transferred">Transferred — moved to another party</option>
+                                <option value="Shipped">Shipped — sent via courier / mail</option>
+                                <option value="Checked Out">Checked Out — removed from evidence room</option>
+                            </optgroup>
+                            <optgroup label="Disposition">
+                                <option value="Returned">Returned — given back to owner / submitter</option>
+                                <option value="Released">Released — released from custody</option>
+                                <option value="Destroyed">Destroyed — disposed of per policy</option>
+                            </optgroup>
+                        </select>
+                        <div id="cu-action-hint" class="form-text small"></div>
+                    </fieldset>
+
+                    {# ── Step 3: Who was involved? ── #}
+                    <fieldset class="mb-3">
+                        <legend class="form-label fw-semibold" style="font-size:.9rem"><span class="badge bg-secondary me-1">3</span> Who was involved?</legend>
+                        <div class="row g-3">
+                            <div class="col-md-6">
+                                <label for="cu-from" class="form-label">From (releasing party) *</label>
+                                <input id="cu-from" name="from_party" class="form-control" required
+                                       list="cu-parties-list" placeholder="Who had it before?">
+                                <div class="form-text">The person, agency, or location releasing the item.</div>
+                            </div>
+                            <div class="col-md-6">
+                                <label for="cu-to" class="form-label">To (receiving party) *</label>
+                                <input id="cu-to" name="to_party" class="form-control" required
+                                       list="cu-parties-list" placeholder="Who has it now?">
+                                <div class="form-text">The person, agency, or location receiving the item.</div>
+                            </div>
+                        </div>
+                        <datalist id="cu-parties-list">
+                            {% for p in known_parties %}<option value="{{ p }}">{% endfor %}
+                            <option value="Evidence Room">
+                            <option value="Lab">
+                            <option value="Court">
+                            <option value="Owner / Submitter">
+                        </datalist>
+                    </fieldset>
+
+                    {# ── Step 4: When and where? ── #}
+                    <fieldset class="mb-3">
+                        <legend class="form-label fw-semibold" style="font-size:.9rem"><span class="badge bg-secondary me-1">4</span> When and where?</legend>
+                        <div class="row g-3">
+                            <div class="col-md-4">
+                                <label for="cu-dt" class="form-label">Date / Time *</label>
+                                <input id="cu-dt" name="custody_datetime" type="datetime-local" class="form-control" required>
+                                <div class="form-text">When the handoff occurred. Defaults to now.</div>
+                            </div>
+                            <div class="col-md-4">
+                                <label for="cu-loc" class="form-label">Location
+                                    <i class="bi bi-question-circle text-info" style="cursor:help"
+                                       data-bs-toggle="tooltip" data-bs-placement="top"
+                                       title="The physical location where this handoff took place. Examples: '123 Main St, Suite 200', 'FBI Field Office, Baltimore', 'Evidence Room B-12', 'Client premises'. Be specific enough that someone could verify the location later."></i>
+                                </label>
+                                <input id="cu-loc" name="location" class="form-control"
+                                       list="cu-locations-list" placeholder="Where did this happen?">
+                            </div>
+                            <div class="col-md-4">
+                                <label for="cu-purpose" class="form-label">Purpose
+                                    <i class="bi bi-question-circle text-info" style="cursor:help"
+                                       data-bs-toggle="tooltip" data-bs-placement="top"
+                                       title="Why this custody event occurred. Examples: 'Initial evidence collection from scene', 'Transfer to forensic lab for imaging', 'Forensic examination of mobile device', 'Return to evidence room after analysis'. Establishes the reason for each handoff in the chain."></i>
+                                </label>
+                                <input id="cu-purpose" name="purpose" class="form-control"
+                                       list="cu-purpose-list" placeholder="Why did this handoff happen?">
+                            </div>
+                        </div>
+                        <datalist id="cu-locations-list">
+                            {% for loc in known_locations %}<option value="{{ loc }}">{% endfor %}
+                        </datalist>
+                        <datalist id="cu-purpose-list">
+                            <option value="Initial evidence collection">
+                            <option value="Transfer to forensic lab">
+                            <option value="Forensic imaging">
+                            <option value="Forensic examination">
+                            <option value="Data extraction">
+                            <option value="Secure storage">
+                            <option value="Court presentation">
+                            <option value="Return to owner">
+                            <option value="Long-term retention">
+                        </datalist>
+                        <div class="row g-3 mt-1">
+                            <div class="col-12">
+                                <label for="cu-notes" class="form-label">Notes
+                                    <i class="bi bi-question-circle text-info" style="cursor:help"
+                                       data-bs-toggle="tooltip" data-bs-placement="top"
+                                       title="Any additional observations about the condition or state of the evidence at the time of this event. Examples: 'Device powered off, no visible damage', 'Tamper-evident seal intact, bag #TE-4421', 'Screen cracked in lower-left corner, photographed before examination', 'Original packaging retained'. These notes may be referenced in court to establish evidence integrity."></i>
+                                </label>
+                                <input id="cu-notes" name="notes" class="form-control"
+                                       placeholder="Condition of evidence, seal numbers, observations...">
+                            </div>
+                        </div>
+                    </fieldset>
+
+                    <div class="mt-3">
+                        <button type="submit" class="btn btn-accent"><i class="bi bi-plus"></i> Record Custody Event</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        </div>{# /section-body #}
+    </div>{# /collapse #}
+</div>
+
+
+{# ════════════════════════════════════════════════════════
+   HASH VERIFICATION SECTION
+   ════════════════════════════════════════════════════════ #}
+<div class="section mb-3" id="hashes">
+    <div class="section-header" role="button" data-bs-toggle="collapse" data-bs-target="#sec-hash" aria-expanded="true" aria-controls="sec-hash">
+        <h5><i class="bi bi-chevron-down chev"></i> Hash Verification <span class="count">({{ hashes|length }})</span></h5>
+        <span class="small text-muted">Integrity checks on evidence</span>
+    </div>
+    <div class="collapse show" id="sec-hash">
+        <div class="section-body">
+
+        {% if hashes %}
+        <table class="table table-sm compact-table">
+            <thead><tr><th>Evidence</th><th>Algorithm</th><th>Hash</th><th>Verified By</th><th>When</th><th></th></tr></thead>
+            <tbody>
+            {% for h in hashes %}
+            <tr>
+                <td><code>{{ h.evidence_id }}</code></td>
+                <td>{{ h.algorithm }}</td>
+                <td><code style="font-size:.72rem">{{ h.hash_value }}</code></td>
+                <td>{{ h.verified_by }}</td>
+                <td><small>{{ (h.verification_datetime|string)[:16] if h.verification_datetime else '' }}</small></td>
+                <td class="text-end"><button type="button" class="btn btn-sm btn-outline-info py-0 px-1 share-btn"
+                        data-type="hash" data-id="{{ h.hash_id }}"
+                        data-summary="Hash {{ h.algorithm }} on {{ h.evidence_id }}: {{ h.hash_value[:24] }}..."
+                        title="Share / Print"><i class="bi bi-share"></i></button></td>
+            </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <p class="text-muted small">No hash verifications yet.</p>
+        {% endif %}
+
+        <div class="card mt-3 add-form" id="add-hash">
+            <div class="card-header"><i class="bi bi-plus"></i> Add Hash Verification</div>
+            <div class="card-body">
+                <form method="POST" action="{{ url_for('dfars.add_hash', case_id=case.case_id) }}">
+                    <div class="row g-3">
+                        <div class="col-md-3">
+                            <label for="hv-eid" class="form-label">Evidence Item *</label>
+                            <select id="hv-eid" name="evidence_id" class="form-select" required onchange="hashEvidenceChanged(this.value)">
+                                <option value="">Select…</option>
+                                {% for e in evidence %}<option value="{{ e.evidence_id }}">{{ e.evidence_id }} — {{ e.description[:40] }}</option>{% endfor %}
+                            </select>
+                            <div id="hv-file-hint" class="small mt-1 text-muted" style="display:none"></div>
+                        </div>
+                        <div class="col-md-2">
+                            <label for="hv-alg" class="form-label">Algorithm *</label>
+                            <select id="hv-alg" name="algorithm" class="form-select">
+                                <option>SHA-256</option>
+                                <option>SHA-512</option>
+                                <option>SHA-1</option>
+                                <option>MD5</option>
+                            </select>
+                            <div class="form-text">SHA-256 is current best practice.</div>
+                        </div>
+                        <div class="col-md-4">
+                            <label for="hv-val" class="form-label">Hash Value *</label>
+                            <input id="hv-val" name="hash_value" class="form-control" required
+                                   placeholder="Auto-fills from evidence files or enter manually">
+                            <div id="hv-val-hint" class="form-text small" style="display:none"></div>
+                        </div>
+                        <div class="col-md-3">
+                            <label for="hv-by" class="form-label">Verified By *</label>
+                            <input id="hv-by" name="verified_by" class="form-control" required
+                                   value="{{ session.username or case.investigator }}">
+                        </div>
+                    </div>
+                    <button type="button" class="btn btn-link more-toggle mt-2" data-bs-toggle="collapse" data-bs-target="#hv-more">Show more fields ▾</button>
+                    <div class="collapse" id="hv-more">
+                        <div class="row g-3 mt-1">
+                            <div class="col-md-4">
+                                <label for="hv-dt" class="form-label">Verification Date/Time</label>
+                                <input id="hv-dt" name="verification_datetime" type="datetime-local" class="form-control">
+                            </div>
+                            <div class="col-md-8">
+                                <label for="hv-notes" class="form-label">Notes</label>
+                                <input id="hv-notes" name="notes" class="form-control">
+                            </div>
+                        </div>
+                    </div>
+                    <div class="mt-3">
+                        <button type="submit" class="btn btn-accent"><i class="bi bi-plus"></i> Add Hash</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        </div>{# /section-body #}
+    </div>{# /collapse #}
+</div>
+
+
+{# ════════════════════════════════════════════════════════
+   TOOL USAGE (collapsed by default)
+   ════════════════════════════════════════════════════════ #}
+<div class="section mb-3" id="tools">
+    <div class="section-header" role="button" data-bs-toggle="collapse" data-bs-target="#sec-tools" aria-expanded="false" aria-controls="sec-tools">
+        <h5><i class="bi bi-chevron-down chev"></i> Tool Usage <span class="count">({{ tools|length }})</span></h5>
+        <span class="small text-muted">Forensic tools run against evidence</span>
+    </div>
+    <div class="collapse" id="sec-tools">
+        <div class="section-body">
+
+        {% if tools %}
+        <p class="small text-muted mb-2">
+            Repeatable step-by-step record of every forensic tool run for this case.
+            Auto-populated by the Analyze Evidence button. Fields marked with
+            <i class="bi bi-question-circle"></i> have guidance — click to view.
+        </p>
+        <div class="table-responsive">
+        <table class="table table-sm compact-table align-middle">
+            <thead>
+                <tr>
+                    <th style="width:3rem">Step</th>
+                    <th>Tool
+                        <i class="bi bi-question-circle text-info tool-help-icon" role="button"
+                           data-bs-toggle="modal" data-bs-target="#toolHelpModal"
+                           data-help-title="Tool" data-help-body="The exact name of the forensic tool binary or program used (e.g. <code>john</code>, <code>exiftool</code>, <code>volatility3</code>). Required for repeatability — another examiner must be able to identify the same tool."></i>
+                    </th>
+                    <th>Version
+                        <i class="bi bi-question-circle text-info tool-help-icon" role="button"
+                           data-bs-toggle="modal" data-bs-target="#toolHelpModal"
+                           data-help-title="Version" data-help-body="The version string of the tool used. Critical for SWGDE/forensic repeatability — different versions can produce different results. Auto-populated when known."></i>
+                    </th>
+                    <th>Purpose
+                        <i class="bi bi-question-circle text-info tool-help-icon" role="button"
+                           data-bs-toggle="modal" data-bs-target="#toolHelpModal"
+                           data-help-title="Purpose" data-help-body="What the tool was used to accomplish in this step (e.g. <em>Extract password hash from PDF</em>, <em>Identify file type by magic bytes</em>). Should be specific to this evidence and step."></i>
+                    </th>
+                    <th>Command
+                        <i class="bi bi-question-circle text-info tool-help-icon" role="button"
+                           data-bs-toggle="modal" data-bs-target="#toolHelpModal"
+                           data-help-title="Command Used" data-help-body="The exact command-line invocation, including all flags and arguments. Another examiner must be able to copy this command and reproduce the result on the same input."></i>
+                    </th>
+                    <th>Input File
+                        <i class="bi bi-question-circle text-info tool-help-icon" role="button"
+                           data-bs-toggle="modal" data-bs-target="#toolHelpModal"
+                           data-help-title="Input File" data-help-body="The filename(s) the tool was run against. This is the original evidence filename or an intermediate file produced by a previous step (e.g. an extracted hash file)."></i>
+                    </th>
+                    <th>Output File
+                        <i class="bi bi-question-circle text-info tool-help-icon" role="button"
+                           data-bs-toggle="modal" data-bs-target="#toolHelpModal"
+                           data-help-title="Output File" data-help-body="The file produced by the tool, if any (e.g. an extracted hash file, a recovered archive, a carved disk image). Empty if the tool only printed results to the screen."></i>
+                    </th>
+                    <th>Operator
+                        <i class="bi bi-question-circle text-info tool-help-icon" role="button"
+                           data-bs-toggle="modal" data-bs-target="#toolHelpModal"
+                           data-help-title="Operator" data-help-body="The person who ran the tool. For tools auto-populated by Analyze Evidence, this is the logged-in DFARS user at the time of the run. For manually added rows, enter your name."></i>
+                    </th>
+                    <th>When</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+            {% for t in tools %}
+            <tr>
+                <td><strong>{{ loop.index }}</strong></td>
+                <td><code>{{ t.tool_name }}</code></td>
+                <td><small>{{ t.version or '—' }}</small></td>
+                <td>{{ t.purpose }}</td>
+                <td><code style="font-size:.72rem">{{ t.command_used or '—' }}</code></td>
+                <td><small>{{ t.input_file or '—' }}</small></td>
+                <td><small>{{ t.output_file or '—' }}</small></td>
+                <td><small>{{ t.operator }}</small></td>
+                <td><small>{{ (t.execution_datetime|string)[:16] if t.execution_datetime else '' }}</small></td>
+                <td class="text-end"><button type="button" class="btn btn-sm btn-outline-info py-0 px-1 share-btn"
+                        data-type="tool" data-id="{{ t.tool_id }}"
+                        data-summary="Step {{ loop.index }}: {{ t.tool_name }} — {{ t.purpose[:50] }}"
+                        title="Share / Print"><i class="bi bi-share"></i></button></td>
+            </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+        </div>
+        {% else %}
+        <p class="text-muted small">No tool usage logged yet. Click <strong>Analyze Evidence</strong> on an evidence item to auto-populate this section.</p>
+        {% endif %}
+
+        <div class="card mt-3 add-form" id="add-tool">
+            <div class="card-header"><i class="bi bi-plus"></i> Log Tool Usage Manually</div>
+            <div class="card-body">
+                <p class="small text-muted mb-3">
+                    Most tool runs are auto-populated by <strong>Analyze Evidence</strong>.
+                    Use this form only to log a manual/external tool run that Agent Zero didn't perform.
+                </p>
+                <form method="POST" action="{{ url_for('dfars.add_tool', case_id=case.case_id) }}">
+                    <div class="row g-3">
+                        <div class="col-md-4">
+                            <label for="tu-name" class="form-label">
+                                Tool Name *
+                                <i class="bi bi-question-circle text-info tool-help-icon" role="button"
+                                   data-bs-toggle="modal" data-bs-target="#toolHelpModal"
+                                   data-help-title="Tool Name" data-help-body="The exact name of the forensic tool binary or program (e.g. <code>autopsy</code>, <code>FTK</code>, <code>EnCase</code>, <code>Volatility</code>, <code>Cellebrite</code>)."></i>
+                            </label>
+                            <input id="tu-name" name="tool_name" class="form-control" required>
+                            <div class="form-text">Autopsy, FTK, EnCase, Volatility, Cellebrite, etc.</div>
+                        </div>
+                        <div class="col-md-5">
+                            <label for="tu-purpose" class="form-label">
+                                Purpose *
+                                <i class="bi bi-question-circle text-info tool-help-icon" role="button"
+                                   data-bs-toggle="modal" data-bs-target="#toolHelpModal"
+                                   data-help-title="Purpose" data-help-body="What the tool was used to accomplish in this step. Be specific (e.g. <em>Extract password hash from suspect.7z</em>)."></i>
+                            </label>
+                            <input id="tu-purpose" name="purpose" class="form-control" required>
+                        </div>
+                        <div class="col-md-3">
+                            <label for="tu-op" class="form-label">
+                                Operator *
+                                <i class="bi bi-question-circle text-info tool-help-icon" role="button"
+                                   data-bs-toggle="modal" data-bs-target="#toolHelpModal"
+                                   data-help-title="Operator" data-help-body="The person who ran the tool. Enter your full name or username for chain of custody."></i>
+                            </label>
+                            <input id="tu-op" name="operator" class="form-control" value="{{ session.username or '' }}" required>
+                        </div>
+                    </div>
+                    <button type="button" class="btn btn-link more-toggle mt-2" data-bs-toggle="collapse" data-bs-target="#tu-more">Show more fields ▾</button>
+                    <div class="collapse" id="tu-more">
+                        <div class="row g-3 mt-1">
+                            <div class="col-md-3">
+                                <label for="tu-ver" class="form-label">
+                                    Version
+                                    <i class="bi bi-question-circle text-info tool-help-icon" role="button"
+                                       data-bs-toggle="modal" data-bs-target="#toolHelpModal"
+                                       data-help-title="Version" data-help-body="Tool version string. Critical for SWGDE/forensic repeatability — different versions can produce different results."></i>
+                                </label>
+                                <input id="tu-ver" name="version" class="form-control">
+                                <div class="form-text">Required for repeatability.</div>
+                            </div>
+                            <div class="col-md-9">
+                                <label for="tu-cmd" class="form-label">
+                                    Command Used
+                                    <i class="bi bi-question-circle text-info tool-help-icon" role="button"
+                                       data-bs-toggle="modal" data-bs-target="#toolHelpModal"
+                                       data-help-title="Command Used" data-help-body="The exact command-line invocation including all flags and arguments. Another examiner must be able to copy this and reproduce the result."></i>
+                                </label>
+                                <input id="tu-cmd" name="command_used" class="form-control">
+                            </div>
+                            <div class="col-md-6">
+                                <label for="tu-in" class="form-label">
+                                    Input File
+                                    <i class="bi bi-question-circle text-info tool-help-icon" role="button"
+                                       data-bs-toggle="modal" data-bs-target="#toolHelpModal"
+                                       data-help-title="Input File" data-help-body="Filename(s) the tool was run against. Original evidence file or an intermediate file from a previous step."></i>
+                                </label>
+                                <input id="tu-in" name="input_file" class="form-control">
+                            </div>
+                            <div class="col-md-6">
+                                <label for="tu-out" class="form-label">
+                                    Output File
+                                    <i class="bi bi-question-circle text-info tool-help-icon" role="button"
+                                       data-bs-toggle="modal" data-bs-target="#toolHelpModal"
+                                       data-help-title="Output File" data-help-body="The file produced by the tool, if any. Empty if the tool only printed results to the screen."></i>
+                                </label>
+                                <input id="tu-out" name="output_file" class="form-control">
+                            </div>
+                        </div>
+                    </div>
+                    <div class="mt-3">
+                        <button type="submit" class="btn btn-accent"><i class="bi bi-plus"></i> Log Tool</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        </div>{# /section-body #}
+    </div>{# /collapse #}
+</div>
+
+
+{# ════════════════════════════════════════════════════════
+   ANALYSIS NOTES (collapsed by default)
+   ════════════════════════════════════════════════════════ #}
+<div class="section mb-3" id="analysis">
+    <div class="section-header" role="button" data-bs-toggle="collapse" data-bs-target="#sec-analysis" aria-expanded="false" aria-controls="sec-analysis">
+        <h5><i class="bi bi-chevron-down chev"></i> Analysis Notes <span class="count">({{ analysis|length }})</span></h5>
+        <span class="small text-muted">Examiner findings and interpretations</span>
+    </div>
+    <div class="collapse" id="sec-analysis">
+        <div class="section-body">
+
+        {% if analysis %}
+        <table class="table table-sm compact-table">
+            <thead><tr><th>Category</th><th>Finding</th><th>Confidence</th><th>Evidence</th><th>Description</th><th></th></tr></thead>
+            <tbody>
+            {% for n in analysis %}
+            <tr>
+                <td>{{ n.category }}</td>
+                <td><strong>{{ n.finding }}</strong></td>
+                <td><span class="badge badge-{{ n.confidence_level|lower }}">{{ n.confidence_level }}</span></td>
+                <td><code>{{ n.evidence_id or '—' }}</code></td>
+                <td style="max-width:300px"><small>{{ n.description[:120] }}{% if n.description|length > 120 %}…{% endif %}</small></td>
+                <td class="text-end"><button type="button" class="btn btn-sm btn-outline-info py-0 px-1 share-btn"
+                        data-type="analysis" data-id="{{ n.note_id }}"
+                        data-summary="Analysis: {{ n.category }} — {{ n.finding[:40] }}"
+                        title="Share / Print"><i class="bi bi-share"></i></button></td>
+            </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <p class="text-muted small">No analysis notes yet.</p>
+        {% endif %}
+
+        <div class="card mt-3 add-form" id="add-analysis">
+            <div class="card-header"><i class="bi bi-plus"></i> Add Analysis Note</div>
+            <div class="card-body">
+                <form method="POST" action="{{ url_for('dfars.add_analysis', case_id=case.case_id) }}">
+                    <div class="row g-3">
+                        <div class="col-md-3">
+                            <label for="an-cat" class="form-label">Category *</label>
+                            <input id="an-cat" name="category" class="form-control" required>
+                            <div class="form-text">Communications, Internet History, Registry, etc.</div>
+                        </div>
+                        <div class="col-md-9">
+                            <label for="an-find" class="form-label">Finding *</label>
+                            <input id="an-find" name="finding" class="form-control" required>
+                        </div>
+                        <div class="col-12">
+                            <label for="an-desc" class="form-label">Detailed Description *</label>
+                            <textarea id="an-desc" name="description" class="form-control" rows="3" required></textarea>
+                        </div>
+                    </div>
+                    <button type="button" class="btn btn-link more-toggle mt-2" data-bs-toggle="collapse" data-bs-target="#an-more">Show more fields ▾</button>
+                    <div class="collapse" id="an-more">
+                        <div class="row g-3 mt-1">
+                            <div class="col-md-3">
+                                <label for="an-conf" class="form-label">Confidence</label>
+                                <select id="an-conf" name="confidence_level" class="form-select">
+                                    <option>High</option>
+                                    <option selected>Medium</option>
+                                    <option>Low</option>
+                                </select>
+                                <div class="form-text">High = corroborated. Low = speculative.</div>
+                            </div>
+                            <div class="col-md-4">
+                                <label for="an-eid" class="form-label">Related Evidence</label>
+                                <select id="an-eid" name="evidence_id" class="form-select">
+                                    <option value="">— none —</option>
+                                    {% for e in evidence %}<option value="{{ e.evidence_id }}">{{ e.evidence_id }}</option>{% endfor %}
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="mt-3">
+                        <button type="submit" class="btn btn-accent"><i class="bi bi-plus"></i> Add Note</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        </div>{# /section-body #}
+    </div>{# /collapse #}
+</div>
+
+
+{# ════════════════════════════════════════════════════════
+   LINK ANALYSIS DATA (entities / links / events — collapsed)
+   ════════════════════════════════════════════════════════ #}
+<div class="section mb-3" id="linkdata">
+    <div class="section-header" role="button" data-bs-toggle="collapse" data-bs-target="#sec-linkdata" aria-expanded="false" aria-controls="sec-linkdata">
+        <h5><i class="bi bi-chevron-down chev"></i> Link Analysis Data
+            <span class="count">({{ entities|length }} entities · {{ links|length }} links · {{ events|length }} events)</span>
+        </h5>
+        <span class="small text-muted">Powers the Link Analysis graph + Crime Line</span>
+    </div>
+    <div class="collapse" id="sec-linkdata">
+        <div class="section-body">
+
+        {# ── Entities ── #}
+        <h6 class="mt-2"><i class="bi bi-person-badge"></i> Entities</h6>
+        {% if entities %}
+        <table class="table table-sm compact-table">
+            <thead><tr><th>Type</th><th>Name</th><th>Role</th><th>Rank</th><th>Reports To</th><th></th></tr></thead>
+            <tbody>
+            {% for ent in entities %}
+            <tr>
+                <td><span class="badge bg-secondary">{{ ent.entity_type }}</span></td>
+                <td><strong>{{ ent.display_name }}</strong></td>
+                <td>{{ ent.subtype or '' }}</td>
+                <td>{{ ent.organizational_rank or '' }}</td>
+                <td>
+                    {% if ent.parent_entity_id and ent.parent_entity_id in entity_lookup %}
+                        {{ entity_lookup[ent.parent_entity_id].display_name }}
+                    {% endif %}
+                </td>
+                <td>
+                    <form method="POST" action="{{ url_for('dfars.delete_entity', case_id=case.case_id, entity_id=ent.entity_id) }}" style="display:inline" onsubmit="return confirm('Remove entity?');">
+                        <button class="btn btn-sm btn-outline-danger" type="submit"><i class="bi bi-trash"></i></button>
+                    </form>
+                </td>
+            </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <p class="text-muted small">No entities yet.</p>
+        {% endif %}
+
+        <div class="card mt-2 mb-4 add-form" id="add-entity">
+            <div class="card-header"><i class="bi bi-plus"></i> Add Entity</div>
+            <div class="card-body">
+                <form method="POST" action="{{ url_for('dfars.add_entity', case_id=case.case_id) }}">
+                    <div class="row g-3">
+                        <div class="col-md-3">
+                            <label for="en-type" class="form-label">Type *</label>
+                            <select name="entity_type" id="entity-type-select" class="form-select" required>
+                                <option value="person" selected>Person</option>
+                                <option value="business">Business</option>
+                                <option value="phone">Phone</option>
+                                <option value="email">Email</option>
+                                <option value="alias">Alias</option>
+                                <option value="address">Address</option>
+                                <option value="account">Account</option>
+                                <option value="vehicle">Vehicle</option>
+                            </select>
+                        </div>
+                        <div class="col-md-9">
+                            <label for="en-name" class="form-label">Name / Identifier *</label>
+                            <input id="en-name" name="display_name" class="form-control" required>
+                        </div>
+                    </div>
+                    <button type="button" class="btn btn-link more-toggle mt-2" data-bs-toggle="collapse" data-bs-target="#en-more">Show more fields ▾</button>
+                    <div class="collapse" id="en-more">
+                        <div class="row g-3 mt-1">
+                            <div class="col-md-3 entity-person-field">
+                                <label for="en-sub" class="form-label">Role</label>
+                                <select id="en-sub" name="subtype" class="form-select">
+                                    <option value="">—</option>
+                                    <option value="suspect">Suspect</option>
+                                    <option value="victim">Victim</option>
+                                    <option value="witness">Witness</option>
+                                    <option value="investigator">Investigator</option>
+                                    <option value="poi">Person of Interest</option>
+                                    <option value="other">Other</option>
+                                </select>
+                            </div>
+                            <div class="col-md-3 entity-person-field">
+                                <label for="en-rank" class="form-label">Rank</label>
+                                <input id="en-rank" name="organizational_rank" class="form-control" placeholder="Boss, Lieutenant, etc.">
+                            </div>
+                            <div class="col-md-3 entity-person-field">
+                                <label for="en-parent" class="form-label">Reports To</label>
+                                <select id="en-parent" name="parent_entity_id" class="form-select">
+                                    <option value="">—</option>
+                                    {% for ent in entities if ent.entity_type == 'person' %}
+                                    <option value="{{ ent.entity_id }}">{{ ent.display_name }}{% if ent.organizational_rank %} ({{ ent.organizational_rank }}){% endif %}</option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+                            <div class="col-md-12">
+                                <label for="en-notes" class="form-label">Notes</label>
+                                <input id="en-notes" name="notes" class="form-control">
+                            </div>
+                        </div>
+                    </div>
+                    <div class="mt-3">
+                        <button type="submit" class="btn btn-accent"><i class="bi bi-plus"></i> Add Entity</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        {# ── Links ── #}
+        <h6 class="mt-4"><i class="bi bi-diagram-3"></i> Links</h6>
+        {% if links %}
+        <table class="table table-sm compact-table">
+            <thead><tr><th>Source</th><th></th><th>Target</th><th>Label</th><th></th></tr></thead>
+            <tbody>
+            {% for lk in links %}
+            <tr>
+                <td>
+                    {% if lk.source_type == 'entity' %}
+                        {% set sid = lk.source_id|int %}
+                        {% if sid in entity_lookup %}<strong>{{ entity_lookup[sid].display_name }}</strong>{% else %}<em>missing</em>{% endif %}
+                    {% else %}
+                        <code>{{ lk.source_id }}</code>
+                    {% endif %}
+                </td>
+                <td>{% if lk.directional %}→{% else %}—{% endif %}</td>
+                <td>
+                    {% if lk.target_type == 'entity' %}
+                        {% set tid = lk.target_id|int %}
+                        {% if tid in entity_lookup %}<strong>{{ entity_lookup[tid].display_name }}</strong>{% else %}<em>missing</em>{% endif %}
+                    {% else %}
+                        <code>{{ lk.target_id }}</code>
+                    {% endif %}
+                </td>
+                <td>{{ lk.link_label or '' }}</td>
+                <td>
+                    <form method="POST" action="{{ url_for('dfars.delete_link', case_id=case.case_id, link_id=lk.link_id) }}" style="display:inline" onsubmit="return confirm('Remove link?');">
+                        <button class="btn btn-sm btn-outline-danger" type="submit"><i class="bi bi-trash"></i></button>
+                    </form>
+                </td>
+            </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <p class="text-muted small">No links yet.</p>
+        {% endif %}
+
+        {% if entities or evidence %}
+        <div class="card mt-2 mb-4 add-form" id="add-link">
+            <div class="card-header"><i class="bi bi-plus"></i> Add Link</div>
+            <div class="card-body">
+                <form method="POST" action="{{ url_for('dfars.add_link', case_id=case.case_id) }}">
+                    <div class="row g-3">
+                        <div class="col-md-4">
+                            <label for="lk-src" class="form-label">Source *</label>
+                            <select id="lk-src" name="source" class="form-select" required>
+                                <option value="">Select…</option>
+                                {% if entities %}<optgroup label="Entities">
+                                    {% for ent in entities %}<option value="entity:{{ ent.entity_id }}">{{ ent.display_name }} ({{ ent.entity_type }})</option>{% endfor %}
+                                </optgroup>{% endif %}
+                                {% if evidence %}<optgroup label="Evidence">
+                                    {% for e in evidence %}<option value="evidence:{{ e.evidence_id }}">{{ e.evidence_id }}</option>{% endfor %}
+                                </optgroup>{% endif %}
+                            </select>
+                        </div>
+                        <div class="col-md-4">
+                            <label for="lk-tgt" class="form-label">Target *</label>
+                            <select id="lk-tgt" name="target" class="form-select" required>
+                                <option value="">Select…</option>
+                                {% if entities %}<optgroup label="Entities">
+                                    {% for ent in entities %}<option value="entity:{{ ent.entity_id }}">{{ ent.display_name }} ({{ ent.entity_type }})</option>{% endfor %}
+                                </optgroup>{% endif %}
+                                {% if evidence %}<optgroup label="Evidence">
+                                    {% for e in evidence %}<option value="evidence:{{ e.evidence_id }}">{{ e.evidence_id }}</option>{% endfor %}
+                                </optgroup>{% endif %}
+                            </select>
+                        </div>
+                        <div class="col-md-4">
+                            <label for="lk-label" class="form-label">Label *</label>
+                            <input id="lk-label" name="link_label" class="form-control" placeholder="owns, called, employs…" required>
+                        </div>
+                    </div>
+                    <button type="button" class="btn btn-link more-toggle mt-2" data-bs-toggle="collapse" data-bs-target="#lk-more">Show more fields ▾</button>
+                    <div class="collapse" id="lk-more">
+                        <div class="row g-3 mt-1">
+                            <div class="col-md-4">
+                                <label for="lk-dir" class="form-label">Direction</label>
+                                <select id="lk-dir" name="directional" class="form-select">
+                                    <option value="1" selected>Directed →</option>
+                                    <option value="0">Undirected —</option>
+                                </select>
+                            </div>
+                            <div class="col-md-8">
+                                <label for="lk-notes" class="form-label">Notes</label>
+                                <input id="lk-notes" name="notes" class="form-control">
+                            </div>
+                        </div>
+                    </div>
+                    <div class="mt-3">
+                        <button type="submit" class="btn btn-accent"><i class="bi bi-plus"></i> Add Link</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+        {% else %}
+        <p class="text-muted small mb-4">Add at least one entity or evidence item before creating links.</p>
+        {% endif %}
+
+        {# ── Events ── #}
+        <h6 class="mt-4"><i class="bi bi-clock-history"></i> Events (Crime Line)</h6>
+        {% if events %}
+        <table class="table table-sm compact-table">
+            <thead><tr><th>When</th><th>Title</th><th>Category</th><th>Entity</th><th></th></tr></thead>
+            <tbody>
+            {% for ev in events %}
+            <tr>
+                <td><small>{{ (ev.event_datetime|string)[:16] if ev.event_datetime else '' }}</small></td>
+                <td><strong>{{ ev.title }}</strong></td>
+                <td>{{ ev.category or '' }}</td>
+                <td>{% if ev.related_entity_id and ev.related_entity_id in entity_lookup %}{{ entity_lookup[ev.related_entity_id].display_name }}{% endif %}</td>
+                <td>
+                    <form method="POST" action="{{ url_for('dfars.delete_event', case_id=case.case_id, event_id=ev.event_id) }}" style="display:inline" onsubmit="return confirm('Remove event?');">
+                        <button class="btn btn-sm btn-outline-danger" type="submit"><i class="bi bi-trash"></i></button>
+                    </form>
+                </td>
+            </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <p class="text-muted small">No events yet.</p>
+        {% endif %}
+
+        <div class="card mt-2 add-form" id="add-event">
+            <div class="card-header"><i class="bi bi-plus"></i> Add Event</div>
+            <div class="card-body">
+                <form method="POST" action="{{ url_for('dfars.add_event', case_id=case.case_id) }}">
+                    <div class="row g-3">
+                        <div class="col-md-6">
+                            <label for="et-title" class="form-label">Event Title *</label>
+                            <input id="et-title" name="title" class="form-control" required>
+                        </div>
+                        <div class="col-md-6">
+                            <label for="et-start" class="form-label">Start Date/Time *</label>
+                            <input id="et-start" name="event_datetime" type="datetime-local" class="form-control" required>
+                        </div>
+                    </div>
+                    <button type="button" class="btn btn-link more-toggle mt-2" data-bs-toggle="collapse" data-bs-target="#et-more">Show more fields ▾</button>
+                    <div class="collapse" id="et-more">
+                        <div class="row g-3 mt-1">
+                            <div class="col-md-4">
+                                <label for="et-end" class="form-label">End (for ranged events)</label>
+                                <input id="et-end" name="event_end_datetime" type="datetime-local" class="form-control">
+                            </div>
+                            <div class="col-md-4">
+                                <label for="et-cat" class="form-label">Category</label>
+                                <select id="et-cat" name="category" class="form-select">
+                                    <option value="">—</option>
+                                    <option value="observation">Observation</option>
+                                    <option value="communication">Communication</option>
+                                    <option value="movement">Movement</option>
+                                    <option value="custodial">Custodial</option>
+                                    <option value="other">Other</option>
+                                </select>
+                            </div>
+                            <div class="col-md-4">
+                                <label for="et-ent" class="form-label">Related Entity</label>
+                                <select id="et-ent" name="related_entity_id" class="form-select">
+                                    <option value="">—</option>
+                                    {% for ent in entities %}<option value="{{ ent.entity_id }}">{{ ent.display_name }}</option>{% endfor %}
+                                </select>
+                            </div>
+                            <div class="col-md-6">
+                                <label for="et-evi" class="form-label">Related Evidence</label>
+                                <select id="et-evi" name="related_evidence_id" class="form-select">
+                                    <option value="">—</option>
+                                    {% for e in evidence %}<option value="{{ e.evidence_id }}">{{ e.evidence_id }}</option>{% endfor %}
+                                </select>
+                            </div>
+                            <div class="col-md-6">
+                                <label for="et-desc" class="form-label">Description</label>
+                                <input id="et-desc" name="description" class="form-control">
+                            </div>
+                        </div>
+                    </div>
+                    <div class="mt-3">
+                        <button type="submit" class="btn btn-accent"><i class="bi bi-plus"></i> Add Event</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        </div>{# /section-body #}
+    </div>{# /collapse #}
+</div>
+
+{# ════════════════════════════════════════════════════════
+   SHARES & PRINTS SECTION
+   ════════════════════════════════════════════════════════ #}
+<div class="section mb-3" id="shares">
+    <div class="section-header" role="button" data-bs-toggle="collapse" data-bs-target="#sec-shares" aria-expanded="false" aria-controls="sec-shares">
+        <h5><i class="bi bi-chevron-down chev"></i> Shares &amp; Prints <span class="count">({{ shares|length }})</span></h5>
+        <span class="small text-muted">Audit trail of every emailed or exported record</span>
+    </div>
+    <div class="collapse" id="sec-shares">
+        <div class="section-body">
+
+        {% if shares %}
+        <table class="table table-sm compact-table">
+            <thead><tr><th>When</th><th>Action</th><th>Record</th><th>Summary</th><th>Recipient</th><th>SHA-256</th><th>By</th><th>Narrative</th></tr></thead>
+            <tbody>
+            {% for s in shares %}
+            <tr>
+                <td><small>{{ (s.created_at|string)[:16] if s.created_at else '' }}</small></td>
+                <td><span class="badge {{ 'bg-info' if s.action == 'email' else 'bg-secondary' }}">{{ s.action }}</span></td>
+                <td><code style="font-size:.75rem">{{ s.record_type }}/{{ s.record_id }}</code></td>
+                <td><small>{{ s.record_summary[:60] }}</small></td>
+                <td><small>{{ s.recipient or '—' }}</small></td>
+                <td><code style="font-size:.68rem" title="{{ s.file_hash }}">{{ s.file_hash[:16] }}…</code></td>
+                <td>{{ s.shared_by }}</td>
+                <td><small>{{ s.narrative[:80] }}{% if s.narrative|length > 80 %}…{% endif %}</small></td>
+            </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <p class="text-muted small">No records have been shared or printed yet.</p>
+        {% endif %}
+
+        </div>{# /section-body #}
+    </div>{# /collapse #}
+</div>
+
+{# ── Tool Usage Help Modal (shared, populated dynamically) ── #}
+<div class="modal fade" id="toolHelpModal" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content bg-dark text-light">
+            <div class="modal-header border-secondary">
+                <h5 class="modal-title">
+                    <i class="bi bi-info-circle text-info"></i>
+                    <span id="toolHelpTitle">Field Help</span>
+                </h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <p class="small mb-0" id="toolHelpBody">Field guidance.</p>
+            </div>
+            <div class="modal-footer border-secondary">
+                <button type="button" class="btn btn-sm btn-outline-light" data-bs-dismiss="modal">Got it</button>
+            </div>
         </div>
     </div>
 </div>
 
-{# ── Events Tab (Crime Line source data) ── #}
-<div class="tab-pane fade" id="events">
-    {% if events %}
-    <table class="table table-striped table-sm">
-        <thead><tr><th>When</th><th>Title</th><th>Category</th><th>Entity</th><th>Evidence</th><th>Description</th><th></th></tr></thead>
-        <tbody>
-        {% for ev in events %}
-        <tr>
-            <td><small>{{ (ev.event_datetime|string)[:16] if ev.event_datetime else '' }}</small></td>
-            <td><strong>{{ ev.title }}</strong></td>
-            <td>{{ ev.category or '' }}</td>
-            <td>
-                {% if ev.related_entity_id and ev.related_entity_id in entity_lookup %}
-                    {{ entity_lookup[ev.related_entity_id].display_name }}
-                {% endif %}
-            </td>
-            <td>{% if ev.related_evidence_id %}<code>{{ ev.related_evidence_id }}</code>{% endif %}</td>
-            <td style="max-width:260px">{{ (ev.description or '')[:100] }}{% if (ev.description or '')|length > 100 %}...{% endif %}</td>
-            <td>
-                <form method="POST" action="{{ url_for('dfars.delete_event', case_id=case.case_id, event_id=ev.event_id) }}" style="display:inline" onsubmit="return confirm('Remove this event?');">
-                    <button type="submit" class="btn btn-sm btn-outline-danger" title="Remove"><i class="bi bi-trash"></i></button>
-                </form>
-            </td>
-        </tr>
-        {% endfor %}
-        </tbody>
-    </table>
-    {% else %}
-    <p class="text-muted">No events yet. Log investigator-observed events here; they'll appear on the Crime Line timeline.</p>
-    {% endif %}
+{# ── Global Share/Print Modal ── #}
+<div class="modal fade" id="shareModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content bg-dark text-light">
+            <div class="modal-header border-secondary">
+                <h5 class="modal-title"><i class="bi bi-share"></i> Share / Print Record</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <form id="shareForm" method="POST" action="{{ url_for('dfars.share_record', case_id=case.case_id) }}">
+                <input type="hidden" name="record_type" id="share-record-type">
+                <input type="hidden" name="record_id" id="share-record-id">
+                <div class="modal-body">
+                    <p id="share-summary" class="mb-3"></p>
 
-    <div class="card mt-3">
-        <div class="card-header"><i class="bi bi-plus"></i> Add Event</div>
-        <div class="card-body">
-            <form method="POST" action="{{ url_for('dfars.add_event', case_id=case.case_id) }}">
-                <div class="row g-2">
-                    <div class="col-md-4"><input name="title" class="form-control form-control-sm" placeholder="Event title *" required></div>
-                    <div class="col-md-3"><input name="event_datetime" type="datetime-local" class="form-control form-control-sm" required></div>
-                    <div class="col-md-3"><input name="event_end_datetime" type="datetime-local" class="form-control form-control-sm" placeholder="End (optional)"></div>
-                    <div class="col-md-2">
-                        <select name="category" class="form-select form-select-sm">
-                            <option value="">Category</option>
-                            <option value="observation">Observation</option>
-                            <option value="communication">Communication</option>
-                            <option value="movement">Movement</option>
-                            <option value="custodial">Custodial</option>
-                            <option value="other">Other</option>
-                        </select>
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Action *</label>
+                        <div class="d-flex gap-3">
+                            <div class="form-check">
+                                <input class="form-check-input" type="radio" name="share_action" id="share-action-email" value="email" checked onchange="shareActionChanged()">
+                                <label class="form-check-label" for="share-action-email"><i class="bi bi-envelope"></i> Email as .md</label>
+                            </div>
+                            <div class="form-check">
+                                <input class="form-check-input" type="radio" name="share_action" id="share-action-print" value="print" onchange="shareActionChanged()">
+                                <label class="form-check-label" for="share-action-print"><i class="bi bi-printer"></i> Export / Print .md</label>
+                            </div>
+                        </div>
                     </div>
-                    <div class="col-md-4">
-                        <select name="related_entity_id" class="form-select form-select-sm">
-                            <option value="">Related entity (opt)</option>
-                            {% for ent in entities %}<option value="{{ ent.entity_id }}">{{ ent.display_name }} ({{ ent.entity_type }})</option>{% endfor %}
-                        </select>
+
+                    <div class="mb-3" id="share-recipient-group">
+                        <label class="form-label">Recipient Email *</label>
+                        <input type="email" name="recipient" id="share-recipient" class="form-control"
+                               placeholder="recipient@example.com">
                     </div>
-                    <div class="col-md-4">
-                        <select name="related_evidence_id" class="form-select form-select-sm">
-                            <option value="">Related evidence (opt)</option>
-                            {% for e in evidence %}<option value="{{ e.evidence_id }}">{{ e.evidence_id }}</option>{% endfor %}
-                        </select>
+
+                    <div class="alert alert-info small py-2">
+                        <i class="bi bi-info-circle"></i>
+                        A .md file will be generated, SHA-256 hashed, and saved.
+                        The hash, your identity, and narrative are permanently recorded in the Shares &amp; Prints audit trail.
                     </div>
-                    <div class="col-md-2"><button type="submit" class="btn btn-accent btn-sm w-100"><i class="bi bi-plus"></i> Add</button></div>
-                    <div class="col-md-12"><textarea name="description" class="form-control form-control-sm" rows="2" placeholder="Description (optional)"></textarea></div>
+
+                    <div class="mb-0">
+                        <label class="form-label fw-semibold text-warning">
+                            <i class="bi bi-shield-exclamation"></i> Narrative * <span class="text-muted fw-normal">(minimum 25 characters)</span>
+                        </label>
+                        <textarea name="narrative" id="share-narrative" class="form-control" rows="3" required minlength="25"
+                                  placeholder="Why is this record being shared or printed? (e.g., 'Sending hash verification to opposing counsel per discovery request')"></textarea>
+                        <div class="form-text"><span id="share-charcount">0</span> / 25 minimum characters</div>
+                    </div>
+                </div>
+                <div class="modal-footer border-secondary">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-accent" id="share-submit-btn" disabled>
+                        <i class="bi bi-share"></i> Share / Print
+                    </button>
                 </div>
             </form>
         </div>
     </div>
 </div>
 
-</div>{# end tab-content #}
+</div>{# /dfars-workspace #}
 
 {% endblock %}
+
+
 {% block scripts %}
 <script>
-// Activate tab from URL hash
-const hash = window.location.hash;
-if (hash) {
-    const tab = document.querySelector('.nav-tabs a[href="' + hash + '"]');
-    if (tab) new bootstrap.Tab(tab).show();
-}
+// ── Initialize Bootstrap tooltips (including inside modals) ─────
+(function () {
+    function initTooltips(root) {
+        root.querySelectorAll('[data-bs-toggle="tooltip"]').forEach(function(el) {
+            if (!bootstrap.Tooltip.getInstance(el)) {
+                new bootstrap.Tooltip(el);
+            }
+        });
+    }
+    // Init on page load
+    initTooltips(document);
+    // Re-init when modals open (for tooltips inside modal content)
+    document.querySelectorAll('.modal').forEach(function(modal) {
+        modal.addEventListener('shown.bs.modal', function() { initTooltips(modal); });
+    });
+})();
 
-// Show person-specific fields (role, rank, parent) only when entity_type === 'person'
+// ── URL hash → expand parent section and scroll ────────────────
+(function () {
+    const hash = window.location.hash;
+    if (!hash) return;
+    const target = document.querySelector(hash);
+    if (!target) return;
+
+    const parentCollapse = target.closest('.collapse');
+    if (parentCollapse && !parentCollapse.classList.contains('show')) {
+        new bootstrap.Collapse(parentCollapse, { show: true });
+    }
+    setTimeout(() => {
+        target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 180);
+})();
+
+// ── Show person-only entity fields based on type selector ──────
 (function () {
     const sel = document.getElementById('entity-type-select');
     if (!sel) return;
@@ -521,6 +1683,575 @@ if (hash) {
     }
     sel.addEventListener('change', sync);
     sync();
+})();
+
+// ── "Custody for this item" / "Hash for this item" prefill ─────
+document.querySelectorAll('.prefill-evidence').forEach(btn => {
+    btn.addEventListener('click', function (ev) {
+        const eid = this.dataset.eid;
+        const target = this.dataset.target;
+        if (!eid || !target) return;
+        // Expand parent section if collapsed, then pre-select the evidence dropdown
+        setTimeout(() => {
+            const form = document.querySelector('#' + target + ' form');
+            if (!form) return;
+            const parentCollapse = form.closest('.collapse');
+            if (parentCollapse && !parentCollapse.classList.contains('show')) {
+                new bootstrap.Collapse(parentCollapse, { show: true });
+            }
+            const sel = form.querySelector('select[name="evidence_id"]');
+            if (sel) sel.value = eid;
+            const firstFocus = form.querySelector('input[required], select[required]:not([name="evidence_id"])');
+            if (firstFocus) firstFocus.focus();
+        }, 250);
+    });
+});
+
+// ── Summarize Case button → /api/internal/ai/summarize/<case_id> ──
+(function () {
+    const btn = document.getElementById('summarize-case-btn');
+    if (!btn) return;
+    const panel = document.getElementById('summary-result');
+    const execEl = document.getElementById('summary-exec');
+    const conclEl = document.getElementById('summary-concl');
+
+    btn.addEventListener('click', async () => {
+        const original = btn.innerHTML;
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Summarizing…';
+        try {
+            const resp = await fetch('/api/internal/ai/summarize/{{ case.case_id }}', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: '{}',
+            });
+            const data = await resp.json().catch(() => ({}));
+            if (resp.ok) {
+                execEl.textContent = data.executive_summary || '(empty)';
+                conclEl.textContent = data.conclusion || '(empty)';
+                panel.classList.remove('d-none', 'alert-danger');
+                panel.classList.add('alert-info');
+            } else {
+                execEl.textContent = '';
+                conclEl.textContent = (data && data.error) || ('HTTP ' + resp.status);
+                panel.classList.remove('d-none', 'alert-info');
+                panel.classList.add('alert-danger');
+            }
+            panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        } catch (e) {
+            execEl.textContent = '';
+            conclEl.textContent = 'Request failed: ' + e.message;
+            panel.classList.remove('d-none', 'alert-info');
+            panel.classList.add('alert-danger');
+        } finally {
+            btn.disabled = false;
+            btn.innerHTML = original;
+        }
+    });
+})();
+
+// ── Forensic analysis with progress UI ────────────────────────
+
+document.querySelectorAll('.forensic-analyze-btn').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+        var url = this.dataset.url;
+        var panelId = this.dataset.panel;
+        var evidenceId = this.dataset.evidence;
+        var narrativeId = this.dataset.narrativeId;
+        var narrativeEl = narrativeId ? document.getElementById(narrativeId) : null;
+        var evidenceNarrative = narrativeEl ? (narrativeEl.value || '') : '';
+        var fileCount = parseInt(this.dataset.filecount) || 1;
+        var panel = document.getElementById(panelId);
+        var progressDiv = panel.querySelector('.forensic-progress');
+        var resultsDiv = panel.querySelector('.forensic-results');
+        var statusText = panel.querySelector('.forensic-status-text');
+        var bar = panel.querySelector('.forensic-bar');
+        var logDiv = panel.querySelector('.forensic-log');
+        var spinner = panel.querySelector('.forensic-spinner');
+
+        // Disable button and show progress
+        this.disabled = true;
+        this.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Analyzing...';
+        progressDiv.style.display = 'block';
+        resultsDiv.style.display = 'none';
+        resultsDiv.innerHTML = '';
+        logDiv.textContent = '';
+        bar.style.width = '5%';
+        bar.classList.remove('bg-success', 'bg-danger');
+        bar.classList.add('bg-warning');
+
+        // Simulate progress stages while waiting for Agent Zero
+        var stages = [
+            {pct: 10, msg: 'Connecting to Agent Zero AI...', log: '[' + new Date().toLocaleTimeString() + '] Establishing connection to Agent Zero...'},
+            {pct: 15, msg: 'Sending evidence files to Agent Zero...', log: '[' + new Date().toLocaleTimeString() + '] Uploading ' + fileCount + ' file(s) for analysis...'},
+            {pct: 25, msg: 'Agent Zero: Running file identification...', log: '[' + new Date().toLocaleTimeString() + '] Running: file (type identification)'},
+            {pct: 30, msg: 'Agent Zero: Computing hash verification...', log: '[' + new Date().toLocaleTimeString() + '] Running: sha256sum (hash verification)'},
+            {pct: 40, msg: 'Agent Zero: Extracting strings...', log: '[' + new Date().toLocaleTimeString() + '] Running: strings -n 8 (readable text extraction)'},
+            {pct: 50, msg: 'Agent Zero: Extracting metadata (exiftool)...', log: '[' + new Date().toLocaleTimeString() + '] Running: exiftool (metadata extraction)'},
+            {pct: 60, msg: 'Agent Zero: Scanning for embedded signatures (binwalk)...', log: '[' + new Date().toLocaleTimeString() + '] Running: binwalk --signature'},
+            {pct: 70, msg: 'Agent Zero: Analyzing hex headers...', log: '[' + new Date().toLocaleTimeString() + '] Running: xxd -l 512 (hex header analysis)'},
+            {pct: 80, msg: 'Agent Zero: Running type-specific tools...', log: '[' + new Date().toLocaleTimeString() + '] Running type-specific analysis (pdfid, 7z, tshark, etc.)'},
+            {pct: 90, msg: 'Agent Zero: AI analyzing tool output...', log: '[' + new Date().toLocaleTimeString() + '] Sending tool output to LLM for finding extraction...'},
+        ];
+
+        var stageIdx = 0;
+        var stageInterval = setInterval(function() {
+            if (stageIdx < stages.length) {
+                var s = stages[stageIdx];
+                bar.style.width = s.pct + '%';
+                statusText.textContent = s.msg;
+                logDiv.textContent += s.log + '\n';
+                logDiv.scrollTop = logDiv.scrollHeight;
+                stageIdx++;
+            }
+        }, 3000); // advance every 3 seconds
+
+        var thisBtn = this;
+
+        fetch(url, {
+            method: 'POST',
+            headers: {'Accept': 'application/json', 'Content-Type': 'application/json'},
+            body: JSON.stringify({evidence_narrative: evidenceNarrative})
+        })
+        .then(function(resp) { return resp.json().then(function(data) { return {status: resp.status, data: data}; }); })
+        .then(function(result) {
+            clearInterval(stageInterval);
+            var data = result.data;
+
+            if (result.status >= 400 || data.error) {
+                // Error
+                bar.style.width = '100%';
+                bar.classList.remove('bg-warning');
+                bar.classList.add('bg-danger');
+                bar.classList.remove('progress-bar-animated');
+                spinner.style.display = 'none';
+                statusText.textContent = 'Analysis failed';
+                statusText.classList.add('text-danger');
+                logDiv.textContent += '\n[' + new Date().toLocaleTimeString() + '] ERROR: ' + (data.error || 'Unknown error') + '\n';
+                logDiv.scrollTop = logDiv.scrollHeight;
+                resultsDiv.style.display = 'block';
+                resultsDiv.innerHTML = '<div class="alert alert-danger small mt-2"><i class="bi bi-x-circle"></i> <strong>Analysis failed:</strong> ' + (data.error || 'Unknown error') + '</div>';
+            } else {
+                // Success
+                bar.style.width = '100%';
+                bar.classList.remove('bg-warning');
+                bar.classList.add('bg-success');
+                bar.classList.remove('progress-bar-animated');
+                spinner.style.display = 'none';
+                statusText.textContent = 'Analysis complete — ' + (data.tools_count || 0) + ' tools run, ' + (data.findings_count || 0) + ' findings';
+                statusText.classList.add('text-success');
+
+                // Log tools
+                if (data.tools_run) {
+                    data.tools_run.forEach(function(t) {
+                        logDiv.textContent += '[' + new Date().toLocaleTimeString() + '] COMPLETED: ' + t + '\n';
+                    });
+                }
+                logDiv.textContent += '\n[' + new Date().toLocaleTimeString() + '] Analysis complete. Results saved to Tool Usage and Analysis Notes.\n';
+                logDiv.scrollTop = logDiv.scrollHeight;
+
+                // Build results panel
+                var html = '<div class="alert alert-success small mt-2"><i class="bi bi-check-circle"></i> <strong>' + (data.tools_count || 0) + ' tools run, ' + (data.findings_count || 0) + ' findings recorded.</strong> Results saved to Tool Usage and Analysis Notes sections.</div>';
+                if (data.findings_summary && data.findings_summary.length > 0) {
+                    html += '<div class="small mt-1"><strong>Key findings:</strong><ul>';
+                    data.findings_summary.forEach(function(f) { html += '<li>' + f + '</li>'; });
+                    html += '</ul></div>';
+                }
+                if (data.report_preview) {
+                    html += '<details class="mt-1" open><summary class="small text-info" style="cursor:pointer">Show analysis report</summary><pre class="report-md mt-1" style="font-size:.78rem;max-height:600px;overflow-y:auto;white-space:pre-wrap;word-break:break-word">' + data.report_preview.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;") + '</pre></details>';
+                }
+                html += '<button class="btn btn-sm btn-outline-light mt-2" onclick="window.location.reload()"><i class="bi bi-arrow-clockwise"></i> Refresh page to see all results</button>';
+                resultsDiv.style.display = 'block';
+                resultsDiv.innerHTML = html;
+            }
+
+            thisBtn.disabled = false;
+            thisBtn.innerHTML = '<i class="bi bi-terminal"></i> Analyze Evidence';
+        })
+        .catch(function(err) {
+            clearInterval(stageInterval);
+            bar.style.width = '100%';
+            bar.classList.remove('bg-warning');
+            bar.classList.add('bg-danger');
+            bar.classList.remove('progress-bar-animated');
+            spinner.style.display = 'none';
+            statusText.textContent = 'Connection error';
+            statusText.classList.add('text-danger');
+            logDiv.textContent += '\n[' + new Date().toLocaleTimeString() + '] CONNECTION ERROR: ' + err.message + '\n';
+            resultsDiv.style.display = 'block';
+            resultsDiv.innerHTML = '<div class="alert alert-danger small mt-2"><i class="bi bi-x-circle"></i> <strong>Connection error:</strong> ' + err.message + '</div>';
+            thisBtn.disabled = false;
+            thisBtn.innerHTML = '<i class="bi bi-terminal"></i> Analyze Evidence';
+        });
+    });
+});
+
+// ── Tool Usage help icons → populate shared modal ──────────────
+
+document.querySelectorAll('.tool-help-icon').forEach(function(icon) {
+    icon.addEventListener('click', function() {
+        var title = this.dataset.helpTitle || 'Field Help';
+        var body  = this.dataset.helpBody  || '';
+        document.getElementById('toolHelpTitle').textContent = title;
+        document.getElementById('toolHelpBody').innerHTML = body;
+    });
+});
+
+// ── Latest Analysis: Edit / Save / Cancel / Print ──────────────
+
+document.querySelectorAll('.analysis-toolbar').forEach(function(bar) {
+    var displayEl  = bar.parentElement.querySelector('.analysis-report-display');
+    var editEl     = bar.parentElement.querySelector('.analysis-report-edit');
+    var editBtn    = bar.querySelector('.analysis-edit-btn');
+    var saveBtn    = bar.querySelector('.analysis-save-btn');
+    var cancelBtn  = bar.querySelector('.analysis-cancel-btn');
+    var printBtn   = bar.querySelector('.analysis-print-btn');
+    var saveUrl    = bar.dataset.saveUrl;
+    var originalText = editEl ? editEl.value : '';
+
+    if (editBtn) editBtn.addEventListener('click', function() {
+        displayEl.style.display = 'none';
+        editEl.style.display = 'block';
+        editBtn.style.display = 'none';
+        saveBtn.style.display = 'inline-block';
+        cancelBtn.style.display = 'inline-block';
+        editEl.focus();
+    });
+
+    if (cancelBtn) cancelBtn.addEventListener('click', function() {
+        editEl.value = originalText;
+        editEl.style.display = 'none';
+        displayEl.style.display = 'block';
+        editBtn.style.display = 'inline-block';
+        saveBtn.style.display = 'none';
+        cancelBtn.style.display = 'none';
+    });
+
+    if (saveBtn) saveBtn.addEventListener('click', function() {
+        var newText = editEl.value;
+        saveBtn.disabled = true;
+        saveBtn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Saving...';
+        fetch(saveUrl, {
+            method: 'POST',
+            headers: {'Accept': 'application/json', 'Content-Type': 'application/json'},
+            body: JSON.stringify({report_markdown: newText})
+        })
+        .then(function(r) { return r.json().then(function(d) { return {status: r.status, data: d}; }); })
+        .then(function(result) {
+            saveBtn.disabled = false;
+            saveBtn.innerHTML = '<i class="bi bi-check-lg"></i> Save';
+            if (result.status >= 400 || result.data.error) {
+                alert('Save failed: ' + (result.data.error || 'Unknown error'));
+                return;
+            }
+            // Success: update display, exit edit mode
+            displayEl.textContent = newText;
+            originalText = newText;
+            editEl.style.display = 'none';
+            displayEl.style.display = 'block';
+            editBtn.style.display = 'inline-block';
+            saveBtn.style.display = 'none';
+            cancelBtn.style.display = 'none';
+        })
+        .catch(function(err) {
+            saveBtn.disabled = false;
+            saveBtn.innerHTML = '<i class="bi bi-check-lg"></i> Save';
+            alert('Save error: ' + err.message);
+        });
+    });
+
+    if (printBtn) printBtn.addEventListener('click', function() {
+        var reportText = (editEl && editEl.style.display !== 'none') ? editEl.value : displayEl.textContent;
+        var win = window.open('', '_blank', 'width=800,height=900');
+        if (!win) { alert('Pop-up blocked. Allow pop-ups to print.'); return; }
+        win.document.write(
+            '<!DOCTYPE html><html><head><title>Evidence Narrative</title>' +
+            '<style>body{font-family:-apple-system,Segoe UI,sans-serif;padding:24px;line-height:1.5;max-width:800px;margin:auto}' +
+            'h1{font-size:1.4rem;border-bottom:2px solid #333;padding-bottom:6px}' +
+            'pre{white-space:pre-wrap;word-wrap:break-word;font-family:Consolas,monospace;font-size:.85rem;background:#f6f8fa;padding:14px;border-radius:6px}' +
+            '@media print{body{padding:0}}</style></head><body>' +
+            '<h1>Evidence Narrative</h1>' +
+            '<p style="color:#666;font-size:.85rem">Generated by DFARS Desktop — ' + new Date().toLocaleString() + '</p>' +
+            '<pre>' + reportText.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;') + '</pre>' +
+            '</body></html>'
+        );
+        win.document.close();
+        win.focus();
+        setTimeout(function() { win.print(); }, 250);
+    });
+});
+
+// ── Share / Print modal ────────────────────────────────────────
+
+document.querySelectorAll('.share-btn').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+        var d = this.dataset;
+        document.getElementById('share-record-type').value = d.type;
+        document.getElementById('share-record-id').value = d.id;
+        document.getElementById('share-summary').innerHTML =
+            'Share or print: <strong>' + d.summary + '</strong>';
+        document.getElementById('share-narrative').value = '';
+        document.getElementById('share-recipient').value = '';
+        document.getElementById('share-charcount').textContent = '0';
+        document.getElementById('share-submit-btn').disabled = true;
+        document.getElementById('share-action-email').checked = true;
+        shareActionChanged();
+        new bootstrap.Modal(document.getElementById('shareModal')).show();
+    });
+});
+
+function shareActionChanged() {
+    var isEmail = document.getElementById('share-action-email').checked;
+    document.getElementById('share-recipient-group').style.display = isEmail ? 'block' : 'none';
+    document.getElementById('share-recipient').required = isEmail;
+}
+
+document.getElementById('share-narrative').addEventListener('input', function() {
+    var len = this.value.trim().length;
+    document.getElementById('share-charcount').textContent = len;
+    document.getElementById('share-submit-btn').disabled = len < 25;
+});
+
+// ── Hash auto-populate from evidence files ────────────────────
+
+// Build lookup: evidence_id → [{filename, sha256, size}]
+const evidenceFileHashes = {};
+{% for e in evidence %}
+{% set files_for_e = files_by_evidence.get(e.evidence_id) or [] %}
+{% if files_for_e %}
+evidenceFileHashes[{{ e.evidence_id|tojson }}] = [
+    {% for f in files_for_e %}
+    { filename: {{ f.original_filename|tojson }}, sha256: {{ f.sha256|tojson }}, size: {{ f.size_bytes }} },
+    {% endfor %}
+];
+{% endif %}
+{% endfor %}
+
+function hashEvidenceChanged(evidenceId) {
+    var hashField = document.getElementById('hv-val');
+    var fileHint = document.getElementById('hv-file-hint');
+    var valHint = document.getElementById('hv-val-hint');
+
+    if (evidenceId && evidenceFileHashes[evidenceId]) {
+        var files = evidenceFileHashes[evidenceId];
+        // Auto-fill with the first file's SHA-256 (most common single-file case)
+        if (files.length === 1) {
+            hashField.value = files[0].sha256;
+            fileHint.style.display = 'block';
+            fileHint.innerHTML = '<i class="bi bi-check-circle text-success"></i> Hash auto-filled from: <code>' +
+                files[0].filename + '</code>';
+            valHint.style.display = 'none';
+        } else {
+            // Multiple files — let user pick or show the first
+            hashField.value = files[0].sha256;
+            fileHint.style.display = 'block';
+            var hint = '<i class="bi bi-info-circle text-info"></i> ' + files.length + ' files on this evidence. Showing hash for <code>' + files[0].filename + '</code>:';
+            hint += '<div class="mt-1">';
+            for (var i = 0; i < files.length; i++) {
+                var f = files[i];
+                var sizeStr = f.size < 1048576 ? (f.size / 1024).toFixed(1) + ' KB' : (f.size / 1048576).toFixed(1) + ' MB';
+                hint += '<a href="#" class="d-block text-info hash-pick-link" data-hash="' + f.sha256 + '" data-name="' + f.filename + '">' +
+                    '<code style="font-size:.72rem">' + f.sha256.substring(0, 16) + '…</code> ' + f.filename + ' (' + sizeStr + ')</a>';
+            }
+            hint += '</div>';
+            fileHint.innerHTML = hint;
+            valHint.style.display = 'none';
+
+            // Click to pick a different file's hash
+            fileHint.querySelectorAll('.hash-pick-link').forEach(function(link) {
+                link.addEventListener('click', function(e) {
+                    e.preventDefault();
+                    hashField.value = this.dataset.hash;
+                    fileHint.querySelectorAll('.hash-pick-link').forEach(function(l) { l.style.fontWeight = 'normal'; });
+                    this.style.fontWeight = 'bold';
+                });
+            });
+        }
+    } else if (evidenceId) {
+        fileHint.style.display = 'block';
+        fileHint.innerHTML = '<i class="bi bi-exclamation-circle text-warning"></i> No files attached to this evidence. Enter the hash manually.';
+        hashField.value = '';
+        valHint.style.display = 'none';
+    } else {
+        fileHint.style.display = 'none';
+        valHint.style.display = 'none';
+    }
+}
+
+// Set hash date/time to now on page load
+(function() {
+    var dtField = document.getElementById('hv-dt');
+    if (dtField && !dtField.value) {
+        var now = new Date();
+        var pad = function(n) { return String(n).padStart(2, '0'); };
+        dtField.value = now.getFullYear() + '-' + pad(now.getMonth()+1) + '-' +
+            pad(now.getDate()) + 'T' + pad(now.getHours()) + ':' + pad(now.getMinutes());
+    }
+})();
+
+// ── Chain of Custody edit / delete modals ─────────────────────
+
+// Bind edit buttons via data attributes (avoids quote-escaping issues in onclick)
+document.querySelectorAll('.custody-edit-btn').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+        var d = this.dataset;
+        document.getElementById('editCustodyForm').action =
+            '/case/{{ case.case_id }}/custody/' + d.id + '/edit';
+        document.getElementById('edit-cu-action').value = d.action;
+        document.getElementById('edit-cu-from').value = d.from;
+        document.getElementById('edit-cu-to').value = d.to;
+        document.getElementById('edit-cu-dt').value = d.dt || '';
+        document.getElementById('edit-cu-loc').value = d.location || '';
+        document.getElementById('edit-cu-purpose').value = d.purpose || '';
+        document.getElementById('edit-cu-notes').value = d.notes || '';
+        document.getElementById('edit-cu-justification').value = '';
+        document.getElementById('edit-cu-charcount').textContent = '0';
+        document.getElementById('edit-cu-submit-btn').disabled = true;
+        new bootstrap.Modal(document.getElementById('editCustodyModal')).show();
+    });
+});
+
+// Bind delete buttons via data attributes
+document.querySelectorAll('.custody-delete-btn').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+        var d = this.dataset;
+        document.getElementById('deleteCustodyForm').action =
+            '/case/{{ case.case_id }}/custody/' + d.id + '/delete';
+        document.getElementById('delete-cu-summary').innerHTML =
+            'You are about to <strong class="text-danger">permanently delete</strong> custody event ' +
+            '<strong>#' + d.seq + ' (' + d.action + ')</strong> on evidence <code>' + d.evidence + '</code>.';
+        document.getElementById('delete-cu-justification').value = '';
+        document.getElementById('delete-cu-charcount').textContent = '0';
+        document.getElementById('delete-cu-submit-btn').disabled = true;
+        new bootstrap.Modal(document.getElementById('deleteCustodyModal')).show();
+    });
+});
+
+// Character count + enable/disable submit for justification fields
+document.getElementById('edit-cu-justification').addEventListener('input', function() {
+    var len = this.value.trim().length;
+    document.getElementById('edit-cu-charcount').textContent = len;
+    document.getElementById('edit-cu-submit-btn').disabled = len < 25;
+});
+document.getElementById('delete-cu-justification').addEventListener('input', function() {
+    var len = this.value.trim().length;
+    document.getElementById('delete-cu-charcount').textContent = len;
+    document.getElementById('delete-cu-submit-btn').disabled = len < 25;
+});
+
+// ── Delete Evidence (audited) ─────────────────────────────────
+document.querySelectorAll('.delete-evidence-btn').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+        var d = this.dataset;
+        var fileCount = parseInt(d.files || '0', 10);
+        document.getElementById('deleteEvidenceForm').action = d.url;
+        document.getElementById('delete-ev-summary').innerHTML =
+            'You are about to <strong class="text-danger">permanently delete</strong> ' +
+            'evidence <code>' + d.eid + '</code>: <em>' + d.summary + '</em>';
+        document.getElementById('delete-ev-cascade').innerHTML =
+            'Cascade: ' + fileCount + ' attached file(s) plus all custody events, hashes, ' +
+            'tool runs, and analyses for this evidence will be removed.';
+        document.getElementById('delete-ev-justification').value = '';
+        document.getElementById('delete-ev-charcount').textContent = '0';
+        document.getElementById('delete-ev-submit-btn').disabled = true;
+        new bootstrap.Modal(document.getElementById('deleteEvidenceModal')).show();
+    });
+});
+
+document.getElementById('delete-ev-justification').addEventListener('input', function() {
+    var len = this.value.trim().length;
+    document.getElementById('delete-ev-charcount').textContent = len;
+    document.getElementById('delete-ev-submit-btn').disabled = len < 25;
+});
+
+// ── Chain of Custody guided form helpers ──────────────────────
+
+// Build a lookup of the last custody event per evidence item
+const custodyHistory = {};
+{% for c in custody %}
+custodyHistory['{{ c.evidence_id }}'] = {
+    seq: {{ c.custody_sequence }},
+    action: {{ c.action|tojson }},
+    from_party: {{ c.from_party|tojson }},
+    to_party: {{ c.to_party|tojson }},
+    location: {{ c.location|tojson }},
+};
+{% endfor %}
+
+function custodyEvidenceChanged(evidenceId) {
+    const hint = document.getElementById('cu-last-event');
+    const fromField = document.getElementById('cu-from');
+
+    if (evidenceId && custodyHistory[evidenceId]) {
+        const last = custodyHistory[evidenceId];
+        hint.style.display = 'block';
+        hint.innerHTML = '<i class="bi bi-clock-history"></i> Last event: <strong>#' +
+            last.seq + ' ' + last.action + '</strong> — from ' + last.from_party +
+            ' to <strong>' + last.to_party + '</strong>' +
+            (last.location ? ' at ' + last.location : '');
+        // Auto-fill "From" with whoever last had it
+        if (!fromField.value) {
+            fromField.value = last.to_party;
+        }
+    } else if (evidenceId) {
+        hint.style.display = 'block';
+        hint.innerHTML = '<i class="bi bi-info-circle"></i> No prior custody events for this item. This will be event #1.';
+        if (!fromField.value) {
+            fromField.value = '{{ case.investigator }}';
+        }
+    } else {
+        hint.style.display = 'none';
+    }
+}
+
+const actionHints = {
+    'Collected': 'Who collected it and from what location? "From" is typically the scene/source, "To" is the collecting officer.',
+    'Received': '"From" is who delivered/submitted it, "To" is who accepted it.',
+    'Seized': '"From" is the person/premises it was seized from, "To" is the seizing officer.',
+    'Sealed': '"From" and "To" are typically the same person (the one sealing it). Record the packaging method in Purpose.',
+    'Stored': '"From" is who placed it in storage, "To" is the storage facility or evidence room.',
+    'Logged In': '"From" is who submitted it, "To" is the evidence custodian / evidence room.',
+    'Imaged': '"From" and "To" are typically the same examiner. Note the imaging tool in Purpose.',
+    'Examined': '"From" and "To" are typically the same examiner. Note what was examined in Purpose.',
+    'Photographed': '"From" and "To" are typically the same person documenting the evidence.',
+    'Extracted': '"From" and "To" are typically the same examiner. Note the extraction tool in Purpose.',
+    'Transferred': '"From" is the person/agency releasing, "To" is the person/agency receiving.',
+    'Shipped': '"From" is the sender, "To" is the intended recipient. Note the tracking number in Purpose.',
+    'Checked Out': '"From" is the evidence room/custodian, "To" is who checked it out.',
+    'Returned': '"From" is whoever had it last, "To" is the owner or original submitter.',
+    'Released': '"From" is the custodian releasing it, "To" is who it was released to.',
+    'Destroyed': '"From" is who authorized destruction, "To" can be "Destroyed per policy".',
+};
+
+function custodyActionChanged(action) {
+    const hintEl = document.getElementById('cu-action-hint');
+    const fromField = document.getElementById('cu-from');
+    const toField = document.getElementById('cu-to');
+
+    if (action && actionHints[action]) {
+        hintEl.textContent = actionHints[action];
+    } else {
+        hintEl.textContent = '';
+    }
+
+    // For actions where from/to are typically the same examiner, auto-fill both
+    const samePartyActions = ['Sealed', 'Imaged', 'Examined', 'Photographed', 'Extracted'];
+    if (samePartyActions.includes(action)) {
+        const examiner = fromField.value || '{{ case.investigator }}';
+        if (!fromField.value) fromField.value = examiner;
+        if (!toField.value) toField.value = examiner;
+    }
+}
+
+// Set date/time to now on page load
+(function() {
+    const dtField = document.getElementById('cu-dt');
+    if (dtField && !dtField.value) {
+        const now = new Date();
+        const pad = n => String(n).padStart(2, '0');
+        dtField.value = now.getFullYear() + '-' + pad(now.getMonth()+1) + '-' +
+            pad(now.getDate()) + 'T' + pad(now.getHours()) + ':' + pad(now.getMinutes());
+    }
 })();
 </script>
 {% endblock %}

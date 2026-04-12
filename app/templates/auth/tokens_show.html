@@ -24,15 +24,55 @@
                     <label class="form-label small text-muted">Token (full plaintext)</label>
                     <div class="input-group">
                         <input type="text" class="form-control font-monospace"
-                               value="{{ token.plaintext }}" readonly id="api-token">
-                        <button type="button" class="btn btn-outline-secondary" onclick="copyToken()">
-                            <i class="bi bi-clipboard"></i> Copy
+                               value="{{ token.plaintext }}" readonly id="api-token"
+                               style="font-size:.85rem" onclick="this.select()">
+                        <button type="button" class="btn btn-outline-warning" id="copy-btn" onclick="copyToken()">
+                            <i class="bi bi-clipboard" id="copy-icon"></i> <span id="copy-text">Copy</span>
                         </button>
+                    </div>
+                    <div class="form-text small" id="copy-feedback" style="display:none"></div>
+                </div>
+
+                <div class="card mb-3" style="border-color:var(--accent)">
+                    <div class="card-header small" style="background:var(--accent);color:#fff">
+                        <i class="bi bi-list-ol"></i> How to connect Agent Zero to DFARS
+                    </div>
+                    <div class="card-body small">
+                        <ol class="mb-0">
+                            <li class="mb-2">
+                                <strong>Copy the token above</strong> — click the Copy button or click inside the token field and press Ctrl+C.
+                            </li>
+                            <li class="mb-2">
+                                <strong>Open the Agent Zero plugin config file</strong> at:<br>
+                                <code class="d-block mt-1 p-1" style="background:#1e2127;border-radius:.25rem;font-size:.78rem;word-break:break-all">C:\Users\jhenn\agent-zero\agent-zero\usr\plugins\_dfars_integration\config.yaml</code>
+                                <span class="text-muted">Create this file if it doesn't exist (next to <code>default_config.yaml</code>).</span>
+                            </li>
+                            <li class="mb-2">
+                                <strong>Paste this configuration</strong> (replace the token with yours):
+                                <pre class="mt-1 p-2 mb-0" style="background:#1e2127;border:1px solid var(--border);border-radius:.25rem;font-size:.78rem">api_url: "http://host.docker.internal:5099"
+api_token: "<span style="color:var(--accent)">{{ token.plaintext }}</span>"
+enabled: true
+request_timeout: 15</pre>
+                                <button type="button" class="btn btn-sm btn-outline-info mt-1" onclick="copyConfig()">
+                                    <i class="bi bi-clipboard"></i> Copy full config
+                                </button>
+                                <span id="config-copy-feedback" class="small ms-2" style="display:none"></span>
+                            </li>
+                            <li class="mb-2">
+                                <strong>Restart the Agent Zero container</strong> so it picks up the new config:<br>
+                                <code class="d-block mt-1 p-1" style="background:#1e2127;border-radius:.25rem;font-size:.78rem">docker restart agent-zero</code>
+                            </li>
+                            <li class="mb-0">
+                                <strong>Verify the connection</strong> — back in DFARS, go to Security &gt; Agent Zero Integration &gt; Test Connection.
+                                Or from inside the container:<br>
+                                <code class="d-block mt-1 p-1" style="background:#1e2127;border-radius:.25rem;font-size:.78rem">curl -H "Authorization: Bearer {{ token.plaintext[:12] }}..." http://host.docker.internal:5099/api/v1/whoami</code>
+                            </li>
+                        </ol>
                     </div>
                 </div>
 
                 <div class="mb-3">
-                    <label class="form-label small text-muted">Usage</label>
+                    <label class="form-label small text-muted">API usage example</label>
                     <pre class="bg-dark border border-secondary rounded p-2 small mb-0"><code>curl -H "Authorization: Bearer {{ token.plaintext }}" \
      http://127.0.0.1:5099/api/v1/whoami</code></pre>
                 </div>
@@ -40,7 +80,7 @@
                 <div class="form-check mb-3">
                     <input class="form-check-input" type="checkbox" id="acknowledge">
                     <label class="form-check-label small" for="acknowledge">
-                        I've saved this token. I understand it will not be shown again.
+                        I've saved this token and completed the Agent Zero setup steps above.
                     </label>
                 </div>
 
@@ -54,10 +94,44 @@
 
 <script>
 function copyToken() {
-    const input = document.getElementById('api-token');
+    var input = document.getElementById('api-token');
+    var btn = document.getElementById('copy-btn');
+    var icon = document.getElementById('copy-icon');
+    var text = document.getElementById('copy-text');
+    var feedback = document.getElementById('copy-feedback');
     input.select();
     input.setSelectionRange(0, 99999);
-    navigator.clipboard.writeText(input.value).catch(() => document.execCommand('copy'));
+    navigator.clipboard.writeText(input.value).then(function() {
+        icon.className = 'bi bi-check-lg';
+        text.textContent = 'Copied!';
+        btn.classList.remove('btn-outline-warning');
+        btn.classList.add('btn-success');
+        feedback.style.display = 'block';
+        feedback.innerHTML = '<span class="text-success"><i class="bi bi-check-circle"></i> Token copied to clipboard.</span>';
+        setTimeout(function() {
+            icon.className = 'bi bi-clipboard';
+            text.textContent = 'Copy';
+            btn.classList.remove('btn-success');
+            btn.classList.add('btn-outline-warning');
+        }, 3000);
+    }).catch(function() {
+        document.execCommand('copy');
+        feedback.style.display = 'block';
+        feedback.innerHTML = '<span class="text-warning"><i class="bi bi-info-circle"></i> Press Ctrl+C to copy (token is selected).</span>';
+    });
+}
+
+function copyConfig() {
+    var config = 'api_url: "http://host.docker.internal:5099"\napi_token: "{{ token.plaintext }}"\nenabled: true\nrequest_timeout: 15';
+    var feedback = document.getElementById('config-copy-feedback');
+    navigator.clipboard.writeText(config).then(function() {
+        feedback.style.display = 'inline';
+        feedback.innerHTML = '<span class="text-success"><i class="bi bi-check-lg"></i> Config copied!</span>';
+        setTimeout(function() { feedback.style.display = 'none'; }, 3000);
+    }).catch(function() {
+        feedback.style.display = 'inline';
+        feedback.innerHTML = '<span class="text-warning">Select and copy manually.</span>';
+    });
 }
 
 document.getElementById('continue-btn').addEventListener('click', function(e) {

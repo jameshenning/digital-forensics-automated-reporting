@@ -157,3 +157,34 @@ def summarize_case(case_payload: dict) -> dict:
     if "error" in result:
         raise AgentZeroError(str(result["error"]))
     return result
+
+
+def analyze_evidence(payload: dict) -> dict:
+    """
+    Send a single evidence item's file metadata + investigator OSINT
+    narrative to Agent Zero for forensic synthesis. Returns
+    {report_markdown, tools_used, platforms_used} or raises
+    AgentZeroError on failure.
+    """
+    result = _post(f"{_PLUGIN}/dfars_analyze_evidence", payload, timeout=180.0)
+    if "error" in result:
+        raise AgentZeroError(str(result["error"]))
+    return result
+
+
+def forensic_analyze(payload: dict) -> dict:
+    """
+    Deep forensic analysis — Agent Zero downloads evidence files,
+    runs Kali Linux / forensic tools against them, parses the output,
+    and returns structured findings + an investigative narrative.
+
+    Payload must include dfars_api_url and dfars_api_token so Agent Zero
+    can download the actual files from DFARS Desktop.
+
+    Returns {status, tools_run, findings, report_markdown} or raises.
+    Timeout is 5 minutes because tool execution takes time.
+    """
+    result = _post(f"{_PLUGIN}/dfars_forensic_analyze", payload, timeout=300.0)
+    if result.get("error") and result.get("status") != "partial":
+        raise AgentZeroError(str(result["error"]))
+    return result

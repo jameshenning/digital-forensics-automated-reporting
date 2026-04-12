@@ -18,10 +18,13 @@ from .models import (
     AnalysisNote,
     Case,
     CaseEvent,
+    CaseShare,
     ChainOfCustody,
     Entity,
     EntityLink,
     Evidence,
+    EvidenceAnalysis,
+    EvidenceFile,
     HashVerification,
     ToolUsage,
 )
@@ -69,6 +72,40 @@ class ForensicsDatabase:
         assert self.connection is not None
         self.connection.executescript(schema_sql)
         self.connection.commit()
+        self._migrate()
+
+    def _migrate(self) -> None:
+        """Apply incremental schema migrations for existing databases."""
+        assert self.connection is not None
+        # Check if evidence_drive_path column exists on cases table
+        cols = {
+            row["name"]
+            for row in self.connection.execute("PRAGMA table_info(cases)").fetchall()
+        }
+        if "evidence_drive_path" not in cols:
+            self.connection.execute(
+                "ALTER TABLE cases ADD COLUMN evidence_drive_path TEXT"
+            )
+            self.connection.commit()
+
+        # tool_usage.evidence_id — added so a re-run of Analyze Evidence
+        # can wipe just this evidence's prior tool rows and re-insert
+        # the fresh ones, rather than skipping by tool-name dedupe.
+        tool_cols = {
+            row["name"]
+            for row in self.connection.execute(
+                "PRAGMA table_info(tool_usage)"
+            ).fetchall()
+        }
+        if "evidence_id" not in tool_cols:
+            self.connection.execute(
+                "ALTER TABLE tool_usage ADD COLUMN evidence_id TEXT"
+            )
+            self.connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_tool_evidence_id "
+                "ON tool_usage(evidence_id)"
+            )
+            self.connection.commit()
 
     # ─── Case management ──────────────────────────────────────
 
@@ -78,13 +115,14 @@ class ForensicsDatabase:
             """
             INSERT OR REPLACE INTO cases (
                 case_id, case_name, description, investigator, agency,
-                start_date, end_date, status, priority, classification
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                start_date, end_date, status, priority, classification,
+                evidence_drive_path
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 case.case_id, case.case_name, case.description, case.investigator,
                 case.agency, case.start_date, case.end_date, case.status,
-                case.priority, case.classification,
+                case.priority, case.classification, case.evidence_drive_path,
             ),
         )
         self.connection.commit()
@@ -104,13 +142,14 @@ class ForensicsDatabase:
             UPDATE cases SET
                 case_name = ?, description = ?, investigator = ?, agency = ?,
                 start_date = ?, end_date = ?, status = ?, priority = ?,
-                classification = ?, updated_at = CURRENT_TIMESTAMP
+                classification = ?, evidence_drive_path = ?,
+                updated_at = CURRENT_TIMESTAMP
             WHERE case_id = ?
             """,
             (
                 case.case_name, case.description, case.investigator, case.agency,
                 case.start_date, case.end_date, case.status, case.priority,
-                case.classification, case.case_id,
+                case.classification, case.evidence_drive_path, case.case_id,
             ),
         )
         self.connection.commit()
@@ -161,6 +200,53 @@ class ForensicsDatabase:
         ).fetchall()
         return [Evidence.from_dict(dict(row)) for row in rows]
 
+    def delete_evidence(self, evidence_id: str) -> dict:
+        """Hard-delete an evidence item and all its child rows.
+
+        The evidence row has RESTRICT foreign keys from custody, files,
+        and analyses, so we have to remove children first inside one
+        transaction. Returns a dict of how many rows were removed from
+        each table so the audit log can record the blast radius.
+        """
+        assert self.connection is not None
+        cur = self.connection.cursor()
+        try:
+            cur.execute("BEGIN")
+            counts: dict[str, int] = {}
+
+            # Children that hold the FK
+            for table, col in (
+                ("hash_verification", "evidence_id"),
+                ("evidence_files",    "evidence_id"),
+                ("evidence_analyses", "evidence_id"),
+                ("chain_of_custody",  "evidence_id"),
+                ("tool_usage",        "evidence_id"),
+            ):
+                c = cur.execute(
+                    f"DELETE FROM {table} WHERE {col} = ?", (evidence_id,)
+                )
+                counts[table] = c.rowcount or 0
+
+            # analysis_notes uses ON DELETE SET NULL — null out the link
+            # so the notes survive but no longer point at a missing row
+            c = cur.execute(
+                "UPDATE analysis_notes SET evidence_id = NULL WHERE evidence_id = ?",
+                (evidence_id,),
+            )
+            counts["analysis_notes_unlinked"] = c.rowcount or 0
+
+            # Finally remove the evidence row itself
+            c = cur.execute(
+                "DELETE FROM evidence WHERE evidence_id = ?", (evidence_id,)
+            )
+            counts["evidence"] = c.rowcount or 0
+
+            self.connection.commit()
+            return counts
+        except Exception:
+            self.connection.rollback()
+            raise
+
     # ─── Chain of custody ─────────────────────────────────────
 
     def add_custody_event(self, custody: ChainOfCustody) -> int:
@@ -200,6 +286,39 @@ class ForensicsDatabase:
             (evidence_id,),
         ).fetchone()
         return (row[0] or 0) + 1
+
+    def get_custody_event(self, custody_id: int) -> Optional[ChainOfCustody]:
+        assert self.connection is not None
+        row = self.connection.execute(
+            "SELECT * FROM chain_of_custody WHERE custody_id = ?", (custody_id,)
+        ).fetchone()
+        return ChainOfCustody.from_dict(dict(row)) if row else None
+
+    def update_custody_event(self, custody: ChainOfCustody) -> bool:
+        assert self.connection is not None
+        cursor = self.connection.execute(
+            """
+            UPDATE chain_of_custody SET
+                action = ?, from_party = ?, to_party = ?,
+                location = ?, custody_datetime = ?, purpose = ?, notes = ?
+            WHERE custody_id = ?
+            """,
+            (
+                custody.action, custody.from_party, custody.to_party,
+                custody.location, custody.custody_datetime,
+                custody.purpose, custody.notes, custody.custody_id,
+            ),
+        )
+        self.connection.commit()
+        return cursor.rowcount > 0
+
+    def delete_custody_event(self, custody_id: int) -> bool:
+        assert self.connection is not None
+        cursor = self.connection.execute(
+            "DELETE FROM chain_of_custody WHERE custody_id = ?", (custody_id,)
+        )
+        self.connection.commit()
+        return cursor.rowcount > 0
 
     def get_all_custody_for_case(self, case_id: str) -> List[ChainOfCustody]:
         results: List[ChainOfCustody] = []
@@ -250,13 +369,14 @@ class ForensicsDatabase:
         assert self.connection is not None
         cursor = self.connection.execute(
             """
-            INSERT OR REPLACE INTO tool_usage (
-                case_id, tool_name, version, purpose, command_used,
+            INSERT INTO tool_usage (
+                case_id, evidence_id, tool_name, version, purpose, command_used,
                 input_file, output_file, operator
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
-                tool_usage.case_id, tool_usage.tool_name, tool_usage.version,
+                tool_usage.case_id, tool_usage.evidence_id or None,
+                tool_usage.tool_name, tool_usage.version,
                 tool_usage.purpose, tool_usage.command_used, tool_usage.input_file,
                 tool_usage.output_file, tool_usage.operator,
             ),
@@ -275,6 +395,21 @@ class ForensicsDatabase:
             (case_id,),
         ).fetchall()
         return [ToolUsage.from_dict(dict(row)) for row in rows]
+
+    def delete_tool_usage_for_evidence(self, evidence_id: str) -> int:
+        """Delete tool_usage rows tied to a specific evidence item.
+
+        Used by Analyze Evidence so a re-run wipes the prior tool rows
+        for THIS evidence (only) and re-inserts the freshly-captured
+        ones. Other evidence in the same case is unaffected.
+        """
+        assert self.connection is not None
+        cursor = self.connection.execute(
+            "DELETE FROM tool_usage WHERE evidence_id = ?",
+            (evidence_id,),
+        )
+        self.connection.commit()
+        return cursor.rowcount or 0
 
     # ─── Analysis notes ───────────────────────────────────────
 
@@ -816,3 +951,153 @@ class ForensicsDatabase:
         ]
 
         return {"items": items, "groups": groups}
+
+    # ─── Evidence files & AI analyses ────────────────────────
+
+    def add_evidence_file(self, ef: EvidenceFile) -> int:
+        assert self.connection is not None
+        cursor = self.connection.execute(
+            """
+            INSERT INTO evidence_files (
+                evidence_id, original_filename, stored_path, sha256,
+                size_bytes, mime_type, metadata_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                ef.evidence_id, ef.original_filename, ef.stored_path,
+                ef.sha256, ef.size_bytes, ef.mime_type or None,
+                ef.metadata_json or None,
+            ),
+        )
+        self.connection.commit()
+        return cursor.lastrowid or 0
+
+    def get_evidence_file(self, file_id: int) -> Optional[EvidenceFile]:
+        assert self.connection is not None
+        row = self.connection.execute(
+            "SELECT * FROM evidence_files WHERE file_id = ?", (file_id,)
+        ).fetchone()
+        return EvidenceFile.from_dict(dict(row)) if row else None
+
+    def list_evidence_files(
+        self, evidence_id: str, include_deleted: bool = False
+    ) -> List[EvidenceFile]:
+        assert self.connection is not None
+        sql = "SELECT * FROM evidence_files WHERE evidence_id = ?"
+        if not include_deleted:
+            sql += " AND is_deleted = 0"
+        sql += " ORDER BY uploaded_at"
+        rows = self.connection.execute(sql, (evidence_id,)).fetchall()
+        return [EvidenceFile.from_dict(dict(r)) for r in rows]
+
+    def soft_delete_evidence_file(self, file_id: int) -> bool:
+        assert self.connection is not None
+        cursor = self.connection.execute(
+            "UPDATE evidence_files SET is_deleted = 1 WHERE file_id = ?",
+            (file_id,),
+        )
+        self.connection.commit()
+        return cursor.rowcount > 0
+
+    def add_evidence_analysis(self, ea: EvidenceAnalysis) -> int:
+        assert self.connection is not None
+        cursor = self.connection.execute(
+            """
+            INSERT INTO evidence_analyses (
+                evidence_id, osint_narrative, files_snapshot_json,
+                report_markdown, tools_used, platforms_used,
+                status, error_message
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                ea.evidence_id, ea.osint_narrative or None,
+                ea.files_snapshot_json or None, ea.report_markdown or None,
+                ea.tools_used or None, ea.platforms_used or None,
+                ea.status, ea.error_message or None,
+            ),
+        )
+        self.connection.commit()
+        return cursor.lastrowid or 0
+
+    def list_evidence_analyses(self, evidence_id: str) -> List[EvidenceAnalysis]:
+        assert self.connection is not None
+        rows = self.connection.execute(
+            "SELECT * FROM evidence_analyses WHERE evidence_id = ? "
+            "ORDER BY created_at DESC",
+            (evidence_id,),
+        ).fetchall()
+        return [EvidenceAnalysis.from_dict(dict(r)) for r in rows]
+
+    def get_latest_evidence_analysis(
+        self, evidence_id: str
+    ) -> Optional[EvidenceAnalysis]:
+        assert self.connection is not None
+        row = self.connection.execute(
+            "SELECT * FROM evidence_analyses WHERE evidence_id = ? "
+            "ORDER BY created_at DESC LIMIT 1",
+            (evidence_id,),
+        ).fetchone()
+        return EvidenceAnalysis.from_dict(dict(row)) if row else None
+
+    def update_evidence_analysis_report(
+        self, analysis_id: int, report_markdown: str
+    ) -> None:
+        """Update the report_markdown of an existing analysis row.
+
+        Used by the inline editor on the case detail page. Per the
+        product requirement, edits to this field are NOT audited so the
+        investigator can refine the AI-generated narrative without
+        adding noise to the audit trail.
+        """
+        assert self.connection is not None
+        self.connection.execute(
+            "UPDATE evidence_analyses SET report_markdown = ? "
+            "WHERE analysis_id = ?",
+            (report_markdown, analysis_id),
+        )
+        self.connection.commit()
+
+    def delete_evidence_analyses_for_evidence(self, evidence_id: str) -> int:
+        """Delete all evidence_analyses rows for one evidence item.
+
+        Used by Analyze Evidence to enforce a single combined report
+        per evidence: each new run wipes the prior rows and writes a
+        single new row containing the unified narrative.
+        """
+        assert self.connection is not None
+        cursor = self.connection.execute(
+            "DELETE FROM evidence_analyses WHERE evidence_id = ?",
+            (evidence_id,),
+        )
+        self.connection.commit()
+        return cursor.rowcount or 0
+
+    # ─── Shares & Prints ─────────────────────────────────────
+
+    def add_share(self, share: CaseShare) -> int:
+        assert self.connection is not None
+        cursor = self.connection.execute(
+            """
+            INSERT INTO case_shares (
+                case_id, record_type, record_id, record_summary,
+                action, recipient, file_path, file_hash,
+                narrative, shared_by
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                share.case_id, share.record_type, share.record_id,
+                share.record_summary, share.action, share.recipient,
+                share.file_path, share.file_hash, share.narrative,
+                share.shared_by,
+            ),
+        )
+        self.connection.commit()
+        return cursor.lastrowid or 0
+
+    def list_shares(self, case_id: str) -> List[CaseShare]:
+        assert self.connection is not None
+        rows = self.connection.execute(
+            "SELECT * FROM case_shares WHERE case_id = ? ORDER BY created_at DESC",
+            (case_id,),
+        ).fetchall()
+        return [CaseShare.from_dict(dict(row)) for row in rows]

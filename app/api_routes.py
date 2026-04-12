@@ -26,7 +26,8 @@ from typing import Any, Callable
 
 from flask import Blueprint, current_app, jsonify, request
 
-from . import api_tokens
+from . import api_tokens, audit
+from .drives import validate_evidence_drive
 from .models import (
     AnalysisNote,
     Case,
@@ -103,6 +104,48 @@ def _err(message: str, status: int):
     return jsonify(error=message), status
 
 
+def _api_user() -> str:
+    """Return the API token username for audit logging."""
+    tok = getattr(request, "api_token", None)
+    if tok:
+        return f"API:{tok.get('username', '?')}:{tok.get('name', '?')}"
+    return "API:UNKNOWN"
+
+
+# ─── Evidence file download (for Agent Zero tool analysis) ──
+
+
+@api_bp.route("/cases/<case_id>/evidence/<evidence_id>/files/<int:file_id>/download", methods=["GET"])
+@require_token
+def download_evidence_file(case_id, evidence_id, file_id):
+    """Serve an evidence file's raw content so Agent Zero can run tools on it."""
+    from pathlib import Path
+    from flask import send_file as flask_send_file
+
+    db = _db()
+    if not db.get_case(case_id):
+        return _err(f"Case {case_id} not found", 404)
+    ev = db.get_evidence(evidence_id)
+    if not ev or ev.case_id != case_id:
+        return _err(f"Evidence {evidence_id} not found in case {case_id}", 404)
+    ef = db.get_evidence_file(file_id)
+    if not ef or ef.evidence_id != evidence_id:
+        return _err(f"File {file_id} not found on evidence {evidence_id}", 404)
+
+    file_path = Path(ef.stored_path)
+    if not file_path.exists():
+        return _err(f"File not found on disk: {ef.stored_path}", 404)
+
+    audit.log_case(case_id, _api_user(), audit.API_CASE_VIEWED,
+                   f"File downloaded: {ef.original_filename} SHA256={ef.sha256[:16]}...")
+    return flask_send_file(
+        str(file_path),
+        as_attachment=True,
+        download_name=ef.original_filename,
+        mimetype=ef.mime_type or "application/octet-stream",
+    )
+
+
 # ─── Health ────────────────────────────────────────────────
 
 
@@ -111,6 +154,7 @@ def _err(message: str, status: int):
 def whoami():
     """Verify a token is valid and return the associated user."""
     tok = request.api_token  # type: ignore[attr-defined]
+    audit.log_auth(_api_user(), audit.API_TOKEN_VERIFIED, f"Token '{tok['name']}' verified")
     return jsonify(
         username=tok["username"],
         token_id=tok["id"],
@@ -141,6 +185,13 @@ def create_case():
     if _db().get_case(body["case_id"]) is not None:
         return _err(f"Case {body['case_id']} already exists", 409)
 
+    # Validate evidence drive if provided
+    evidence_drive = body.get("evidence_drive_path", "")
+    if evidence_drive:
+        ok, msg = validate_evidence_drive(evidence_drive)
+        if not ok:
+            return _err(f"Evidence drive validation failed: {msg}", 422)
+
     try:
         case = Case(
             case_id=body["case_id"],
@@ -153,6 +204,7 @@ def create_case():
             status=body.get("status", "Active"),
             priority=body.get("priority", "Medium"),
             classification=body.get("classification", ""),
+            evidence_drive_path=evidence_drive,
         )
         _db().create_case(case)
         for tag in body.get("tags") or []:
@@ -161,6 +213,8 @@ def create_case():
     except Exception as e:
         return _err(f"Failed to create case: {e}", 500)
 
+    audit.log_case(case.case_id, _api_user(), audit.API_CASE_CREATED,
+                   f"Name={case.case_name!r} Investigator={case.investigator}")
     return jsonify(_full_case(case.case_id)), 201
 
 
@@ -170,6 +224,7 @@ def get_case(case_id):
     case = _db().get_case(case_id)
     if not case:
         return _err(f"Case {case_id} not found", 404)
+    audit.log_case(case_id, _api_user(), audit.API_CASE_VIEWED, "Case retrieved via API")
     return jsonify(_full_case(case_id))
 
 
@@ -191,10 +246,22 @@ def update_case(case_id):
         if field in body:
             setattr(case, field, _parse_dt(body[field]))
 
+    # Evidence drive path — validate if changing
+    if "evidence_drive_path" in body:
+        new_drive = body["evidence_drive_path"] or ""
+        if new_drive:
+            ok, msg = validate_evidence_drive(new_drive)
+            if not ok:
+                return _err(f"Evidence drive validation failed: {msg}", 422)
+        case.evidence_drive_path = new_drive
+
     try:
         _db().update_case(case)
     except Exception as e:
         return _err(f"Failed to update case: {e}", 500)
+
+    audit.log_case(case_id, _api_user(), audit.API_CASE_UPDATED,
+                   f"Fields updated: {list(body.keys())}")
 
     # Replace tags if provided (set semantics, not append)
     if "tags" in body and isinstance(body["tags"], list):
@@ -241,6 +308,8 @@ def add_evidence(case_id):
     except Exception as e:
         return _err(f"Failed to add evidence: {e}", 500)
 
+    audit.log_case(case_id, _api_user(), audit.API_EVIDENCE_ADDED,
+                   f"ID={evidence.evidence_id} Desc={evidence.description!r}")
     return jsonify(evidence=evidence.to_dict()), 201
 
 
@@ -278,6 +347,8 @@ def add_custody(case_id):
     except Exception as e:
         return _err(f"Failed to add custody event: {e}", 500)
 
+    audit.log_case(case_id, _api_user(), audit.API_CUSTODY_ADDED,
+                   f"Evidence={custody.evidence_id} Action={custody.action}")
     return jsonify(custody=custody.to_dict()), 201
 
 
@@ -313,6 +384,8 @@ def add_hash(case_id):
     except Exception as e:
         return _err(f"Failed to add hash verification: {e}", 500)
 
+    audit.log_case(case_id, _api_user(), audit.API_HASH_ADDED,
+                   f"Evidence={h.evidence_id} Algo={h.algorithm} Value={h.hash_value[:16]}...")
     return jsonify(hash=h.to_dict()), 201
 
 
@@ -346,6 +419,8 @@ def add_tool(case_id):
     except Exception as e:
         return _err(f"Failed to log tool usage: {e}", 500)
 
+    audit.log_case(case_id, _api_user(), audit.API_TOOL_LOGGED,
+                   f"Tool={tool.tool_name} Purpose={tool.purpose!r}")
     return jsonify(tool=tool.to_dict()), 201
 
 
@@ -381,6 +456,8 @@ def add_analysis(case_id):
     except Exception as e:
         return _err(f"Failed to add analysis note: {e}", 500)
 
+    audit.log_case(case_id, _api_user(), audit.API_ANALYSIS_ADDED,
+                   f"Category={note.category} Finding={note.finding!r}")
     return jsonify(note=note.to_dict()), 201
 
 
@@ -409,8 +486,12 @@ def generate_report(case_id):
             saved_path = _report_gen().save_report(case_id, fmt, reports_dir())
         except Exception as e:
             return _err(f"Failed to save report: {e}", 500)
+        audit.log_case(case_id, _api_user(), audit.API_REPORT_GENERATED,
+                       f"Format={fmt} Saved={saved_path}")
         return jsonify(content=content, saved_path=saved_path), 200
 
+    audit.log_case(case_id, _api_user(), audit.API_REPORT_GENERATED,
+                   f"Format={fmt} Save=false")
     return jsonify(content=content), 200
 
 

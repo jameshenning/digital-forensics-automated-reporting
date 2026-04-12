@@ -44,6 +44,10 @@ def create_app() -> Flask:
     app.config.update(
         SESSION_COOKIE_HTTPONLY=True,
         SESSION_COOKIE_SAMESITE="Lax",
+        # Browser uploads are still capped at 2 GB. For larger forensic
+        # images, use "Scan Evidence Drive" which reads files in-place
+        # from the external drive — no upload or copy required.
+        MAX_CONTENT_LENGTH=2 * 1024 * 1024 * 1024,
     )
 
     # Initialize both databases up front so the first request isn't slow.

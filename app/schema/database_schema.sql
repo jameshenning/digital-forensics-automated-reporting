@@ -15,6 +15,7 @@ CREATE TABLE IF NOT EXISTS cases (
     status TEXT DEFAULT 'Active',
     priority TEXT DEFAULT 'Medium',
     classification TEXT,
+    evidence_drive_path TEXT,           -- external drive root for evidence files (e.g. "E:\")
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
@@ -188,3 +189,65 @@ CREATE TABLE IF NOT EXISTS case_events (
 );
 
 CREATE INDEX IF NOT EXISTS idx_events_case_dt ON case_events(case_id, event_datetime);
+
+-- ─── Evidence file attachments + AI analyses (added 2026-04-11) ──
+-- Per-evidence file uploads (digital artifacts collected as part of an
+-- item) plus the AI-generated forensic / OSINT analysis reports that
+-- synthesize the file metadata + investigator narrative into a single
+-- structured report. Files can be soft-deleted; analyses are kept as
+-- a history (each "Run Analysis" appends a new row).
+
+CREATE TABLE IF NOT EXISTS evidence_files (
+    file_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    evidence_id TEXT NOT NULL,
+    original_filename TEXT NOT NULL,
+    stored_path TEXT NOT NULL,            -- absolute path under %APPDATA%\DFARS\evidence_files\
+    sha256 TEXT NOT NULL,                 -- hex digest of the stored file
+    size_bytes INTEGER NOT NULL,
+    mime_type TEXT,
+    metadata_json TEXT,                   -- locally extracted EXIF / PDF / etc.
+    is_deleted INTEGER DEFAULT 0,
+    uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (evidence_id) REFERENCES evidence (evidence_id) ON DELETE RESTRICT
+);
+
+CREATE INDEX IF NOT EXISTS idx_evidence_files_eid ON evidence_files(evidence_id);
+
+CREATE TABLE IF NOT EXISTS evidence_analyses (
+    analysis_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    evidence_id TEXT NOT NULL,
+    osint_narrative TEXT,                 -- investigator-provided OSINT input text
+    files_snapshot_json TEXT,             -- list of file_ids analyzed at the time
+    report_markdown TEXT,                 -- AI-generated narrative
+    tools_used TEXT,                      -- comma-separated tools (from AI)
+    platforms_used TEXT,                  -- comma-separated OSINT platforms (from AI)
+    status TEXT DEFAULT 'completed',      -- pending | completed | failed
+    error_message TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (evidence_id) REFERENCES evidence (evidence_id) ON DELETE RESTRICT
+);
+
+CREATE INDEX IF NOT EXISTS idx_evidence_analyses_eid ON evidence_analyses(evidence_id, created_at);
+
+-- ─── Shares & Prints tracking (added 2026-04-12) ──────────────
+-- Every time a record is emailed or exported/printed as .md, a row
+-- is created here with the SHA-256 hash of the generated file, who
+-- did it, when, and a mandatory narrative explaining why.
+
+CREATE TABLE IF NOT EXISTS case_shares (
+    share_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    case_id TEXT NOT NULL,
+    record_type TEXT NOT NULL,        -- evidence | hash | custody | tool | analysis
+    record_id TEXT NOT NULL,          -- the PK of the shared record
+    record_summary TEXT,              -- human-readable one-liner of what was shared
+    action TEXT NOT NULL,             -- email | print
+    recipient TEXT,                   -- email address (for email action)
+    file_path TEXT,                   -- where the .md was saved on disk
+    file_hash TEXT NOT NULL,          -- SHA-256 of the generated .md
+    narrative TEXT NOT NULL,          -- user-entered reason for sharing
+    shared_by TEXT NOT NULL,          -- username
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (case_id) REFERENCES cases (case_id) ON DELETE RESTRICT
+);
+
+CREATE INDEX IF NOT EXISTS idx_shares_case ON case_shares(case_id, created_at);

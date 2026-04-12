@@ -88,6 +88,27 @@
                     <div class="classification-help-text mt-2 small" id="classification-help-text" style="display:none;"></div>
                 </div>
                 <div class="col-12">
+                    <label class="form-label fw-semibold"><i class="bi bi-hdd"></i> Evidence Drive *</label>
+                    <div class="input-group">
+                        <input type="text" name="evidence_drive_path" id="evidence-drive-input"
+                               class="form-control" required
+                               placeholder="e.g. E:\ or F:\Evidence — type a path or pick from detected drives">
+                        <select id="evidence-drive-select" class="form-select" style="max-width:40%"
+                                onchange="if(this.value) document.getElementById('evidence-drive-input').value=this.value">
+                            <option value="">Detected drives…</option>
+                        </select>
+                        <button type="button" class="btn btn-outline-secondary" onclick="refreshDrives()">
+                            <i class="bi bi-arrow-clockwise"></i> Refresh
+                        </button>
+                    </div>
+                    <div class="form-text">
+                        <i class="bi bi-exclamation-triangle text-warning"></i>
+                        All evidence files will be stored on this external drive — never on the primary system drive.
+                        Type or paste the drive path (e.g. <code>E:\</code>) or select a detected drive from the dropdown.
+                    </div>
+                    <div id="drive-status" class="small mt-1"></div>
+                </div>
+                <div class="col-12">
                     <label class="form-label">Tags (comma-separated)</label>
                     <div class="input-group">
                         <input type="text" name="tags" class="form-control" placeholder="#forensics, #case-type" id="tags-input">
@@ -107,6 +128,35 @@
 
 
 <script>
+async function refreshDrives() {
+    const sel = document.getElementById('evidence-drive-select');
+    const status = document.getElementById('drive-status');
+    sel.innerHTML = '<option value="">Scanning drives…</option>';
+    status.textContent = '';
+    try {
+        const resp = await fetch('/api/internal/drives');
+        const data = await resp.json();
+        sel.innerHTML = '<option value="">— Select external evidence drive —</option>';
+        if (!data.drives || data.drives.length === 0) {
+            sel.innerHTML += '<option value="" disabled>No external drives detected</option>';
+            status.innerHTML = '<span class="text-danger"><i class="bi bi-x-circle"></i> No external drives found. Connect a USB or external drive and click Refresh.</span>';
+        } else {
+            for (const d of data.drives) {
+                const opt = document.createElement('option');
+                opt.value = d.root;
+                opt.textContent = d.display;
+                sel.appendChild(opt);
+            }
+            status.innerHTML = '<span class="text-success"><i class="bi bi-check-circle"></i> ' + data.drives.length + ' external drive(s) detected.</span>';
+        }
+    } catch (e) {
+        sel.innerHTML = '<option value="">Error detecting drives</option>';
+        status.innerHTML = '<span class="text-danger"><i class="bi bi-x-circle"></i> Drive detection failed: ' + e.message + '</span>';
+    }
+}
+// Load drives on page load
+document.addEventListener('DOMContentLoaded', function() { refreshDrives(); });
+
 function suggestTags() {
     const description = document.getElementsByName('description')[0].value.toLowerCase();
     const suggestions = [];

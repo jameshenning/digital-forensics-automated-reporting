@@ -36,6 +36,13 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     # name and won't resolve from the host side.
     "agent_zero_url": "http://127.0.0.1:5080",
     "agent_zero_api_key_encrypted": None,  # Fernet-encrypted via app.crypto
+    # SMTP email (direct send from DFARS)
+    "smtp_server": "",
+    "smtp_port": 587,
+    "smtp_use_tls": True,
+    "smtp_from_address": "",
+    "smtp_username": "",
+    "smtp_password_encrypted": None,  # Fernet-encrypted via app.crypto
     # Phase 6: auto-updates
     "update_url": None,              # set to your manifest.json URL after first release
     "update_channel": "stable",

@@ -28,7 +28,7 @@ from flask import (
     url_for,
 )
 
-from . import api_tokens, auth
+from . import api_tokens, audit, auth
 
 auth_bp = Blueprint("auth", __name__, url_prefix="/auth")
 
@@ -77,6 +77,7 @@ def setup():
                 session.clear()
                 session["username"] = username.strip()
                 session.permanent = True
+                audit.log_auth(username.strip(), audit.SETUP_ACCOUNT, "Initial account created")
                 flash(
                     f"Account created. Welcome to DFARS Desktop, "
                     f"{session['username']}.",
@@ -110,9 +111,11 @@ def login():
         try:
             auth.verify_password(username, password)
         except auth.AccountLocked as e:
+            audit.log_auth(username, audit.LOGIN_FAILED, f"Account locked: {e}")
             flash(str(e), "warning")
             return render_template("auth/login.html")
         except auth.AuthError as e:
+            audit.log_auth(username, audit.LOGIN_FAILED, f"Bad credentials: {e}")
             flash(str(e), "danger")
             return render_template("auth/login.html")
 
@@ -120,9 +123,11 @@ def login():
         if auth.is_mfa_enabled(username):
             session["mfa_pending"] = username
             session.permanent = True
+            audit.log_auth(username, audit.LOGIN_SUCCESS, "Password OK, MFA pending")
             return redirect(url_for("auth.mfa_verify"))
 
         _complete_login(username)
+        audit.log_auth(username, audit.LOGIN_SUCCESS, "Login complete (no MFA)")
         return redirect(url_for("dfars.dashboard"))
 
     return render_template("auth/login.html")
@@ -147,6 +152,7 @@ def mfa_verify():
             if auth.verify_recovery_code(pending, code):
                 _complete_login(pending)
                 remaining = auth.remaining_recovery_codes(pending)
+                audit.log_auth(pending, audit.MFA_RECOVERY_USED, f"{remaining} codes remaining")
                 flash(
                     f"Signed in with a recovery code. {remaining} recovery "
                     f"code(s) remaining. Re-enroll MFA when convenient to "
@@ -154,11 +160,14 @@ def mfa_verify():
                     "warning",
                 )
                 return redirect(url_for("dfars.dashboard"))
+            audit.log_auth(pending, audit.LOGIN_FAILED, "Invalid recovery code")
             flash("Invalid recovery code.", "danger")
         else:
             if auth.verify_totp(pending, code):
                 _complete_login(pending)
+                audit.log_auth(pending, audit.MFA_VERIFIED, "TOTP verified, login complete")
                 return redirect(url_for("dfars.dashboard"))
+            audit.log_auth(pending, audit.LOGIN_FAILED, "Invalid TOTP code")
             flash("Invalid authentication code.", "danger")
 
     return render_template("auth/mfa_verify.html", username=pending)
@@ -170,6 +179,8 @@ def mfa_verify():
 @auth_bp.route("/logout")
 def logout():
     username = session.get("username") or session.get("mfa_pending")
+    if username:
+        audit.log_auth(username, audit.LOGOUT, "User logged out")
     session.clear()
     if username:
         flash(f"Goodbye, {username}. You have been logged out.", "info")
@@ -197,6 +208,7 @@ def change_password():
         else:
             try:
                 auth.update_password(username, current, new)
+                audit.log_auth(username, audit.PASSWORD_CHANGED, "Password updated")
                 flash("Password updated successfully.", "success")
                 return redirect(url_for("dfars.dashboard"))
             except auth.AuthError as e:
@@ -218,7 +230,7 @@ def security():
     user = auth.get_user(username)
     tokens = api_tokens.list_for_user(user["id"]) if user else []
 
-    from . import config as app_config, update_key
+    from . import config as app_config, mailer, update_key
     cfg = app_config.load()
     az_url = cfg.get("agent_zero_url") or ""
     az_has_key = bool(cfg.get("agent_zero_api_key_encrypted"))
@@ -238,6 +250,13 @@ def security():
         last_update_check=cfg.get("last_update_check"),
         update_disabled=update_key.is_placeholder(),
         pending_update=pending_update,
+        smtp_server=cfg.get("smtp_server") or "",
+        smtp_port=cfg.get("smtp_port") or 587,
+        smtp_use_tls=cfg.get("smtp_use_tls", True),
+        smtp_from_address=cfg.get("smtp_from_address") or "",
+        smtp_username=cfg.get("smtp_username") or "",
+        smtp_has_password=bool(cfg.get("smtp_password_encrypted")),
+        smtp_configured=mailer.is_configured(),
     )
 
 
@@ -266,8 +285,7 @@ def tokens_new():
         flash(str(e), "danger")
         return redirect(url_for("auth.security"))
 
-    # Stash the plaintext in the session for the next request — popped
-    # by the display template, never persisted server-side.
+    audit.log_auth(username, audit.API_TOKEN_CREATED, f"Token '{name}' (id={token_id})")
     session["fresh_api_token"] = {"name": name, "plaintext": plaintext, "id": token_id}
     return redirect(url_for("auth.tokens_show"))
 
@@ -302,9 +320,121 @@ def tokens_revoke(token_id):
         return redirect(url_for("auth.login"))
 
     if api_tokens.revoke(token_id, user["id"]):
+        audit.log_auth(username, audit.API_TOKEN_REVOKED, f"Token id={token_id}")
         flash("API token revoked.", "success")
     else:
         flash("Token not found.", "warning")
+    return redirect(url_for("auth.security"))
+
+
+# ─── Agent Zero one-click setup ───────────────────────────
+
+
+@auth_bp.route("/agent-zero/auto-setup", methods=["POST"])
+def agent_zero_auto_setup():
+    """
+    One-click Agent Zero connection:
+    1. Generate a DFARS API token for Agent Zero
+    2. Write the plugin config.yaml with the token
+    3. Restart the Agent Zero Docker container
+    4. Test the connection
+    """
+    import subprocess
+    from pathlib import Path
+
+    import yaml
+
+    username = session.get("username")
+    if not username:
+        return redirect(url_for("auth.login"))
+
+    user = auth.get_user(username)
+    if not user:
+        return redirect(url_for("auth.login"))
+
+    from . import config as app_config
+
+    steps_log = []
+
+    # Step 1: Generate API token
+    try:
+        # Revoke any existing "Agent Zero (auto)" tokens first
+        existing_tokens = api_tokens.list_for_user(user["id"])
+        for t in existing_tokens:
+            if t.get("name") == "Agent Zero (auto)":
+                api_tokens.revoke(t["id"], user["id"])
+                steps_log.append("Revoked old auto-generated token.")
+
+        token_id, plaintext = api_tokens.generate(user["id"], "Agent Zero (auto)")
+        steps_log.append(f"Generated API token: Agent Zero (auto) (id={token_id})")
+        audit.log_auth(username, audit.API_TOKEN_CREATED, f"Auto-setup: token 'Agent Zero (auto)' (id={token_id})")
+    except Exception as e:
+        flash(f"Failed to generate token: {e}", "danger")
+        return redirect(url_for("auth.security"))
+
+    # Step 2: Write plugin config.yaml
+    cfg = app_config.load()
+    dfars_port = cfg.get("actual_port") or cfg.get("preferred_port") or 5099
+
+    plugin_dir = Path("C:/Users/jhenn/agent-zero/agent-zero/usr/plugins/_dfars_integration")
+    config_path = plugin_dir / "config.yaml"
+
+    plugin_config = {
+        "api_url": f"http://host.docker.internal:{dfars_port}",
+        "api_token": plaintext,
+        "enabled": True,
+        "request_timeout": 15,
+    }
+
+    try:
+        config_path.write_text(
+            yaml.dump(plugin_config, default_flow_style=False, sort_keys=False),
+            encoding="utf-8",
+        )
+        steps_log.append(f"Wrote plugin config to {config_path}")
+    except Exception as e:
+        flash(f"Token generated but failed to write plugin config: {e}. "
+              f"Token plaintext (save it): {plaintext}", "danger")
+        return redirect(url_for("auth.security"))
+
+    # Step 3: Restart Agent Zero container
+    try:
+        result = subprocess.run(
+            ["docker", "restart", "agent-zero"],
+            capture_output=True, text=True, timeout=60,
+        )
+        if result.returncode == 0:
+            steps_log.append("Restarted agent-zero container.")
+        else:
+            steps_log.append(f"Container restart warning: {result.stderr.strip()}")
+    except FileNotFoundError:
+        steps_log.append("Docker not found — skip container restart. Restart manually.")
+    except subprocess.TimeoutExpired:
+        steps_log.append("Container restart timed out. It may still be restarting.")
+    except Exception as e:
+        steps_log.append(f"Container restart error: {e}")
+
+    # Step 4: Wait a moment for container to come up, then test
+    import time
+    time.sleep(3)
+
+    from . import agent_zero_client
+    try:
+        ok, msg = agent_zero_client.test_connection()
+        if ok:
+            steps_log.append(f"Connection verified: {msg}")
+        else:
+            steps_log.append(f"Connection test: {msg} (container may still be starting — try Test Connection in a few seconds)")
+    except Exception as e:
+        steps_log.append(f"Connection test skipped: {e}")
+
+    audit.log_auth(username, audit.SETTINGS_CHANGED,
+                   f"Agent Zero auto-setup completed: {'; '.join(steps_log)}")
+
+    flash(
+        "Agent Zero auto-setup complete: " + " → ".join(steps_log),
+        "success",
+    )
     return redirect(url_for("auth.security"))
 
 
@@ -329,6 +459,7 @@ def agent_zero_save():
 
     try:
         agent_zero_client.save_settings(url, api_key or None)
+        audit.log_auth(username, audit.SETTINGS_CHANGED, f"Agent Zero URL set to {url}" + (" + new API key" if api_key else ""))
         if api_key:
             flash("Agent Zero connection saved (URL + API key).", "success")
         else:
@@ -348,6 +479,7 @@ def agent_zero_clear_key():
 
     from . import agent_zero_client
     agent_zero_client.clear_api_key()
+    audit.log_auth(username, audit.SETTINGS_CHANGED, "Agent Zero API key cleared")
     flash("Agent Zero API key removed.", "success")
     return redirect(url_for("auth.security"))
 
@@ -365,6 +497,54 @@ def agent_zero_test():
         f"Agent Zero: {message}",
         "success" if ok else "danger",
     )
+    return redirect(url_for("auth.security"))
+
+
+# ─── Email (SMTP) settings ────────────────────────────────
+
+
+@auth_bp.route("/smtp/save", methods=["POST"])
+def smtp_save():
+    """Save SMTP email settings (password encrypted via app.crypto)."""
+    username = session.get("username")
+    if not username:
+        return redirect(url_for("auth.login"))
+
+    from . import mailer
+
+    server = (request.form.get("smtp_server") or "").strip()
+    port = int(request.form.get("smtp_port") or 587)
+    use_tls = request.form.get("smtp_use_tls") == "1"
+    from_address = (request.form.get("smtp_from_address") or "").strip()
+    smtp_username = (request.form.get("smtp_username") or "").strip()
+    password = (request.form.get("smtp_password") or "").strip()
+
+    if not server or not from_address:
+        flash("SMTP server and from-address are required.", "danger")
+        return redirect(url_for("auth.security"))
+
+    try:
+        mailer.save_settings(server, port, use_tls, from_address, smtp_username, password or None)
+        audit.log_auth(username, audit.SETTINGS_CHANGED,
+                       f"SMTP configured: {server}:{port} from={from_address}"
+                       + (" + new password" if password else ""))
+        flash("Email settings saved." + (" Password updated." if password else " Existing password kept."), "success")
+    except Exception as e:
+        flash(f"Failed to save email settings: {e}", "danger")
+
+    return redirect(url_for("auth.security"))
+
+
+@auth_bp.route("/smtp/test", methods=["POST"])
+def smtp_test():
+    """Test SMTP connection with saved settings."""
+    username = session.get("username")
+    if not username:
+        return redirect(url_for("auth.login"))
+
+    from . import mailer
+    ok, message = mailer.test_connection()
+    flash(f"SMTP: {message}", "success" if ok else "danger")
     return redirect(url_for("auth.security"))
 
 
@@ -494,6 +674,7 @@ def mfa_setup():
         else:
             auth.enable_mfa(username, secret)
             recovery_codes = auth.generate_recovery_codes(username)
+            audit.log_auth(username, audit.MFA_ENABLED, f"TOTP enrolled, {len(recovery_codes)} recovery codes generated")
             session.pop("pending_totp_secret", None)
             # Stash codes in the session so the next page can show them
             # exactly once. The recovery_codes template pops them on display.
@@ -546,6 +727,7 @@ def mfa_disable():
         password = request.form.get("password", "")
         try:
             auth.disable_mfa(username, password)
+            audit.log_auth(username, audit.SETTINGS_CHANGED, "MFA disabled")
             flash("MFA disabled. Your account is now password-only.", "success")
             return redirect(url_for("auth.security"))
         except auth.AuthError as e:

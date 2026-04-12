@@ -44,6 +44,7 @@ class Case:
     status: str = "Active"
     priority: str = "Medium"
     classification: str = ""
+    evidence_drive_path: str = ""
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 
@@ -94,6 +95,7 @@ class ChainOfCustody:
     action: str
     from_party: str
     to_party: str
+    custody_id: Optional[int] = None
     location: str = ""
     custody_datetime: Optional[datetime] = None
     purpose: str = ""
@@ -117,6 +119,7 @@ class HashVerification:
     algorithm: str
     hash_value: str
     verified_by: str
+    hash_id: Optional[int] = None
     verification_datetime: Optional[datetime] = None
     notes: str = ""
 
@@ -136,6 +139,8 @@ class ToolUsage:
     """Represents tool usage in an investigation."""
     case_id: str
     tool_name: str
+    tool_id: Optional[int] = None
+    evidence_id: str = ""
     version: str = ""
     purpose: str = ""
     command_used: str = ""
@@ -159,6 +164,7 @@ class ToolUsage:
 class AnalysisNote:
     """Represents an analysis note or finding."""
     case_id: str
+    note_id: Optional[int] = None
     evidence_id: Optional[str] = None
     category: str = ""
     finding: str = ""
@@ -250,6 +256,60 @@ class EntityLink:
 
 
 @dataclass
+class EvidenceFile:
+    """A file artifact attached to an evidence item."""
+    evidence_id: str
+    original_filename: str
+    stored_path: str
+    sha256: str
+    size_bytes: int
+    file_id: Optional[int] = None
+    mime_type: str = ""
+    metadata_json: str = ""
+    is_deleted: int = 0
+    uploaded_at: Optional[datetime] = None
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "EvidenceFile":
+        data["uploaded_at"] = _parse_dt(data.get("uploaded_at"))
+        return cls(**{k: v for k, v in data.items() if k in cls.__annotations__})
+
+    def to_dict(self) -> dict:
+        data = asdict(self)
+        data["uploaded_at"] = _serialize_dt(data["uploaded_at"])
+        return data
+
+
+@dataclass
+class EvidenceAnalysis:
+    """
+    An AI-generated forensic + OSINT analysis report for an evidence
+    item. Multiple analyses are kept per item; each "Run Analysis"
+    appends a new row so the history is auditable.
+    """
+    evidence_id: str
+    analysis_id: Optional[int] = None
+    osint_narrative: str = ""
+    files_snapshot_json: str = ""
+    report_markdown: str = ""
+    tools_used: str = ""
+    platforms_used: str = ""
+    status: str = "completed"
+    error_message: str = ""
+    created_at: Optional[datetime] = None
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "EvidenceAnalysis":
+        data["created_at"] = _parse_dt(data.get("created_at"))
+        return cls(**{k: v for k, v in data.items() if k in cls.__annotations__})
+
+    def to_dict(self) -> dict:
+        data = asdict(self)
+        data["created_at"] = _serialize_dt(data["created_at"])
+        return data
+
+
+@dataclass
 class CaseEvent:
     """
     An investigator-authored timeline event. Complements the
@@ -278,4 +338,31 @@ class CaseEvent:
         data = asdict(self)
         for field in ("event_datetime", "event_end_datetime", "created_at"):
             data[field] = _serialize_dt(data[field])
+        return data
+
+
+@dataclass
+class CaseShare:
+    """Tracks every email or print/export of a case record."""
+    case_id: str
+    record_type: str
+    record_id: str
+    action: str
+    file_hash: str
+    narrative: str
+    shared_by: str
+    share_id: Optional[int] = None
+    record_summary: str = ""
+    recipient: str = ""
+    file_path: str = ""
+    created_at: Optional[datetime] = None
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "CaseShare":
+        data["created_at"] = _parse_dt(data.get("created_at"))
+        return cls(**{k: v for k, v in data.items() if k in cls.__annotations__})
+
+    def to_dict(self) -> dict:
+        data = asdict(self)
+        data["created_at"] = _serialize_dt(data["created_at"])
         return data
