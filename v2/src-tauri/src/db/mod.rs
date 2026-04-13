@@ -1,3 +1,5 @@
+pub mod cases;
+
 use sqlx::{sqlite::{SqliteConnectOptions, SqlitePoolOptions}, SqlitePool};
 use std::path::Path;
 
@@ -5,7 +7,6 @@ use std::path::Path;
 /// Matches v1's two-DB layout: forensics.db (case data) and auth.db (credentials).
 pub struct AppDb {
     /// forensics pool is used by Phase 2+ commands (cases, evidence, etc.)
-    #[allow(dead_code)]
     pub forensics: SqlitePool,
     pub auth: SqlitePool,
 }

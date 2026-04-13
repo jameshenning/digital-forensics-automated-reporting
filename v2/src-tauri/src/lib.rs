@@ -25,6 +25,7 @@ use commands::{
         auth_setup_first_run, auth_tokens_create, auth_tokens_list, auth_tokens_revoke,
         auth_verify_mfa,
     },
+    cases_cmd::{case_create, case_delete, case_get, case_update, cases_list},
     system_cmd::settings_get_security_posture,
 };
 
@@ -114,6 +115,12 @@ pub fn run() {
             auth_tokens_list,
             auth_tokens_create,
             auth_tokens_revoke,
+            // Case commands (Phase 2)
+            cases_list,
+            case_get,
+            case_create,
+            case_update,
+            case_delete,
             // System commands
             settings_get_security_posture,
         ])

@@ -17,4 +17,15 @@ export const queryKeys = {
 
   /** auth_mfa_enroll_start — MFA provisioning URI + recovery codes (single-use fetch) */
   mfaEnrollment: ["auth", "mfaEnrollment"] as const,
+
+  /** Case query keys — all case queries nest under 'cases' */
+  cases: {
+    /** Invalidate everything case-related */
+    all: ["cases"] as const,
+    /** Paginated case list */
+    list: (limit: number, offset: number) =>
+      ["cases", "list", limit, offset] as const,
+    /** Full case detail by ID */
+    detail: (caseId: string) => ["cases", "detail", caseId] as const,
+  },
 } as const;

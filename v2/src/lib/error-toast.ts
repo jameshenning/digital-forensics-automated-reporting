@@ -23,6 +23,14 @@ const ERROR_MESSAGES: Record<AppErrorCode, string> = {
   UserNotFound: "User not found.",
   PasswordPolicy:
     "Password does not meet the policy requirements (minimum 12 characters).",
+  CaseNotFound: "Case not found. It may have been deleted.",
+  CaseAlreadyExists:
+    "A case with that ID already exists. Choose a different Case ID.",
+  CaseHasEvidence:
+    "This case cannot be deleted because it has linked evidence items. " +
+    "Removing evidence is not supported in Phase 2 — handle evidence items first.",
+  ValidationError:
+    "One or more fields contain invalid values. Please review the form and correct any errors.",
   Db: "A database error occurred. Please try again.",
   Crypto:
     "A cryptographic error occurred. Your encryption key may be unavailable.",

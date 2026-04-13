@@ -41,6 +41,11 @@ pub const SESSION_EXPIRED: &str = "SESSION_EXPIRED";
 pub const SETTINGS_CHANGED: &str = "SETTINGS_CHANGED";
 pub const MFA_ENROLLED: &str = "MFA_ENROLLED";
 
+// ─── Case action codes ────────────────────────────────────────────────────────
+pub const CASE_CREATED: &str = "CASE_CREATED";
+pub const CASE_UPDATED: &str = "CASE_UPDATED";
+pub const CASE_DELETED: &str = "CASE_DELETED";
+
 // ─── Path helpers ─────────────────────────────────────────────────────────────
 
 fn audit_dir() -> PathBuf {
@@ -109,8 +114,7 @@ pub fn log_auth(user: &str, action: &str, details: &str) {
 }
 
 /// Log a case-scoped event to `cases/<case_id>_audit.txt`.
-/// Used by case/evidence/custody commands in later phases.
-#[allow(dead_code)]
+/// Used by case/evidence/custody commands.
 pub fn log_case(case_id: &str, user: &str, action: &str, details: &str) {
     let line = format_line(user, action, details);
     append_line(case_audit_path(case_id).as_path(), &line);

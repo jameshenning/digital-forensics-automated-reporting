@@ -25,6 +25,10 @@ export type AppErrorCode =
   | "UserAlreadyExists"
   | "UserNotFound"
   | "PasswordPolicy"
+  | "CaseNotFound"
+  | "CaseAlreadyExists"
+  | "CaseHasEvidence"
+  | "ValidationError"
   | "Db"
   | "Crypto"
   | "Keyring"
@@ -199,6 +203,106 @@ export function authTokensRevoke(args: {
   id: string;
 }): Promise<void> {
   return invoke<void>("auth_tokens_revoke", args);
+}
+
+// ---------------------------------------------------------------------------
+// Case types
+// ---------------------------------------------------------------------------
+
+export type CaseStatus = "Active" | "Closed" | "Pending" | "Archived";
+export type CasePriority = "Low" | "Medium" | "High" | "Critical";
+
+export interface Case {
+  case_id: string;
+  case_name: string;
+  description: string | null;
+  investigator: string;
+  agency: string | null;
+  start_date: string; // ISO 'YYYY-MM-DD'
+  end_date: string | null; // ISO 'YYYY-MM-DD'
+  status: CaseStatus;
+  priority: CasePriority;
+  classification: string | null;
+  evidence_drive_path: string | null;
+  created_at: string; // ISO datetime
+  updated_at: string;
+}
+
+export interface CaseDetail {
+  case: Case;
+  tags: string[]; // sorted alphabetically, already normalized
+}
+
+export interface CaseSummary {
+  case_id: string;
+  case_name: string;
+  investigator: string;
+  start_date: string;
+  status: CaseStatus;
+  priority: CasePriority;
+  evidence_count: number;
+  created_at: string;
+}
+
+export interface CaseInput {
+  case_id: string;
+  case_name: string;
+  description: string | null;
+  investigator: string;
+  agency: string | null;
+  start_date: string;
+  end_date: string | null;
+  status: CaseStatus | null;
+  priority: CasePriority | null;
+  classification: string | null;
+  evidence_drive_path: string | null;
+  tags: string[];
+}
+
+// ---------------------------------------------------------------------------
+// Case commands
+// ---------------------------------------------------------------------------
+
+/** List cases with optional pagination. */
+export function casesList(args: {
+  token: string;
+  limit?: number;
+  offset?: number;
+}): Promise<CaseSummary[]> {
+  return invoke<CaseSummary[]>("cases_list", args);
+}
+
+/** Fetch full case detail including tags. */
+export function caseGet(args: {
+  token: string;
+  case_id: string;
+}): Promise<CaseDetail> {
+  return invoke<CaseDetail>("case_get", args);
+}
+
+/** Create a new case. Returns the full CaseDetail. */
+export function caseCreate(args: {
+  token: string;
+  input: CaseInput;
+}): Promise<CaseDetail> {
+  return invoke<CaseDetail>("case_create", args);
+}
+
+/** Update an existing case. Returns the updated CaseDetail. */
+export function caseUpdate(args: {
+  token: string;
+  case_id: string;
+  input: CaseInput;
+}): Promise<CaseDetail> {
+  return invoke<CaseDetail>("case_update", args);
+}
+
+/** Delete a case. Rejects with CaseHasEvidence if evidence rows exist. */
+export function caseDelete(args: {
+  token: string;
+  case_id: string;
+}): Promise<void> {
+  return invoke<void>("case_delete", args);
 }
 
 // ---------------------------------------------------------------------------

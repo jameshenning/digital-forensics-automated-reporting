@@ -47,6 +47,18 @@ pub enum AppError {
     #[error("keyring error: {0}")]
     Keyring(String),
 
+    #[error("case not found: {case_id}")]
+    CaseNotFound { case_id: String },
+
+    #[error("case already exists: {case_id}")]
+    CaseAlreadyExists { case_id: String },
+
+    #[error("case has evidence and cannot be deleted: {case_id}")]
+    CaseHasEvidence { case_id: String },
+
+    #[error("validation error on field '{field}': {message}")]
+    ValidationError { field: String, message: String },
+
     #[error("I/O error: {0}")]
     Io(String),
 

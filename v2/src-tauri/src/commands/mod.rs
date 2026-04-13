@@ -24,6 +24,7 @@
 /// ║      - evidence_analyses                                                    ║
 /// ║      - case_shares                                                          ║
 /// ║      - cases (all mutations)                                                ║
+/// ║      - case_tags (all mutations)                                            ║
 /// ║    auth.db:                                                                  ║
 /// ║      - users (any mutation except login/setup flow)                         ║
 /// ║      - recovery_codes                                                       ║
@@ -39,4 +40,5 @@
 /// ╚══════════════════════════════════════════════════════════════════════════════╝
 
 pub mod auth_cmd;
+pub mod cases_cmd;
 pub mod system_cmd;

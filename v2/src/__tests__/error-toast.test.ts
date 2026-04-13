@@ -29,6 +29,10 @@ const ERROR_CODES: AppErrorCode[] = [
   "UserAlreadyExists",
   "UserNotFound",
   "PasswordPolicy",
+  "CaseNotFound",
+  "CaseAlreadyExists",
+  "CaseHasEvidence",
+  "ValidationError",
   "Db",
   "Crypto",
   "Keyring",
@@ -94,5 +98,47 @@ describe("toastSuccess", () => {
   it("passes the message to toast.success", () => {
     toastSuccess("Operation completed.");
     expect(toast.success).toHaveBeenCalledWith("Operation completed.");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Case-specific error code messages (Phase 2 additions)
+// ---------------------------------------------------------------------------
+
+describe("case error codes — message content", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("CaseNotFound message mentions 'not found'", () => {
+    toastError({ code: "CaseNotFound", message: "" });
+    const msg = vi.mocked(toast.error).mock.calls[0][0] as string;
+    expect(msg.toLowerCase()).toMatch(/not found/);
+  });
+
+  it("CaseAlreadyExists message mentions 'already exists' or 'ID'", () => {
+    toastError({ code: "CaseAlreadyExists", message: "" });
+    const msg = vi.mocked(toast.error).mock.calls[0][0] as string;
+    expect(msg.toLowerCase()).toMatch(/already exists|case id/i);
+  });
+
+  it("CaseHasEvidence message explicitly mentions evidence destruction", () => {
+    toastError({ code: "CaseHasEvidence", message: "" });
+    const msg = vi.mocked(toast.error).mock.calls[0][0] as string;
+    // Must not silently say "an error occurred" — must explain the evidence constraint
+    expect(msg.toLowerCase()).toMatch(/evidence/);
+    expect(msg.toLowerCase()).toMatch(/cannot be deleted|evidence items/i);
+  });
+
+  it("CaseHasEvidence message is longer than 50 characters (substantive)", () => {
+    toastError({ code: "CaseHasEvidence", message: "" });
+    const msg = vi.mocked(toast.error).mock.calls[0][0] as string;
+    expect(msg.length).toBeGreaterThan(50);
+  });
+
+  it("ValidationError message mentions 'invalid' or 'values'", () => {
+    toastError({ code: "ValidationError", message: "" });
+    const msg = vi.mocked(toast.error).mock.calls[0][0] as string;
+    expect(msg.toLowerCase()).toMatch(/invalid|values|fields/);
   });
 });
