@@ -327,12 +327,17 @@ v1 data lives at `%APPDATA%\DFARS\{forensics.db,auth.db,config.json,evidence_fil
 - **E2E** (tauri-driver + WebDriverIO): one happy-path test per phase (login → create case → add evidence → generate report → logout). Runs on CI against the built `.msi`.
 - **Schema drift guard**: CI fails if `.sqlx/` offline cache is out of date with the migrations + code.
 
-## 13. Open questions (decide before phase 0 starts)
+## 13. Open questions
 
-1. **Fernet compatibility.** Does the Rust `fernet` crate round-trip tokens produced by Python `cryptography.fernet` with the same key? If no → plan the one-shot AES-GCM migration. If yes → keep Fernet indefinitely. *Owner: check during phase 0 scaffolding, block phase 1 on the answer.*
+**Resolved 2026-04-12 (Iteration 0 kickoff):**
+
+1. ✅ **Fernet compatibility — IN PROGRESS.** Test authorized; polyglot-software-engineer running a 30-min compat test (scratch dir `v2/scratch/fernet_compat/`). Result drives whether v1 encrypted secrets need AES-GCM rewrap on first v2 launch. Answer expected before Iteration 0 closes.
+3. ✅ **Router = TanStack Router.** Confirmed. File-based, type-safe, integrates with TanStack Query.
+4. ✅ **UI = Shadcn/UI + Tailwind.** Confirmed. Components live in-repo (no version-churn risk — critical for a long-lived forensics app that must produce identical exports years from now), Radix a11y, tiny bundle, matches v1's "vendor everything" policy.
+
+**Still deferred:**
+
 2. **axum vs. dropping the external REST API.** Agent Zero is the only known consumer. Worth considering: expose a *minimal* `axum` surface only for the endpoints Agent Zero actually calls (probably 4–5 of the 15), rather than porting the full `/api/v1/*` tree. *Owner: audit agent-zero plugin before phase 5.*
-3. **TanStack Router vs. React Router 6.** TanStack is better type-safe but newer; team familiarity with React Router is probably higher. Call it before scaffolding because route files are expensive to rewrite.
-4. **UI library lock-in.** Shadcn/UI requires Tailwind. If the user prefers a more traditional MUI/Chakra approach, the whole `components/` tree looks different. Confirm before phase 0.
 5. **Graph library: Cytoscape.js vs. sticking with vis-network.** Vis-network is what v1 uses; porting saves UI work but keeps an unmaintained dependency. Decide before phase 4.
 
 ## 14. Milestones and dependencies

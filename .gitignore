@@ -46,3 +46,12 @@ local_config/
 # Release signing private key — NEVER commit
 packaging/release_private_key.pem
 packaging/*.pem
+
+# Claude Code session/agent state
+.claude/
+
+# Stray MSVC object files from ad-hoc compile tests
+*.obj
+
+# v2 scratch area — nested cargo build artifacts
+v2/scratch/**/target/
