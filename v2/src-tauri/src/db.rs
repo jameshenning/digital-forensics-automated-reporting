@@ -4,6 +4,8 @@ use std::path::Path;
 /// Holds the two connection pools — one per SQLite file.
 /// Matches v1's two-DB layout: forensics.db (case data) and auth.db (credentials).
 pub struct AppDb {
+    /// forensics pool is used by Phase 2+ commands (cases, evidence, etc.)
+    #[allow(dead_code)]
     pub forensics: SqlitePool,
     pub auth: SqlitePool,
 }

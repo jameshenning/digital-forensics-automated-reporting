@@ -25,4 +25,17 @@ serde_json = "1"
 sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "sqlite", "macros", "migrate", "chrono"] }
 tokio = { version = "1", features = ["full"] }
 thiserror = "1"
+argon2 = "0.5"
+totp-rs = { version = "5", features = ["gen_secret", "otpauth"] }
+keyring = "2"
+fernet = { version = "0.2", default-features = false, features = ["rustcrypto"] }
+rand = "0.8"
+base64 = "0.22"
+chrono = { version = "0.4", features = ["serde"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-appender = "0.2"
+directories = "5"
+zeroize = { version = "1", features = ["derive"] }
+data-encoding = "2"
 
