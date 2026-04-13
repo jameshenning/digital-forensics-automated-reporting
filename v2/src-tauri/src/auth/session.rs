@@ -58,7 +58,10 @@ pub struct SessionData {
 }
 
 pub struct SessionState {
-    sessions: RwLock<HashMap<String, SessionData>>,
+    /// `pub(crate)` so integration tests can backdate `last_activity` to
+    /// simulate the 30-minute inactivity expiry without sleeping for 30 minutes.
+    /// Not exposed outside the crate.
+    pub(crate) sessions: RwLock<HashMap<String, SessionData>>,
 }
 
 impl SessionState {
@@ -352,23 +355,46 @@ mod tests {
         assert!(ss.get_and_touch(&token).is_err());
     }
 
+    /// Deliverable 8 (SEC-1): Session inactive for >30 minutes must be evicted
+    /// and `require_session` must return `Unauthorized`.
+    ///
+    /// We backdate `last_activity` directly via the `pub(crate) sessions` field
+    /// to avoid sleeping 30 minutes in a test.
     #[test]
-    fn expired_session_returns_unauthorized() {
-        use std::thread::sleep;
+    fn expired_session_evicted_after_30_min_inactivity() {
+        use std::time::{Duration, Instant};
 
-        // We cannot realistically wait 30 minutes in a test; instead we
-        // confirm the logic by directly inserting a stale entry.
+        // Test SessionState directly (require_session only delegates to
+        // get_and_touch + status check). Building a full AppState for a
+        // pure timing test would need an async tokio runtime we don't need.
+
         let ss = make_sessions();
         let token = ss.create_verified("alice");
 
-        // Manually backdating is not possible with the public API.
-        // Instead, verify that a session that is NOT stale succeeds,
-        // and trust that the `> INACTIVITY_TIMEOUT` branch is covered
-        // by the logic inspection above.
-        assert!(ss.get_and_touch(&token).is_ok());
+        // Backdate last_activity to 31 minutes ago.
+        {
+            let stale = Instant::now()
+                .checked_sub(Duration::from_secs(31 * 60))
+                .expect("31min before now must not underflow on 64-bit");
 
-        // The 30-minute expiry logic is trivially correct given the Duration
-        // comparison; the system-time safety is confirmed by `lockout.rs` tests.
+            let mut map = ss.sessions.write().expect("write lock");
+            if let Some(data) = map.get_mut(&token) {
+                data.last_activity = stale;
+            }
+        }
+
+        // get_and_touch must evict the session and return Unauthorized.
+        let result = ss.get_and_touch(&token);
+        assert!(
+            matches!(result, Err(crate::error::AppError::Unauthorized)),
+            "session inactive >30min must return Unauthorized, got {result:?}"
+        );
+
+        // Must be evicted from the map.
+        assert!(
+            ss.get_and_touch(&token).is_err(),
+            "evicted session must not be retrievable"
+        );
     }
 
     #[test]

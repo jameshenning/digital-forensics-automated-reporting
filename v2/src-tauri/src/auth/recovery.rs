@@ -179,4 +179,74 @@ mod tests {
         let unique: std::collections::HashSet<_> = codes.iter().collect();
         assert_eq!(unique.len(), 10);
     }
+
+    /// Deliverable 6: Full recovery code flow with an ephemeral DB.
+    #[tokio::test]
+    async fn recovery_flow_generate_verify_single_use() {
+        let pool = crate::test_helpers::test_auth_db().await;
+
+        // Insert a test user.
+        let user_id = crate::test_helpers::insert_user_with_password(
+            &pool, "recov-flow-user", "testpassword123!"
+        ).await;
+
+        // Generate 10 codes.
+        let codes = generate_and_store(&pool, user_id)
+            .await
+            .expect("generate_and_store must succeed");
+        assert_eq!(codes.len(), RECOVERY_CODE_COUNT, "must generate 10 codes");
+
+        // First code accepted.
+        let r1 = verify_and_consume(&pool, user_id, &codes[0])
+            .await
+            .unwrap();
+        assert!(r1, "first code accepted on first use");
+
+        // Same code rejected on second use (single-use invariant).
+        let r2 = verify_and_consume(&pool, user_id, &codes[0])
+            .await
+            .unwrap();
+        assert!(!r2, "first code rejected on second use");
+
+        // Second unused code still works.
+        let r3 = verify_and_consume(&pool, user_id, &codes[1])
+            .await
+            .unwrap();
+        assert!(r3, "second unused code still valid");
+
+        // Remaining count is now 8 (10 - 2 used).
+        let rem = remaining(&pool, user_id).await.unwrap();
+        assert_eq!(rem, 8, "remaining must be 8 after 2 codes used");
+
+        // Unrelated string rejected.
+        let r4 = verify_and_consume(&pool, user_id, "zzzzz-zzzzz")
+            .await
+            .unwrap();
+        assert!(!r4, "unrelated string rejected");
+    }
+
+    /// Revoke all codes and verify NoRecoveryCodesRemaining is returned.
+    #[tokio::test]
+    async fn recovery_no_codes_remaining_error() {
+        let pool = crate::test_helpers::test_auth_db().await;
+        let user_id = crate::test_helpers::insert_user_with_password(
+            &pool, "revoke-user", "testpassword123!"
+        ).await;
+
+        let codes = generate_and_store(&pool, user_id).await.unwrap();
+
+        // Use all 10 codes.
+        for code in &codes {
+            let _ = verify_and_consume(&pool, user_id, code).await;
+        }
+
+        // Now all codes are used — next attempt must return NoRecoveryCodesRemaining.
+        let err = verify_and_consume(&pool, user_id, "anycode-value")
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(err, crate::error::AppError::NoRecoveryCodesRemaining),
+            "must return NoRecoveryCodesRemaining when all codes are used"
+        );
+    }
 }

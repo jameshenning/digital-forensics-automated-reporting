@@ -1,10 +1,16 @@
 mod audit;
-mod auth;
+pub mod auth;
 mod commands;
-mod crypto;
-mod db;
-mod error;
-mod state;
+pub mod crypto;
+pub mod db;
+pub mod error;
+pub mod state;
+
+// Test helpers — compiled only in test builds.
+// Provides ephemeral DB setup, test CryptoState construction, etc.
+#[cfg(test)]
+#[allow(dead_code, unused_imports)] // helpers may be unused by the current test set but are kept for future phases
+pub(crate) mod test_helpers;
 
 use std::sync::Arc;
 

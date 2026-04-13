@@ -44,7 +44,9 @@ pub enum KeySource {
 pub struct CryptoState {
     /// The Fernet instance. Held in a `Zeroizing` wrapper so the key bytes
     /// are wiped from memory on drop.
-    fernet: fernet::Fernet,
+    /// `pub(crate)` so `test_helpers.rs` can construct a CryptoState with a
+    /// known key in test builds (never exposed outside the crate).
+    pub(crate) fernet: fernet::Fernet,
     /// Where the key came from — exposed to the security posture command.
     pub key_source: KeySource,
 }
@@ -169,6 +171,19 @@ pub fn init() -> Result<CryptoState, AppError> {
 // ─── Public encrypt / decrypt ─────────────────────────────────────────────
 
 impl CryptoState {
+    /// Construct a `CryptoState` with a freshly-generated random Fernet key.
+    ///
+    /// Used by integration tests and `test_helpers.rs` to avoid touching
+    /// Windows Credential Manager.  The key is ephemeral — not stored anywhere.
+    pub fn new_with_random_key() -> Self {
+        let key = fernet::Fernet::generate_key();
+        let fernet = fernet::Fernet::new(&key).expect("generated key is always valid");
+        CryptoState {
+            fernet,
+            key_source: KeySource::New,
+        }
+    }
+
     /// Encrypt arbitrary bytes and return a URL-safe Fernet token string.
     pub fn encrypt(&self, plaintext: &[u8]) -> String {
         self.fernet.encrypt(plaintext)
@@ -185,6 +200,77 @@ impl CryptoState {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ─── SEC-1 §6.1 — Keyring entry name constants ───────────────────────────
+
+    /// SEC-1 §6.1 (a): Unit test asserting the hard-coded service/account string
+    /// constants are exactly what v1's crypto.py uses.
+    ///
+    /// Any deviation silently orphans all v1 encrypted data.
+    #[test]
+    fn keyring_service_constant_is_exact_v1_value() {
+        assert_eq!(
+            KEYRING_SERVICE,
+            "DFARS Desktop",
+            "keyring service must be 'DFARS Desktop' (space included, case-sensitive) \
+             to match v1 crypto.py _KEYRING_SERVICE"
+        );
+    }
+
+    #[test]
+    fn keyring_account_constant_is_exact_v1_value() {
+        assert_eq!(
+            KEYRING_ACCOUNT,
+            "totp_encryption_key",
+            "keyring account must be 'totp_encryption_key' to match v1 crypto.py \
+             _KEYRING_USERNAME — NOT 'fernet_key' (the original spec error)"
+        );
+    }
+
+    /// SEC-1 §6.1 (b): Manual integration test — reads/writes the real Windows
+    /// Credential Manager.
+    ///
+    /// MARKED #[ignore] because:
+    ///   - Requires Windows Credential Manager to be available.
+    ///   - Writes a test entry to the production keyring namespace.
+    ///   - Intended to be run manually by a human: `cargo test -- --ignored`
+    ///   - Must be cleaned up after the run (entry name uses _TEST suffix to
+    ///     avoid interfering with the real production entry).
+    ///
+    /// Run with: `cargo test keyring_integration_reads_and_writes -- --ignored`
+    #[test]
+    #[ignore = "requires Windows Credential Manager; run manually with --ignored"]
+    fn keyring_integration_reads_and_writes() {
+        const TEST_SERVICE: &str = "DFARS Desktop";
+        const TEST_ACCOUNT: &str = "totp_encryption_key_TESTONLY";
+        let test_value = "test-fernet-key-value-sec1-6-1-manual";
+
+        // Write
+        let entry = keyring::Entry::new(TEST_SERVICE, TEST_ACCOUNT)
+            .expect("keyring entry creation should succeed");
+        entry
+            .set_password(test_value)
+            .expect("keyring set_password should succeed");
+
+        // Read back
+        let retrieved = entry
+            .get_password()
+            .expect("keyring get_password should succeed");
+        assert_eq!(retrieved, test_value, "retrieved value must match written value");
+
+        // Clean up
+        entry
+            .delete_password()
+            .expect("keyring delete_password should succeed");
+
+        // Verify deletion
+        assert!(
+            entry.get_password().is_err(),
+            "entry should be absent after deletion"
+        );
+    }
+
+    // ─── Encrypt/decrypt ─────────────────────────────────────────────────────
 
     /// Round-trip: bytes encrypted by this module must decrypt to the original.
     #[test]

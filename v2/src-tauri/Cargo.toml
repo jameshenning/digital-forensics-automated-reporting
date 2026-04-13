@@ -39,3 +39,9 @@ directories = "5"
 zeroize = { version = "1", features = ["derive"] }
 data-encoding = "2"
 
+[dev-dependencies]
+# Ephemeral temp directories for integration tests that need on-disk SQLite.
+tempfile = "3"
+# Tokio test macro for async test functions.
+tokio-test = "0.4"
+
