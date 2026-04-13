@@ -29,6 +29,14 @@ const ERROR_MESSAGES: Record<AppErrorCode, string> = {
   CaseHasEvidence:
     "This case cannot be deleted because it has linked evidence items. " +
     "Removing evidence is not supported in Phase 2 — handle evidence items first.",
+  EvidenceNotFound: "Evidence item not found. It may have been deleted.",
+  EvidenceAlreadyExists:
+    "An evidence item with that ID already exists on this case. Choose a different Evidence ID.",
+  EvidenceHasDependents:
+    "This evidence item has custody events, hashes, or tool records and cannot be deleted. " +
+    "Remove them first.",
+  CustodyNotFound: "Custody event not found. It may have been deleted.",
+  HashNotFound: "Hash verification record not found.",
   ValidationError:
     "One or more fields contain invalid values. Please review the form and correct any errors.",
   Db: "A database error occurred. Please try again.",

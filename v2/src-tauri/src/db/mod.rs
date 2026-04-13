@@ -1,4 +1,9 @@
+pub mod analysis;
 pub mod cases;
+pub mod custody;
+pub mod evidence;
+pub mod hashes;
+pub mod tools;
 
 use sqlx::{sqlite::{SqliteConnectOptions, SqlitePoolOptions}, SqlitePool};
 use std::path::Path;

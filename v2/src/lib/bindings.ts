@@ -28,6 +28,11 @@ export type AppErrorCode =
   | "CaseNotFound"
   | "CaseAlreadyExists"
   | "CaseHasEvidence"
+  | "EvidenceNotFound"
+  | "EvidenceAlreadyExists"
+  | "EvidenceHasDependents"
+  | "CustodyNotFound"
+  | "HashNotFound"
   | "ValidationError"
   | "Db"
   | "Crypto"
@@ -303,6 +308,311 @@ export function caseDelete(args: {
   case_id: string;
 }): Promise<void> {
   return invoke<void>("case_delete", args);
+}
+
+// ---------------------------------------------------------------------------
+// Evidence types
+// ---------------------------------------------------------------------------
+
+export interface Evidence {
+  evidence_id: string;
+  case_id: string;
+  description: string;
+  collected_by: string;
+  collection_datetime: string; // ISO datetime 'YYYY-MM-DDTHH:MM:SS'
+  location: string | null;
+  status: string;
+  evidence_type: string | null;
+  make_model: string | null;
+  serial_number: string | null;
+  storage_location: string | null;
+}
+
+export interface EvidenceInput {
+  evidence_id: string;
+  description: string;
+  collected_by: string;
+  collection_datetime: string;
+  location: string | null;
+  status: string | null; // null → backend default 'Collected'
+  evidence_type: string | null;
+  make_model: string | null;
+  serial_number: string | null;
+  storage_location: string | null;
+}
+
+export type CustodyAction =
+  | "Seized"
+  | "Transferred"
+  | "Received"
+  | "Analyzed"
+  | "Returned"
+  | "Destroyed"
+  | "Sealed"
+  | "Unsealed";
+
+export interface CustodyEvent {
+  custody_id: number;
+  evidence_id: string;
+  custody_sequence: number; // per-evidence, auto-assigned on add
+  action: CustodyAction;
+  from_party: string;
+  to_party: string;
+  location: string | null;
+  custody_datetime: string;
+  purpose: string | null;
+  notes: string | null;
+}
+
+export type CustodyInput = Omit<
+  CustodyEvent,
+  "custody_id" | "evidence_id" | "custody_sequence"
+>;
+
+export type HashAlgorithm =
+  | "MD5"
+  | "SHA1"
+  | "SHA256"
+  | "SHA512"
+  | "SHA3-256"
+  | "SHA3-512";
+
+export interface HashRecord {
+  hash_id: number;
+  evidence_id: string;
+  algorithm: HashAlgorithm;
+  hash_value: string; // lowercase hex
+  verified_by: string;
+  verification_datetime: string;
+  notes: string | null;
+}
+
+export type HashInput = Omit<HashRecord, "hash_id" | "evidence_id">;
+
+export interface ToolUsage {
+  tool_id: number;
+  case_id: string;
+  evidence_id: string | null; // nullable — tool may apply to case or specific item
+  tool_name: string;
+  version: string | null;
+  purpose: string;
+  command_used: string | null;
+  input_file: string | null;
+  output_file: string | null;
+  execution_datetime: string;
+  operator: string;
+}
+
+export interface ToolInput {
+  evidence_id: string | null;
+  tool_name: string;
+  version: string | null;
+  purpose: string;
+  command_used: string | null;
+  input_file: string | null;
+  output_file: string | null;
+  execution_datetime: string | null; // null → backend uses now()
+  operator: string;
+}
+
+export type AnalysisCategory =
+  | "Observation"
+  | "Timeline"
+  | "Correlation"
+  | "Anomaly"
+  | "Recommendation"
+  | "Conclusion"
+  | "Other";
+
+export type ConfidenceLevel = "Low" | "Medium" | "High";
+
+export interface AnalysisNote {
+  note_id: number;
+  case_id: string;
+  evidence_id: string | null;
+  category: AnalysisCategory;
+  finding: string; // max 500
+  description: string | null; // max 5000
+  confidence_level: ConfidenceLevel;
+  created_at: string;
+}
+
+export interface AnalysisInput {
+  evidence_id: string | null;
+  category: AnalysisCategory;
+  finding: string;
+  description: string | null;
+  confidence_level: ConfidenceLevel | null; // null → backend default 'Medium'
+}
+
+// ---------------------------------------------------------------------------
+// Evidence commands
+// ---------------------------------------------------------------------------
+
+/** Add a new evidence item to a case. */
+export function evidenceAdd(args: {
+  token: string;
+  case_id: string;
+  input: EvidenceInput;
+}): Promise<Evidence> {
+  return invoke<Evidence>("evidence_add", args);
+}
+
+/** Fetch a single evidence item by its ID. */
+export function evidenceGet(args: {
+  token: string;
+  evidence_id: string;
+}): Promise<Evidence> {
+  return invoke<Evidence>("evidence_get", args);
+}
+
+/** List all evidence items for a case. */
+export function evidenceListForCase(args: {
+  token: string;
+  case_id: string;
+}): Promise<Evidence[]> {
+  return invoke<Evidence[]>("evidence_list_for_case", args);
+}
+
+/** Delete an evidence item. Rejects with EvidenceHasDependents if custody/hash/tool rows exist. */
+export function evidenceDelete(args: {
+  token: string;
+  evidence_id: string;
+}): Promise<void> {
+  return invoke<void>("evidence_delete", args);
+}
+
+// ---------------------------------------------------------------------------
+// Custody commands
+// ---------------------------------------------------------------------------
+
+/** Add a chain-of-custody event for an evidence item. */
+export function custodyAdd(args: {
+  token: string;
+  evidence_id: string;
+  input: CustodyInput;
+}): Promise<CustodyEvent> {
+  return invoke<CustodyEvent>("custody_add", args);
+}
+
+/** List custody events for a specific evidence item. */
+export function custodyListForEvidence(args: {
+  token: string;
+  evidence_id: string;
+}): Promise<CustodyEvent[]> {
+  return invoke<CustodyEvent[]>("custody_list_for_evidence", args);
+}
+
+/** List all custody events for a case (case-wide timeline). */
+export function custodyListForCase(args: {
+  token: string;
+  case_id: string;
+}): Promise<CustodyEvent[]> {
+  return invoke<CustodyEvent[]>("custody_list_for_case", args);
+}
+
+/** Update a custody event by its DB id. */
+export function custodyUpdate(args: {
+  token: string;
+  custody_id: number;
+  input: CustodyInput;
+}): Promise<CustodyEvent> {
+  return invoke<CustodyEvent>("custody_update", args);
+}
+
+/** Delete a custody event by its DB id. */
+export function custodyDelete(args: {
+  token: string;
+  custody_id: number;
+}): Promise<void> {
+  return invoke<void>("custody_delete", args);
+}
+
+// ---------------------------------------------------------------------------
+// Hash commands
+// ---------------------------------------------------------------------------
+
+/** Add a hash verification record for an evidence item. */
+export function hashAdd(args: {
+  token: string;
+  evidence_id: string;
+  input: HashInput;
+}): Promise<HashRecord> {
+  return invoke<HashRecord>("hash_add", args);
+}
+
+/** List all hash verifications for a case. */
+export function hashListForCase(args: {
+  token: string;
+  case_id: string;
+}): Promise<HashRecord[]> {
+  return invoke<HashRecord[]>("hash_list_for_case", args);
+}
+
+/** List hash verifications for a specific evidence item. */
+export function hashListForEvidence(args: {
+  token: string;
+  evidence_id: string;
+}): Promise<HashRecord[]> {
+  return invoke<HashRecord[]>("hash_list_for_evidence", args);
+}
+
+// ---------------------------------------------------------------------------
+// Tool usage commands
+// ---------------------------------------------------------------------------
+
+/** Record a tool usage event for a case. */
+export function toolAdd(args: {
+  token: string;
+  case_id: string;
+  input: ToolInput;
+}): Promise<ToolUsage> {
+  return invoke<ToolUsage>("tool_add", args);
+}
+
+/** List all tool usages for a case. */
+export function toolListForCase(args: {
+  token: string;
+  case_id: string;
+}): Promise<ToolUsage[]> {
+  return invoke<ToolUsage[]>("tool_list_for_case", args);
+}
+
+/** List tool usages linked to a specific evidence item. */
+export function toolListForEvidence(args: {
+  token: string;
+  evidence_id: string;
+}): Promise<ToolUsage[]> {
+  return invoke<ToolUsage[]>("tool_list_for_evidence", args);
+}
+
+// ---------------------------------------------------------------------------
+// Analysis note commands
+// ---------------------------------------------------------------------------
+
+/** Add an analysis note to a case. */
+export function analysisAdd(args: {
+  token: string;
+  case_id: string;
+  input: AnalysisInput;
+}): Promise<AnalysisNote> {
+  return invoke<AnalysisNote>("analysis_add", args);
+}
+
+/** List all analysis notes for a case. */
+export function analysisListForCase(args: {
+  token: string;
+  case_id: string;
+}): Promise<AnalysisNote[]> {
+  return invoke<AnalysisNote[]>("analysis_list_for_case", args);
+}
+
+/** List analysis notes linked to a specific evidence item. */
+export function analysisListForEvidence(args: {
+  token: string;
+  evidence_id: string;
+}): Promise<AnalysisNote[]> {
+  return invoke<AnalysisNote[]>("analysis_list_for_evidence", args);
 }
 
 // ---------------------------------------------------------------------------

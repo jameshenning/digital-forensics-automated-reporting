@@ -32,6 +32,11 @@ const ERROR_CODES: AppErrorCode[] = [
   "CaseNotFound",
   "CaseAlreadyExists",
   "CaseHasEvidence",
+  "EvidenceNotFound",
+  "EvidenceAlreadyExists",
+  "EvidenceHasDependents",
+  "CustodyNotFound",
+  "HashNotFound",
   "ValidationError",
   "Db",
   "Crypto",
@@ -140,5 +145,58 @@ describe("case error codes — message content", () => {
     toastError({ code: "ValidationError", message: "" });
     const msg = vi.mocked(toast.error).mock.calls[0][0] as string;
     expect(msg.toLowerCase()).toMatch(/invalid|values|fields/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 3a evidence error code messages
+// ---------------------------------------------------------------------------
+
+describe("evidence error codes — message content", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("EvidenceNotFound message mentions 'not found'", () => {
+    toastError({ code: "EvidenceNotFound", message: "" });
+    const msg = vi.mocked(toast.error).mock.calls[0][0] as string;
+    expect(msg.toLowerCase()).toMatch(/not found/);
+  });
+
+  it("EvidenceAlreadyExists message mentions 'already exists' or 'Evidence ID'", () => {
+    toastError({ code: "EvidenceAlreadyExists", message: "" });
+    const msg = vi.mocked(toast.error).mock.calls[0][0] as string;
+    expect(msg.toLowerCase()).toMatch(/already exists|evidence id/i);
+  });
+
+  it("EvidenceHasDependents message names the dependents explicitly", () => {
+    toastError({ code: "EvidenceHasDependents", message: "" });
+    const msg = vi.mocked(toast.error).mock.calls[0][0] as string;
+    // Must name what the dependents are, not just say "cannot be deleted"
+    expect(msg.toLowerCase()).toMatch(/custody|hash|tool/);
+  });
+
+  it("EvidenceHasDependents message instructs user to remove them first", () => {
+    toastError({ code: "EvidenceHasDependents", message: "" });
+    const msg = vi.mocked(toast.error).mock.calls[0][0] as string;
+    expect(msg.toLowerCase()).toMatch(/remove|first|delete/);
+  });
+
+  it("EvidenceHasDependents message is longer than 50 characters (substantive)", () => {
+    toastError({ code: "EvidenceHasDependents", message: "" });
+    const msg = vi.mocked(toast.error).mock.calls[0][0] as string;
+    expect(msg.length).toBeGreaterThan(50);
+  });
+
+  it("CustodyNotFound message mentions 'not found'", () => {
+    toastError({ code: "CustodyNotFound", message: "" });
+    const msg = vi.mocked(toast.error).mock.calls[0][0] as string;
+    expect(msg.toLowerCase()).toMatch(/not found/);
+  });
+
+  it("HashNotFound message mentions 'not found' or 'hash'", () => {
+    toastError({ code: "HashNotFound", message: "" });
+    const msg = vi.mocked(toast.error).mock.calls[0][0] as string;
+    expect(msg.toLowerCase()).toMatch(/not found|hash/);
   });
 });

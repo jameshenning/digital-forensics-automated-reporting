@@ -56,6 +56,21 @@ pub enum AppError {
     #[error("case has evidence and cannot be deleted: {case_id}")]
     CaseHasEvidence { case_id: String },
 
+    #[error("evidence not found: {evidence_id}")]
+    EvidenceNotFound { evidence_id: String },
+
+    #[error("evidence already exists: {evidence_id}")]
+    EvidenceAlreadyExists { evidence_id: String },
+
+    #[error("evidence has dependents and cannot be deleted: {evidence_id}")]
+    EvidenceHasDependents { evidence_id: String },
+
+    #[error("custody event not found: {custody_id}")]
+    CustodyNotFound { custody_id: i64 },
+
+    #[error("hash record not found: {hash_id}")]
+    HashNotFound { hash_id: i64 },
+
     #[error("validation error on field '{field}': {message}")]
     ValidationError { field: String, message: String },
 

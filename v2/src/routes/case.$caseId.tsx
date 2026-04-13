@@ -1,8 +1,11 @@
 /**
- * /case/:caseId — Case detail view (Phase 2 minimal).
+ * /case/:caseId — Case detail view (Phase 3a).
  *
- * Shows all case fields + tags.  Evidence/custody/analysis are Phase 3.
- * Delete is guarded by an AlertDialog; CaseHasEvidence gets a distinct message.
+ * Case header card is retained from Phase 2.
+ * Below it: a Tabs group with Evidence, Chain of Custody, Hashes, Tools,
+ * and Analysis sub-panels.
+ *
+ * The Phase 2 "coming in Phase 3" placeholder card is removed.
  */
 
 import React from "react";
@@ -40,6 +43,13 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+
+import { EvidencePanel } from "@/components/evidence-panel";
+import { CustodyPanel } from "@/components/custody-panel";
+import { HashPanel } from "@/components/hash-panel";
+import { ToolsPanel } from "@/components/tools-panel";
+import { AnalysisPanel } from "@/components/analysis-panel";
 
 export const Route = createFileRoute("/case/$caseId")({
   beforeLoad: requireAuthBeforeLoad,
@@ -130,9 +140,7 @@ function DeleteDialog({
               {hasEvidenceError && (
                 <div className="rounded-md border border-destructive/50 bg-destructive/10 p-3 text-sm text-destructive">
                   <strong>Cannot delete:</strong> this case has linked evidence
-                  items that would be destroyed. Evidence management is coming
-                  in Phase 3 — remove evidence items first before deleting the
-                  case.
+                  items. Delete all evidence items from the Evidence tab first.
                 </div>
               )}
             </div>
@@ -199,7 +207,6 @@ function CaseDetailPage() {
       const appErr = err as Partial<AppError>;
       if (appErr?.code === "CaseHasEvidence") {
         setDeleteHasEvidenceError(true);
-        // Don't call toastError — the in-dialog message is more informative
       } else {
         toastError(err);
       }
@@ -219,7 +226,7 @@ function CaseDetailPage() {
   if (isLoading) {
     return (
       <div className="min-h-screen bg-background">
-        <main className="mx-auto max-w-3xl px-6 py-8">
+        <main className="mx-auto max-w-4xl px-6 py-8">
           <Skeleton className="h-8 w-32 mb-6" />
           <Card>
             <CardContent className="pt-6">
@@ -233,12 +240,11 @@ function CaseDetailPage() {
 
   if (isError) {
     const appErr = error as Partial<AppError>;
-    // CaseNotFound handled by the useEffect redirect above
     if (appErr?.code === "CaseNotFound") return null;
 
     return (
       <div className="min-h-screen bg-background">
-        <main className="mx-auto max-w-3xl px-6 py-8">
+        <main className="mx-auto max-w-4xl px-6 py-8">
           <Button
             variant="ghost"
             size="sm"
@@ -252,14 +258,8 @@ function CaseDetailPage() {
             <AlertCircle className="h-4 w-4" />
             <AlertTitle>Failed to load case</AlertTitle>
             <AlertDescription className="mt-2 space-y-2">
-              <p>
-                {appErr?.message ?? "An unexpected error occurred."}
-              </p>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => void refetch()}
-              >
+              <p>{appErr?.message ?? "An unexpected error occurred."}</p>
+              <Button variant="outline" size="sm" onClick={() => void refetch()}>
                 <RefreshCw className="h-4 w-4 mr-2" />
                 Retry
               </Button>
@@ -274,16 +274,9 @@ function CaseDetailPage() {
 
   const { case: c, tags } = data;
 
-  // Try to get evidence count from cached list — no extra network call
-  const listCache = queryClient.getQueryData<
-    Array<{ case_id: string; evidence_count: number }>
-  >(queryKeys.cases.list(100, 0));
-  const evidenceCount =
-    listCache?.find((s) => s.case_id === caseId)?.evidence_count ?? null;
-
   return (
     <div className="min-h-screen bg-background">
-      <main className="mx-auto max-w-3xl px-6 py-8">
+      <main className="mx-auto max-w-4xl px-6 py-8">
         {/* Back */}
         <Button
           variant="ghost"
@@ -304,7 +297,6 @@ function CaseDetailPage() {
                 <code className="text-xs text-muted-foreground font-mono mt-1 block">
                   {c.case_id}
                 </code>
-                {/* Status + priority + tags */}
                 <div className="flex flex-wrap gap-1.5 mt-2">
                   <span
                     className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium ${statusBadgeClass(c.status)}`}
@@ -323,7 +315,6 @@ function CaseDetailPage() {
                   ))}
                 </div>
               </div>
-              {/* Action buttons */}
               <div className="flex gap-2 shrink-0">
                 <Button
                   size="sm"
@@ -355,23 +346,14 @@ function CaseDetailPage() {
               <DetailRow label="Agency" value={c.agency} />
               <DetailRow label="Start Date" value={fmtDate(c.start_date)} />
               <DetailRow label="End Date" value={fmtDate(c.end_date)} />
-              <DetailRow
-                label="Classification"
-                value={c.classification}
-              />
+              <DetailRow label="Classification" value={c.classification} />
               <DetailRow
                 label="Evidence Drive"
                 value={c.evidence_drive_path}
                 mono
               />
-              <DetailRow
-                label="Created"
-                value={fmtDate(c.created_at)}
-              />
-              <DetailRow
-                label="Last Updated"
-                value={fmtDate(c.updated_at)}
-              />
+              <DetailRow label="Created" value={fmtDate(c.created_at)} />
+              <DetailRow label="Last Updated" value={fmtDate(c.updated_at)} />
             </div>
 
             {c.description && (
@@ -385,23 +367,71 @@ function CaseDetailPage() {
           </CardContent>
         </Card>
 
-        {/* Phase 3 placeholder */}
-        <Card className="border-dashed">
-          <CardContent className="py-6">
-            <p className="text-sm text-muted-foreground">
-              Evidence, chain of custody, and analysis records coming in Phase
-              3.{" "}
-              {evidenceCount !== null && (
-                <span>
-                  This case has{" "}
-                  <strong>{evidenceCount}</strong>{" "}
-                  linked evidence{" "}
-                  {evidenceCount === 1 ? "item" : "items"} (read-only).
-                </span>
-              )}
-            </p>
-          </CardContent>
-        </Card>
+        {/* Sub-panel tabs */}
+        <Tabs defaultValue="evidence">
+          <TabsList className="w-full justify-start overflow-x-auto flex-wrap h-auto gap-1 mb-4">
+            <TabsTrigger value="evidence">Evidence</TabsTrigger>
+            <TabsTrigger value="custody">Chain of Custody</TabsTrigger>
+            <TabsTrigger value="hashes">Hashes</TabsTrigger>
+            <TabsTrigger value="tools">Tools</TabsTrigger>
+            <TabsTrigger value="analysis">Analysis</TabsTrigger>
+          </TabsList>
+
+          <TabsContent value="evidence">
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">Evidence Items</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <EvidencePanel caseId={caseId} />
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          <TabsContent value="custody">
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">Chain of Custody — Case Timeline</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <CustodyPanel scope={{ kind: "case", caseId }} />
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          <TabsContent value="hashes">
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">Hash Verifications</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <HashPanel scope={{ kind: "case", caseId }} />
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          <TabsContent value="tools">
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">Tool Usage</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <ToolsPanel caseId={caseId} />
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          <TabsContent value="analysis">
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">Analysis Notes</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <AnalysisPanel caseId={caseId} />
+              </CardContent>
+            </Card>
+          </TabsContent>
+        </Tabs>
       </main>
     </div>
   );

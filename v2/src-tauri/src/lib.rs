@@ -26,6 +26,13 @@ use commands::{
         auth_verify_mfa,
     },
     cases_cmd::{case_create, case_delete, case_get, case_update, cases_list},
+    records_cmd::{
+        analysis_add, analysis_list_for_case, analysis_list_for_evidence,
+        custody_add, custody_delete, custody_list_for_case, custody_list_for_evidence,
+        custody_update, evidence_add, evidence_delete, evidence_get,
+        evidence_list_for_case, hash_add, hash_list_for_case, hash_list_for_evidence,
+        tool_add, tool_list_for_case, tool_list_for_evidence,
+    },
     system_cmd::settings_get_security_posture,
 };
 
@@ -121,6 +128,29 @@ pub fn run() {
             case_create,
             case_update,
             case_delete,
+            // Evidence commands (Phase 3a)
+            evidence_add,
+            evidence_get,
+            evidence_list_for_case,
+            evidence_delete,
+            // Chain-of-custody commands (Phase 3a)
+            custody_add,
+            custody_list_for_evidence,
+            custody_list_for_case,
+            custody_update,
+            custody_delete,
+            // Hash verification commands (Phase 3a)
+            hash_add,
+            hash_list_for_evidence,
+            hash_list_for_case,
+            // Tool usage commands (Phase 3a)
+            tool_add,
+            tool_list_for_case,
+            tool_list_for_evidence,
+            // Analysis note commands (Phase 3a)
+            analysis_add,
+            analysis_list_for_case,
+            analysis_list_for_evidence,
             // System commands
             settings_get_security_posture,
         ])

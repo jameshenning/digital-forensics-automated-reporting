@@ -28,4 +28,44 @@ export const queryKeys = {
     /** Full case detail by ID */
     detail: (caseId: string) => ["cases", "detail", caseId] as const,
   },
+
+  /** Evidence query keys */
+  evidence: {
+    listForCase: (caseId: string) =>
+      ["evidence", "list", "case", caseId] as const,
+    detail: (evidenceId: string) =>
+      ["evidence", "detail", evidenceId] as const,
+  },
+
+  /** Chain-of-custody query keys */
+  custody: {
+    listForEvidence: (evidenceId: string) =>
+      ["custody", "list", "evidence", evidenceId] as const,
+    listForCase: (caseId: string) =>
+      ["custody", "list", "case", caseId] as const,
+  },
+
+  /** Hash verification query keys */
+  hashes: {
+    listForCase: (caseId: string) =>
+      ["hashes", "list", "case", caseId] as const,
+    listForEvidence: (evidenceId: string) =>
+      ["hashes", "list", "evidence", evidenceId] as const,
+  },
+
+  /** Tool usage query keys */
+  tools: {
+    listForCase: (caseId: string) =>
+      ["tools", "list", "case", caseId] as const,
+    listForEvidence: (evidenceId: string) =>
+      ["tools", "list", "evidence", evidenceId] as const,
+  },
+
+  /** Analysis note query keys */
+  analysis: {
+    listForCase: (caseId: string) =>
+      ["analysis", "list", "case", caseId] as const,
+    listForEvidence: (evidenceId: string) =>
+      ["analysis", "list", "evidence", evidenceId] as const,
+  },
 } as const;
