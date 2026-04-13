@@ -38,6 +38,9 @@ tracing-appender = "0.2"
 directories = "5"
 zeroize = { version = "1", features = ["derive"] }
 data-encoding = "2"
+sha2 = "0.10"
+infer = "0.16"
+unicode-normalization = "0.1"
 
 [dev-dependencies]
 # Ephemeral temp directories for integration tests that need on-disk SQLite.

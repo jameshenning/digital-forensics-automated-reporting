@@ -45,6 +45,22 @@ const ERROR_MESSAGES: Record<AppErrorCode, string> = {
   Keyring: "Could not access the Windows Credential Manager.",
   Io: "A file I/O error occurred.",
   Internal: "An unexpected internal error occurred.",
+  // Phase 3b — evidence file + report error codes
+  EvidenceFileNotFound:
+    "Evidence file not found. It may have been deleted or purged.",
+  EvidenceFileTooLarge:
+    "File exceeds the 50 GiB upload limit. Use a smaller file or increase the limit in settings.",
+  InvalidFilename:
+    "The filename contains invalid characters, a path separator, or exceeds 200 characters. Rename the file and try again.",
+  PathTraversalBlocked:
+    "Upload rejected: the resolved file path is outside the permitted storage root. This may indicate a security issue.",
+  OneDriveSyncWarning:
+    "See dialog.", // The blocking OneDriveWarningDialog handles this — toast is supplemental only
+  HashMismatchOnDownload:
+    "INTEGRITY FAILURE: This file does not match its original SHA-256 hash. " +
+    "Do not rely on it as evidence until a source reacquisition is performed.",
+  ReportGenerationFailed:
+    "Report generation failed. Check that all required case data is present and try again.",
 };
 
 /**

@@ -18,6 +18,7 @@ import {
   ChevronRight,
   Shield,
   Hash,
+  Paperclip,
 } from "lucide-react";
 
 import {
@@ -57,6 +58,7 @@ import {
 import { EvidenceForm } from "@/components/evidence-form";
 import { CustodyPanel } from "@/components/custody-panel";
 import { HashPanel } from "@/components/hash-panel";
+import { EvidenceFilesPanel } from "@/components/evidence-files-panel";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -64,6 +66,8 @@ import { HashPanel } from "@/components/hash-panel";
 
 interface EvidencePanelProps {
   caseId: string;
+  /** Called when the OneDrive warning dialog navigates to case edit. */
+  onNavigateToCaseEdit?: () => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -113,6 +117,7 @@ interface EvidenceCardProps {
   isDeleting: boolean;
   hasDependentsError: boolean;
   onDialogClose: () => void;
+  onNavigateToCaseEdit: () => void;
 }
 
 function EvidenceCard({
@@ -122,9 +127,11 @@ function EvidenceCard({
   isDeleting,
   hasDependentsError,
   onDialogClose,
+  onNavigateToCaseEdit,
 }: EvidenceCardProps) {
   const [custodyOpen, setCustodyOpen] = React.useState(false);
   const [hashOpen, setHashOpen] = React.useState(false);
+  const [filesOpen, setFilesOpen] = React.useState(false);
 
   const handleDeleteAttempt = () => {
     onDelete(ev.evidence_id);
@@ -241,6 +248,7 @@ function EvidenceCard({
           onClick={() => {
             setHashOpen(!hashOpen);
             if (custodyOpen) setCustodyOpen(false);
+            if (filesOpen) setFilesOpen(false);
           }}
         >
           {hashOpen ? (
@@ -250,6 +258,24 @@ function EvidenceCard({
           )}
           <Hash className="h-3 w-3 mr-1" />
           Hashes
+        </Button>
+        <Button
+          size="sm"
+          variant="ghost"
+          className="h-6 px-2 text-xs"
+          onClick={() => {
+            setFilesOpen(!filesOpen);
+            if (custodyOpen) setCustodyOpen(false);
+            if (hashOpen) setHashOpen(false);
+          }}
+        >
+          {filesOpen ? (
+            <ChevronDown className="h-3 w-3 mr-1" />
+          ) : (
+            <ChevronRight className="h-3 w-3 mr-1" />
+          )}
+          <Paperclip className="h-3 w-3 mr-1" />
+          Files
         </Button>
       </div>
 
@@ -270,6 +296,17 @@ function EvidenceCard({
           />
         </div>
       )}
+
+      {/* Inline files disclosure (Phase 3b) */}
+      {filesOpen && (
+        <div className="mt-1 pl-3 border-l-2 border-muted">
+          <EvidenceFilesPanel
+            evidenceId={ev.evidence_id}
+            caseId={caseId}
+            onNavigateToCaseEdit={onNavigateToCaseEdit}
+          />
+        </div>
+      )}
     </div>
   );
 }
@@ -278,7 +315,7 @@ function EvidenceCard({
 // EvidencePanel
 // ---------------------------------------------------------------------------
 
-export function EvidencePanel({ caseId }: EvidencePanelProps) {
+export function EvidencePanel({ caseId, onNavigateToCaseEdit }: EvidencePanelProps) {
   const token = getToken() ?? "";
   const queryClient = useQueryClient();
   const [addOpen, setAddOpen] = React.useState(false);
@@ -379,6 +416,7 @@ export function EvidencePanel({ caseId }: EvidencePanelProps) {
           isDeleting={deletingId === ev.evidence_id}
           hasDependentsError={dependentsErrorId === ev.evidence_id}
           onDialogClose={() => setDependentsErrorId(null)}
+          onNavigateToCaseEdit={onNavigateToCaseEdit ?? (() => {})}
         />
       ))}
 

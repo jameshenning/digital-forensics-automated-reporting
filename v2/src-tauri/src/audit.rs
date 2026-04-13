@@ -46,6 +46,18 @@ pub const CASE_CREATED: &str = "CASE_CREATED";
 pub const CASE_UPDATED: &str = "CASE_UPDATED";
 pub const CASE_DELETED: &str = "CASE_DELETED";
 
+// ─── Evidence file action codes (Phase 3b) ────────────────────────────────────
+pub const FILE_UPLOADED: &str = "FILE_UPLOADED";
+pub const FILE_DOWNLOADED: &str = "FILE_DOWNLOADED";
+pub const FILE_SOFT_DELETED: &str = "FILE_SOFT_DELETED";
+pub const FILE_PURGED: &str = "FILE_PURGED";
+pub const FILE_INTEGRITY_FAILURE: &str = "FILE_INTEGRITY_FAILURE";
+pub const ONEDRIVE_WARNING_ACKNOWLEDGED: &str = "ONEDRIVE_WARNING_ACKNOWLEDGED";
+pub const ONEDRIVE_WARNING_EMITTED: &str = "ONEDRIVE_WARNING_EMITTED";
+
+// ─── Report action codes (Phase 3b) ──────────────────────────────────────────
+pub const REPORT_GENERATED: &str = "REPORT_GENERATED";
+
 // ─── Path helpers ─────────────────────────────────────────────────────────────
 
 fn audit_dir() -> PathBuf {

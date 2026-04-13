@@ -68,4 +68,16 @@ export const queryKeys = {
     listForEvidence: (evidenceId: string) =>
       ["analysis", "list", "evidence", evidenceId] as const,
   },
+
+  /** Evidence file query keys (Phase 3b) */
+  evidenceFiles: {
+    listForEvidence: (evidenceId: string) =>
+      ["evidence-files", "list", "evidence", evidenceId] as const,
+  },
+
+  /** Report query keys (Phase 3b) */
+  reports: {
+    preview: (caseId: string) =>
+      ["reports", "preview", caseId] as const,
+  },
 } as const;

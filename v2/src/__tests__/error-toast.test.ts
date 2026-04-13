@@ -43,6 +43,14 @@ const ERROR_CODES: AppErrorCode[] = [
   "Keyring",
   "Io",
   "Internal",
+  // Phase 3b additions
+  "EvidenceFileNotFound",
+  "EvidenceFileTooLarge",
+  "InvalidFilename",
+  "PathTraversalBlocked",
+  "OneDriveSyncWarning",
+  "HashMismatchOnDownload",
+  "ReportGenerationFailed",
 ];
 
 describe("toastError", () => {
@@ -198,5 +206,68 @@ describe("evidence error codes — message content", () => {
     toastError({ code: "HashNotFound", message: "" });
     const msg = vi.mocked(toast.error).mock.calls[0][0] as string;
     expect(msg.toLowerCase()).toMatch(/not found|hash/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 3b error code messages
+// ---------------------------------------------------------------------------
+
+describe("Phase 3b file + report error codes — message content", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("EvidenceFileNotFound message mentions 'not found'", () => {
+    toastError({ code: "EvidenceFileNotFound", message: "" });
+    const msg = vi.mocked(toast.error).mock.calls[0][0] as string;
+    expect(msg.toLowerCase()).toMatch(/not found/);
+  });
+
+  it("EvidenceFileTooLarge message mentions the size limit", () => {
+    toastError({ code: "EvidenceFileTooLarge", message: "" });
+    const msg = vi.mocked(toast.error).mock.calls[0][0] as string;
+    expect(msg.toLowerCase()).toMatch(/50|limit/);
+  });
+
+  it("InvalidFilename message instructs to rename", () => {
+    toastError({ code: "InvalidFilename", message: "" });
+    const msg = vi.mocked(toast.error).mock.calls[0][0] as string;
+    expect(msg.toLowerCase()).toMatch(/invalid|character|rename/);
+  });
+
+  it("PathTraversalBlocked message is longer than 40 chars and mentions security", () => {
+    toastError({ code: "PathTraversalBlocked", message: "" });
+    const msg = vi.mocked(toast.error).mock.calls[0][0] as string;
+    expect(msg.length).toBeGreaterThan(40);
+    expect(msg.toLowerCase()).toMatch(/path|security|storage/);
+  });
+
+  it("OneDriveSyncWarning toast message directs to dialog", () => {
+    toastError({ code: "OneDriveSyncWarning", message: "" });
+    const msg = vi.mocked(toast.error).mock.calls[0][0] as string;
+    // Per spec: OneDriveSyncWarning is handled via a dedicated dialog; toast just says 'See dialog.'
+    expect(msg.toLowerCase()).toMatch(/dialog/);
+  });
+
+  it("HashMismatchOnDownload message is forceful and mentions SHA-256", () => {
+    toastError({ code: "HashMismatchOnDownload", message: "" });
+    const msg = vi.mocked(toast.error).mock.calls[0][0] as string;
+    // SEC-3: must say "INTEGRITY FAILURE" and mention SHA-256 and reacquisition
+    expect(msg).toMatch(/INTEGRITY FAILURE/);
+    expect(msg).toMatch(/SHA-256/);
+    expect(msg.toLowerCase()).toMatch(/reacquisition/);
+  });
+
+  it("HashMismatchOnDownload message is longer than 100 characters (substantive)", () => {
+    toastError({ code: "HashMismatchOnDownload", message: "" });
+    const msg = vi.mocked(toast.error).mock.calls[0][0] as string;
+    expect(msg.length).toBeGreaterThan(100);
+  });
+
+  it("ReportGenerationFailed message mentions report generation", () => {
+    toastError({ code: "ReportGenerationFailed", message: "" });
+    const msg = vi.mocked(toast.error).mock.calls[0][0] as string;
+    expect(msg.toLowerCase()).toMatch(/report/);
   });
 });

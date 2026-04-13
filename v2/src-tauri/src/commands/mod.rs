@@ -41,5 +41,7 @@
 
 pub mod auth_cmd;
 pub mod cases_cmd;
+pub mod files_cmd;
 pub mod records_cmd;
+pub mod reports_cmd;
 pub mod system_cmd;

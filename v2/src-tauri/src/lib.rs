@@ -4,7 +4,9 @@ mod commands;
 pub mod crypto;
 pub mod db;
 pub mod error;
+pub mod reports;
 pub mod state;
+pub mod uploads;
 
 // Test helpers — compiled only in test builds.
 // Provides ephemeral DB setup, test CryptoState construction, etc.
@@ -26,6 +28,11 @@ use commands::{
         auth_verify_mfa,
     },
     cases_cmd::{case_create, case_delete, case_get, case_update, cases_list},
+    files_cmd::{
+        evidence_files_download, evidence_files_list, evidence_files_purge,
+        evidence_files_soft_delete, evidence_files_upload,
+        settings_acknowledge_onedrive_risk,
+    },
     records_cmd::{
         analysis_add, analysis_list_for_case, analysis_list_for_evidence,
         custody_add, custody_delete, custody_list_for_case, custody_list_for_evidence,
@@ -33,6 +40,7 @@ use commands::{
         evidence_list_for_case, hash_add, hash_list_for_case, hash_list_for_evidence,
         tool_add, tool_list_for_case, tool_list_for_evidence,
     },
+    reports_cmd::{case_report_generate, case_report_preview},
     system_cmd::settings_get_security_posture,
 };
 
@@ -151,6 +159,16 @@ pub fn run() {
             analysis_add,
             analysis_list_for_case,
             analysis_list_for_evidence,
+            // Evidence file commands (Phase 3b)
+            evidence_files_upload,
+            evidence_files_list,
+            evidence_files_download,
+            evidence_files_soft_delete,
+            evidence_files_purge,
+            settings_acknowledge_onedrive_risk,
+            // Report commands (Phase 3b)
+            case_report_preview,
+            case_report_generate,
             // System commands
             settings_get_security_posture,
         ])

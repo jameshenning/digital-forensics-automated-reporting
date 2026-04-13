@@ -38,7 +38,15 @@ export type AppErrorCode =
   | "Crypto"
   | "Keyring"
   | "Io"
-  | "Internal";
+  | "Internal"
+  // Phase 3b — evidence file + report error codes
+  | "EvidenceFileNotFound"
+  | "EvidenceFileTooLarge"
+  | "InvalidFilename"
+  | "PathTraversalBlocked"
+  | "OneDriveSyncWarning"
+  | "HashMismatchOnDownload"
+  | "ReportGenerationFailed";
 
 export interface AppError {
   code: AppErrorCode;
@@ -627,4 +635,159 @@ export function settingsGetSecurityPosture(args: {
   token: string;
 }): Promise<SecurityPosture> {
   return invoke<SecurityPosture>("settings_get_security_posture", args);
+}
+
+// ---------------------------------------------------------------------------
+// Evidence file types (Phase 3b)
+// ---------------------------------------------------------------------------
+
+/**
+ * A single uploaded artifact associated with an evidence item.
+ * `is_deleted` is 0 or 1 (SQLite boolean); the backend filters out deleted
+ * records before returning the list — this field is present for audit purposes.
+ */
+export interface EvidenceFile {
+  file_id: number;
+  evidence_id: string;
+  original_filename: string;
+  stored_path: string;
+  sha256: string; // lowercase hex, 64 chars
+  size_bytes: number;
+  mime_type: string | null; // byte-sniffed via `infer` crate
+  metadata_json: string | null;
+  is_deleted: number; // 0 | 1
+  uploaded_at: string; // ISO datetime
+}
+
+/**
+ * Returned by evidence_files_download.
+ *
+ * SEC-3 MUST-DO 4: `hash_verified = false` means the on-disk SHA-256 no
+ * longer matches the DB record — potential tampering. The UI must make this
+ * impossible to miss.
+ *
+ * SEC-3 SHOULD-DO 2: `is_executable = true` means the file's magic bytes
+ * indicate an executable format (MZ/PE, ELF, Mach-O, script shebang).
+ */
+export interface EvidenceFileDownload {
+  path: string; // absolute filesystem path
+  hash_verified: boolean; // false = tamper detected
+  is_executable: boolean; // true = show executable confirmation dialog
+  original_filename: string; // for "Save As" defaults
+}
+
+// ---------------------------------------------------------------------------
+// Evidence file commands (Phase 3b)
+// ---------------------------------------------------------------------------
+
+/**
+ * Upload a file from the local filesystem and associate it with an evidence
+ * item.  The backend computes SHA-256 in a single streaming pass concurrent
+ * with the write (SEC-3 MUST-DO 3) and stores the hash in the DB.
+ *
+ * Errors to handle:
+ *   OneDriveSyncWarning — storage is on a cloud-synced path (blocking dialog)
+ *   EvidenceFileTooLarge — exceeds 50 GiB hard limit
+ *   InvalidFilename — bad characters or >200 UTF-8 bytes
+ *   PathTraversalBlocked — canonicalize check failed
+ */
+export function evidenceFilesUpload(args: {
+  token: string;
+  evidence_id: string;
+  source_path: string;
+}): Promise<EvidenceFile> {
+  return invoke<EvidenceFile>("evidence_files_upload", args);
+}
+
+/** List all non-deleted files attached to an evidence item. */
+export function evidenceFilesList(args: {
+  token: string;
+  evidence_id: string;
+}): Promise<EvidenceFile[]> {
+  return invoke<EvidenceFile[]>("evidence_files_list", args);
+}
+
+/**
+ * Download (resolve the stored path for) a file.  The backend re-hashes
+ * on every call and returns `hash_verified`.  If false, the file's integrity
+ * cannot be assured — the UI MUST display a prominent warning.
+ *
+ * Errors: EvidenceFileNotFound, HashMismatchOnDownload (always returns
+ * EvidenceFileDownload with hash_verified=false — not an exception — so the
+ * investigator can still inspect the file).
+ */
+export function evidenceFilesDownload(args: {
+  token: string;
+  file_id: number;
+}): Promise<EvidenceFileDownload> {
+  return invoke<EvidenceFileDownload>("evidence_files_download", args);
+}
+
+/**
+ * Soft-delete an evidence file.  The DB row is flagged `is_deleted = 1`;
+ * the disk file is NOT removed (SEC-3 §2.7 policy).  A separate purge
+ * command performs the hard-delete.
+ */
+export function evidenceFilesSoftDelete(args: {
+  token: string;
+  file_id: number;
+}): Promise<void> {
+  return invoke<void>("evidence_files_soft_delete", args);
+}
+
+/**
+ * Permanently hard-delete a (previously soft-deleted) evidence file.
+ * Unlinks the disk file and writes a full audit entry including the SHA-256.
+ *
+ * `justification` must be at least 10 characters (enforced by purge-schema.ts).
+ */
+export function evidenceFilesPurge(args: {
+  token: string;
+  file_id: number;
+  justification: string;
+}): Promise<void> {
+  return invoke<void>("evidence_files_purge", args);
+}
+
+// ---------------------------------------------------------------------------
+// OneDrive guard command (Phase 3b — SEC-3 MUST-DO 5)
+// ---------------------------------------------------------------------------
+
+/**
+ * Record that the investigator has acknowledged the OneDrive sync risk and
+ * wishes to proceed with the default storage path.  Flips a flag in
+ * config.json so the warning is not shown again.
+ */
+export function settingsAcknowledgeOneDriveRisk(args: {
+  token: string;
+}): Promise<void> {
+  return invoke<void>("settings_acknowledge_onedrive_risk", args);
+}
+
+// ---------------------------------------------------------------------------
+// Report commands (Phase 3b)
+// ---------------------------------------------------------------------------
+
+/**
+ * Generate a live markdown preview of the case report without writing a file.
+ * Returns the full markdown string.
+ */
+export function caseReportPreview(args: {
+  token: string;
+  case_id: string;
+}): Promise<string> {
+  return invoke<string>("case_report_preview", args);
+}
+
+/**
+ * Generate and write the case report to disk.
+ * Returns the absolute path to the generated file.
+ * `format` must be 'Markdown' | 'Html'.
+ */
+export function caseReportGenerate(args: {
+  token: string;
+  case_id: string;
+  format: "Markdown" | "Html";
+}): Promise<string> {
+  return invoke<string>("case_report_generate", args);
 }

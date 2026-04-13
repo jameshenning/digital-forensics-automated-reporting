@@ -2,6 +2,7 @@ pub mod analysis;
 pub mod cases;
 pub mod custody;
 pub mod evidence;
+pub mod evidence_files;
 pub mod hashes;
 pub mod tools;
 

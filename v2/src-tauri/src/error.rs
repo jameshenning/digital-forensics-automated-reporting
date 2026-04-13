@@ -79,6 +79,31 @@ pub enum AppError {
 
     #[error("internal error: {0}")]
     Internal(String),
+
+    // ─── Phase 3b: evidence files ─────────────────────────────────────────────
+
+    #[error("evidence file not found: file_id={file_id}")]
+    EvidenceFileNotFound { file_id: i64 },
+
+    #[error("file too large: size={size} bytes exceeds limit={limit} bytes")]
+    EvidenceFileTooLarge { size: u64, limit: u64 },
+
+    #[error("invalid filename: {message}")]
+    InvalidFilename { message: String },
+
+    #[error("path traversal blocked: attempted={attempted_path}")]
+    PathTraversalBlocked { attempted_path: String },
+
+    #[error("OneDrive sync warning: appdata_path={appdata_path}, onedrive_path={onedrive_path}")]
+    OneDriveSyncWarning { appdata_path: String, onedrive_path: String },
+
+    #[error("hash mismatch on download: file_id={file_id}, expected={expected}, actual={actual}")]
+    HashMismatchOnDownload { file_id: i64, expected: String, actual: String },
+
+    // ─── Phase 3b: reports ───────────────────────────────────────────────────
+
+    #[error("report generation failed: {reason}")]
+    ReportGenerationFailed { reason: String },
 }
 
 impl From<sqlx::Error> for AppError {

@@ -17,6 +17,7 @@ import {
   ArrowLeft,
   AlertCircle,
   RefreshCw,
+  FileText,
 } from "lucide-react";
 
 import { requireAuthBeforeLoad } from "@/lib/auth-guard";
@@ -50,6 +51,7 @@ import { CustodyPanel } from "@/components/custody-panel";
 import { HashPanel } from "@/components/hash-panel";
 import { ToolsPanel } from "@/components/tools-panel";
 import { AnalysisPanel } from "@/components/analysis-panel";
+import { ReportDialog } from "@/components/report-dialog";
 
 export const Route = createFileRoute("/case/$caseId")({
   beforeLoad: requireAuthBeforeLoad,
@@ -175,6 +177,7 @@ function CaseDetailPage() {
 
   const [deleteHasEvidenceError, setDeleteHasEvidenceError] =
     React.useState(false);
+  const [reportOpen, setReportOpen] = React.useState(false);
 
   const { data, isLoading, isError, error, refetch } = useQuery<CaseDetail>({
     queryKey: queryKeys.cases.detail(caseId),
@@ -315,7 +318,15 @@ function CaseDetailPage() {
                   ))}
                 </div>
               </div>
-              <div className="flex gap-2 shrink-0">
+              <div className="flex gap-2 shrink-0 flex-wrap">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => setReportOpen(true)}
+                >
+                  <FileText className="h-4 w-4 mr-1" />
+                  Report
+                </Button>
                 <Button
                   size="sm"
                   variant="outline"
@@ -367,6 +378,13 @@ function CaseDetailPage() {
           </CardContent>
         </Card>
 
+        {/* Report dialog (Phase 3b) */}
+        <ReportDialog
+          caseId={caseId}
+          open={reportOpen}
+          onClose={() => setReportOpen(false)}
+        />
+
         {/* Sub-panel tabs */}
         <Tabs defaultValue="evidence">
           <TabsList className="w-full justify-start overflow-x-auto flex-wrap h-auto gap-1 mb-4">
@@ -383,7 +401,15 @@ function CaseDetailPage() {
                 <CardTitle className="text-base">Evidence Items</CardTitle>
               </CardHeader>
               <CardContent>
-                <EvidencePanel caseId={caseId} />
+                <EvidencePanel
+                  caseId={caseId}
+                  onNavigateToCaseEdit={() =>
+                    void navigate({
+                      to: "/case/$caseId/edit",
+                      params: { caseId },
+                    })
+                  }
+                />
               </CardContent>
             </Card>
           </TabsContent>
