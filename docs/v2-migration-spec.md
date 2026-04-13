@@ -268,12 +268,105 @@ This server runs in-process on a tokio task, using the same sqlx pool as the Tau
 
 ## 7. Auth / MFA parity
 
-- **Passwords.** v1 hashes are `$argon2id$v=19$m=...` encoded strings. The `argon2` crate's `PasswordHash::new` + `Argon2::default().verify_password` reads them directly. No rehashing on login.
-- **TOTP.** v1 secrets are Base32, 6-digit, 30 s, SHA-1 (pyotp default). `totp-rs` with `Algorithm::SHA1`, `digits=6`, `step=30` matches byte-for-byte.
-- **Recovery codes.** Same format as v1 (Argon2id hash per code). `recovery_codes` table unchanged.
-- **Fernet key in Credential Manager.** v1 uses `keyring.set_password("dfars_desktop", "fernet_key", ...)`. Rust `keyring` crate hits the same Credential Manager entry under the same service/account names → v2 reads v1's stored key unchanged.
-- **Fernet token compatibility.** v1 encrypts TOTP secrets + Agent Zero API keys with `cryptography.fernet`. Verify the Rust `fernet` crate round-trips v1-produced tokens with the same key; if not, add a one-shot migration that decrypts on first v2 launch using a vendored Python shim, re-encrypts with AES-GCM, and drops Fernet. **Decision point before implementation.**
-- **Session secret.** v1 stores a persistent session secret in `%APPDATA%\DFARS\session.key`. v2 replaces this with an in-memory session map keyed by an HMAC cookie issued to the WebView on login. No persisted secret needed because Tauri commands authenticate the *active window* rather than arbitrary HTTP clients.
+> **Revised 2026-04-13** after SEC-1 architecture review (see `docs/sec-1-auth-architecture-review.md`). The original spec had a critical keyring name bug that would have silently orphaned all v1 encrypted secrets on first v2 launch — now fixed below.
+
+### Passwords (Argon2id)
+
+- v1 hashes are `$argon2id$v=19$m=...` encoded strings produced by Python `argon2-cffi` with the library default `m=65536, t=3, p=4`. Rust's `argon2` 0.5+ `PasswordHash::new` + `Argon2::default().verify_password` reads them directly; no rehashing on login.
+- **MUST (SEC-1 SHOULD-DO 1):** new hashes in v2 (initial user creation, password change, recovery code hashing) use an explicit `Params::new(65536, 3, 4, None)` — NOT `Argon2::default()`, because the Rust crate's default is weaker than `argon2-cffi`'s and using it would silently downgrade new credentials.
+- Retain v1's defenses verbatim: constant-time username-enumeration guard with a pre-hashed `_DUMMY_HASH`, 1024-char password-length cap, username character allowlist `[a-zA-Z0-9._-]`.
+
+### TOTP (MFA)
+
+- v1 secrets are Base32, 6-digit, 30 s, SHA-1 (pyotp defaults). Rust `totp-rs` with `Algorithm::SHA1`, `digits=6`, `step=30`, `skew=1` matches byte-for-byte. Test with RFC 6238 vectors.
+- During enrollment, the pending TOTP secret is held in the in-memory session state (as part of a `Pending` session variant), NOT re-fetched from the DB at confirm time — this prevents a secret-substitution attack.
+
+### Recovery codes
+
+- 10 codes generated at MFA enrollment. Each is Argon2id-hashed (using the explicit params above) and stored in `recovery_codes` with `used_at` NULL. On redemption, `used_at` is set; row is never reused.
+- Codes are revoked and regenerated on MFA disable/re-enroll.
+- **MUST (SEC-1 SHOULD-DO 2):** per-session rate limit on MFA verify — after 5 consecutive TOTP+recovery-code failures, the pending session is cleared and the user must restart from the password step. Logged to the audit trail.
+
+### Account lockout (MUST-DO 2 — monotonic timer)
+
+**Do not** replicate v1's `datetime.now()` wall-clock lockout — winding the system clock backward would bypass it.
+
+- `AuthState` in `AppState` holds `failed_attempts: Mutex<HashMap<String, (u32, Option<Instant>)>>` keyed by username, where the `Instant` is the lockout expiry.
+- **Runtime decisions use `std::time::Instant` exclusively** — never `SystemTime`, never wall-clock.
+- The SQLite columns `users.failed_login_count` and `users.locked_until` remain as-is (ISO wall-clock timestamps) for **cross-restart durability only**.
+- On process startup, hydrate the in-memory map from the DB: if `failed_login_count >= MAX_FAILED_ATTEMPTS` and `locked_until` is in the future per `SystemTime::now()`, seed `Instant::now() + remaining`. If already expired, clear.
+- Lockout threshold stays at v1's value: **5 failed attempts**.
+
+### Fernet key in Credential Manager (MUST-DO 1 — correct names)
+
+v1's actual Credential Manager entry (verified against `app/crypto.py`):
+
+- **`service = "DFARS Desktop"`** — exact string, space included, case-sensitive
+- **`account = "totp_encryption_key"`** — exact string
+
+**The earlier draft of this spec named `"dfars_desktop"/"fernet_key"` — THAT IS WRONG.** Using those names silently creates a new entry and renders ALL v1 encrypted data (TOTP secret, Agent Zero API key, SMTP password) permanently unreadable. SEC-1 flagged this as the most operationally dangerous finding in the review.
+
+v2 `crypto.rs`:
+- First try Rust `keyring` 2.x with the exact names above.
+- Fallback: read `%APPDATA%\DFARS\.keyfile` (binary Fernet key) if keyring returns no result. Matches v1's fallback path.
+- Third resort: generate a new key, write to keyring first and `.keyfile` as a backup.
+- Log at INFO the key source used (`keyring` / `keyfile` / `new`) — **never log the key value itself**.
+- **MUST (SEC-1 SHOULD-DO 6):** when the `.keyfile` path is used, surface a visible warning in the UI — NOT just a silent log line — via `settings_get_security_posture()` returning `{ keyring_active, mfa_enabled, recovery_codes_remaining }`.
+
+### Fernet token compatibility — RESOLVED ✅
+
+Round-trip test (Iteration 0, `v2/scratch/fernet_compat/RESULT.md`) confirmed: Python `cryptography` 45.0.7 and Rust `fernet` 0.2.2 (`rustcrypto` feature) round-trip byte-for-byte in both directions. **No AES-GCM migration needed.** v1 TOTP secrets, Agent Zero API keys, and SMTP passwords decrypt unchanged.
+
+### Secrets decrypted by the v2 crypto module (OQ-1 + OQ-4)
+
+A **single Fernet key** (the one in Credential Manager) protects **all** encrypted-at-rest secrets — this is intentional in v1 and preserved in v2:
+
+1. TOTP secret (`users.totp_secret` column)
+2. Agent Zero API key (`config.json` → `agent_zero_api_key_encrypted`)
+3. **SMTP password** (`config.json` → `smtp_password_encrypted`) — **included in Phase 1 crypto module** (not deferred to Phase 5), so the first v2 launch for a user who has SMTP configured doesn't silently break email.
+
+`crypto.rs` exposes `encrypt(&[u8]) -> String` and `decrypt(&str) -> Result<Vec<u8>>` generically; the three secret types above are just callers.
+
+### Session management (OQ-2 + OQ-3 — design decisions locked in)
+
+v1 uses Flask session cookies with a persistent session secret in `%APPDATA%\DFARS\session.key`. **v2 drops this entirely.**
+
+- **Token transport (OQ-2):** `auth_login` and `auth_verify_mfa` return a plaintext session token as part of their `SessionInfo` payload. The React frontend stores it in **`sessionStorage` + React state**, NOT an HTTP cookie. This avoids all ambiguity about cookie lifetime, `HttpOnly`, and JS accessibility inside the Tauri WebView. Every subsequent Tauri command takes the token as its first parameter; `require_session()` validates.
+- **Session lifetime (OQ-3):** sessions live in an in-memory `HashMap<String, SessionData>` in `AppState`. **No persistence across app restarts** — closing and relaunching the app requires a fresh login. This is a deliberate security improvement from v1's 7-day persisted sessions, aligned with NIST SP 800-63B §7.2. UX cost: one extra login per app launch. Accepted.
+- Session data includes username, MFA status (`Verified` vs `Pending`), created-at `Instant`, last-activity `Instant`, and (during enrollment) the pending TOTP secret.
+- Inactivity timeout: 30 minutes of no activity → session expired, token rejected, frontend redirected to `/auth/login`.
+
+### Mandatory session guard (MUST-DO 3)
+
+`auth/session.rs` exports:
+
+```rust
+pub fn require_session(state: &AppState, token: &str) -> Result<SessionData, AppError>
+```
+
+This function **MUST** be the first call inside every Tauri command that reads or mutates any of:
+- `chain_of_custody`, `evidence`, `hash_verification`, `tool_usage`, `analysis_notes`
+- `entities`, `entity_links`, `case_events`
+- `evidence_files`, `evidence_analyses`, `case_shares`
+- `users`, `recovery_codes`, `api_tokens` (except login/setup flow)
+- `config.json` mutations
+
+A comment block at the top of `commands/mod.rs` documents this requirement and lists every table that demands a guard. QA adds a **negative test per command group** — with no/invalid token, every such command must return `AppError::Unauthorized`.
+
+### API tokens (bearer auth for external callers)
+
+- Plaintext token shown to the user exactly once at creation; only the Argon2id hash + first-12-char preview are persisted in `api_tokens`.
+- **SHOULD (SEC-1 SHOULD-DO 4):** verification fast path uses `token_preview` (first 12 chars of plaintext) as the lookup index — reduces Argon2 verification calls from O(n) to O(1). `token_preview` is already displayed in the UI, so using it as a lookup key leaks no additional info.
+- `dfars_` prefix preserved for GitHub/etc secret scanning.
+- API tokens can only be created from an *already-authenticated* session — no bootstrap path.
+
+### Single-user enforcement
+
+Preserved from v1: `auth.create_user` refuses to create a second user. Enforced at the application layer, not the schema.
+
+### Out-of-scope for Phase 1 (audit / follow-up)
+
+- **SHOULD (SEC-1 SHOULD-DO 5):** v1's `auth_routes.py:379` hardcodes `C:/Users/jhenn/agent-zero/...` for the Agent Zero plugin auto-setup. This is a **v1 bug** that must not be ported. When Phase 5 ports `settings_set_agent_zero`, the plugin path must come from `config.json` with a sensible default, never a hardcoded absolute developer path.
 
 ## 8. Agent Zero integration
 
