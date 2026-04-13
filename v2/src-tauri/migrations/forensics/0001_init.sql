@@ -201,7 +201,8 @@ CREATE TABLE IF NOT EXISTS evidence_files (
     file_id INTEGER PRIMARY KEY AUTOINCREMENT,
     evidence_id TEXT NOT NULL,
     original_filename TEXT NOT NULL,
-    stored_path TEXT NOT NULL,            -- absolute path under %APPDATA%\DFARS\evidence_files\
+    stored_path TEXT NOT NULL,            -- absolute path: <drive>/DFARS_Evidence/<case_id>/<evidence_id>/<file_id>_<name>
+                                          -- or %APPDATA%\DFARS\evidence_files\<case_id>\<evidence_id>\<file_id>_<name> (no drive configured)
     sha256 TEXT NOT NULL,                 -- hex digest of the stored file
     size_bytes INTEGER NOT NULL,
     mime_type TEXT,

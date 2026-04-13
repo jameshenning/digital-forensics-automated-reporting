@@ -212,8 +212,9 @@ v1 exposes two HTTP layers — internal session-gated routes (`/case/...`, `/api
 ### Evidence commands
 - `evidence_add(case_id, input) -> Evidence`
 - `evidence_delete(case_id, evidence_id)`
-- `evidence_files_upload(evidence_id, file_path) -> EvidenceFile`
-- `evidence_files_download(file_id) -> PathBuf`
+- `evidence_files_upload(evidence_id, source_path) -> EvidenceFile` — derives `case_id` and the case's `evidence_drive_path` via a DB lookup on `evidence_id`. Storage layout is `<evidence_drive_path or %APPDATA%\DFARS\evidence_files>\<case_id>\<evidence_id>\<file_id>_<sanitized_name>`. Files on an external forensic drive are the forensic-best-practice path; `%APPDATA%` is the fallback when the case has no drive configured. One file per command invocation — batching happens client-side. See SEC-3 MUST-DO 1/2/3 and OQ-SEC3-1 resolution.
+- `evidence_files_download(file_id) -> EvidenceFileDownload { path: PathBuf, hash_verified: bool, is_executable: bool }` — re-hashes the stored file on every call and compares to the DB-stored SHA-256. `hash_verified = false` triggers an ERROR-severity audit entry and the frontend must surface an unmistakable integrity warning. `is_executable` detected by byte-sniffing via the `infer` crate (MZ header / ELF / Mach-O / script shebang). See SEC-3 MUST-DO 4 and SHOULD-DO 2.
+- `evidence_files_purge(file_id, justification) -> ()` — controlled hard-delete path. Soft-deletes become normal via a separate soft-delete flow; purge is the audited, justified, permanent erasure. Unlinks the disk file and zero-fills the DB row after writing the full SHA-256 to the audit log for post-hoc chain-of-custody. See SEC-3 SHOULD-DO 4.
 - `evidence_analyze(evidence_id, narrative) -> EvidenceAnalysis` (local, no AI)
 - `evidence_forensic_analyze(evidence_id, narrative) -> EvidenceAnalysis` (AI via Agent Zero)
 
