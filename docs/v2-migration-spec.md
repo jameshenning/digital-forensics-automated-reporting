@@ -257,15 +257,73 @@ v1 exposes two HTTP layers — internal session-gated routes (`/case/...`, `/api
 - `audit_tail(limit) -> Vec<AuditEntry>`
 
 ### External REST API (bearer token, `axum`)
-Same routes as v1's `/api/v1/*`:
-- `GET /api/v1/whoami`
-- `GET /api/v1/cases`, `POST /api/v1/cases`
-- `GET /api/v1/cases/<id>`, `PATCH /api/v1/cases/<id>`
-- `POST /api/v1/cases/<id>/{evidence,custody,hashes,tools,analysis}`
-- `GET /api/v1/cases/<id>/report`
-- `GET /api/v1/cases/<id>/evidence/<eid>/files/<fid>/download`
 
-This server runs in-process on a tokio task, using the same sqlx pool as the Tauri commands. `bind_host` from `config.json` controls whether it binds `127.0.0.1` or `0.0.0.0` (preserving v1's Agent Zero-in-Docker story).
+> **Revised 2026-04-13** — Q2 "minimal vs full port" resolved by data. Agent Zero plugin uses all 12 v1 endpoints (audited in `agent-zero/usr/plugins/_dfars_integration/helpers/dfars_client.py` + `api/dfars_forensic_analyze.py`). Port all 12.
+
+12-endpoint surface, contract-compatible with v1's `/api/v1/*`:
+
+| # | Method | Path | Notes |
+|---|---|---|---|
+| 1 | GET | `/api/v1/whoami` | returns the API token owner's name |
+| 2 | GET | `/api/v1/cases` | list |
+| 3 | POST | `/api/v1/cases` | create |
+| 4 | GET | `/api/v1/cases/<id>` | detail |
+| 5 | PATCH | `/api/v1/cases/<id>` | update |
+| 6 | POST | `/api/v1/cases/<id>/evidence` | add evidence |
+| 7 | POST | `/api/v1/cases/<id>/custody` | add custody event |
+| 8 | POST | `/api/v1/cases/<id>/hashes` | add hash verification |
+| 9 | POST | `/api/v1/cases/<id>/tools` | log tool usage |
+| 10 | POST | `/api/v1/cases/<id>/analysis` | add analysis note |
+| 11 | GET | `/api/v1/cases/<id>/report` | generate markdown report |
+| 12 | GET | `/api/v1/cases/<id>/evidence/<eid>/files/<fid>/download` | stream stored file |
+
+The server runs in-process on a tokio task using the same sqlx pool as the Tauri commands. Per-route body limits, JSON depth limit, and shared error shape come from SEC-4/5 — see below.
+
+**Bearer token middleware (SEC-5 MUST-DO 1 — timing-oracle mitigation):**
+
+Every request hits a middleware that verifies the `Authorization: Bearer dfars_...` header against `api_tokens`. The fast path looks up by `token_preview` (first 12 chars) to O(1), then runs a single Argon2 verify. **When no row matches the preview, middleware still runs a dummy Argon2 call against `AppState.dummy_hash`** so the no-match and wrong-hash code paths take ~equal time (~100 ms). No timing oracle.
+
+**Token-space isolation (SEC-5 MUST-DO 2):**
+
+Session tokens (`sess_...` from `require_session`) and API tokens (`dfars_...` from the axum middleware) are strictly disjoint. A session token passed to axum returns `Unauthorized`. An API token passed to a Tauri command returns `Unauthorized`. Both `auth/session.rs` and `auth/tokens.rs` carry a doc comment enforcing this invariant. QA writes negative tests confirming both directions.
+
+**Per-route request body limits (SEC-5 MUST-DO 4):**
+
+Global floor of 64 KiB via `RequestBodyLimitLayer::new(64 * 1024)`. Per-route override via `DefaultBodyLimit::max()`:
+
+| Route | Limit |
+|---|---|
+| `POST /cases/<id>/tools` | 64 KiB (`command_used` can be long) |
+| `POST /cases/<id>/analysis` | 32 KiB (long `description` field) |
+| `POST /cases`, `PATCH /cases/<id>`, `POST /cases/<id>/evidence` | 16 KiB |
+| `POST /cases/<id>/custody`, `POST /cases/<id>/hashes` | 8 KiB |
+
+Over-limit returns HTTP 413 with `{"error": "Request body too large", "code": "PAYLOAD_TOO_LARGE"}`.
+
+**JSON depth limit (SEC-5 MUST-DO 3):**
+
+Custom `check_json_depth(bytes, max_depth=32)` runs before `serde_json::from_slice` in the body extractor. Deeply nested input (`{"a":{"a":...}}`) returns HTTP 400. Prevents stack overflow via untrusted JSON.
+
+**Error response shape (SEC-5 MUST-DO — §2.13):**
+
+All axum errors serialize as `{"error": "<human message>", "code": "<AppError variant name>", "details": {}}`. The `details` field is a whitelist — sqlite error strings, file paths, user hashes, and internal state MUST NEVER appear there. Reuses the existing `AppError` variants from Phase 1+ so Agent Zero's error parsing doesn't need a second dictionary.
+
+**Bind-host gate (SEC-5 MUST-DO 5 — double opt-in for 0.0.0.0):**
+
+`bind_host` defaults to `127.0.0.1` in `config.json`. To bind non-loopback (`0.0.0.0` for the Agent Zero Docker container), two config keys are required:
+
+1. `bind_host = "0.0.0.0"` (the literal value)
+2. `allow_network_bind = true` (explicit opt-in)
+
+Without the second key, the axum startup code refuses to bind and surfaces `AppError::NetworkBindRefused`. When both are set, the settings UI displays a persistent amber warning banner, an audit entry is written at WARN on every startup, and the UI exposes `allow_network_bind` as an explicit checkbox with a scary label.
+
+**Port (SEC-4/5 OQ-SEC5-1 resolved):**
+
+`axum_port` in `config.json`, default `5099` (matches v1 and the Agent Zero plugin's default). Exposed via `settings_get_agent_zero` / `settings_set_agent_zero` so the user can change it without editing config.json directly.
+
+**Audit log actor format (SEC-5 MUST-DO 8):**
+
+axum mutation routes write audit entries with actor `api_token:<token_name>` (e.g. `api_token:Agent Zero`). Tauri session-authed commands write `user:<username>` (e.g. `user:james`). Distinct prefixes let audit queries filter by authentication source.
 
 ## 7. Auth / MFA parity
 
@@ -371,11 +429,60 @@ Preserved from v1: `auth.create_user` refuses to create a second user. Enforced 
 
 ## 8. Agent Zero integration
 
-- HTTP contract unchanged: plugin endpoints at `/api/plugins/_dfars_integration/dfars_<verb>`, `X-API-KEY` header.
-- `src-tauri/src/agent_zero.rs` holds a `reqwest::Client` + base URL + decrypted API key.
+> **Revised 2026-04-13** after SEC-4/5 network review (see `docs/sec-4-5-network-review.md`). The original section undercounted Agent Zero call paths (omitted `forensic_analyze` and `analyze_evidence` entirely) and had no exfiltration controls.
+
+### HTTP contract
+
+- Plugin endpoints at `/api/plugins/_dfars_integration/dfars_<verb>`, `X-API-KEY` header with the Fernet-decrypted key from `config.json`.
+- v2 `src-tauri/src/agent_zero.rs` holds a `reqwest::Client` (rustls) + base URL + decrypted API key wrapped in `zeroize::Zeroizing<String>` so it wipes on drop (SEC-4 SHOULD-DO 3).
 - `is_configured()` gate preserved: returns false if URL missing, key blob missing, or key decryption fails.
-- 120 s timeout on `ai_summarize_case` (matches v1).
 - Plugin-side code on Agent Zero (`usr/plugins/_dfars_integration/`) does not change at all; still calls v2's REST API via the same bearer-token flow.
+
+### Agent Zero URL allowlist (SEC-4 MUST-DO 6 — exfiltration control)
+
+`agent_zero_url` is validated before any `reqwest` call:
+
+- Accept `http://` scheme with host in `{localhost, 127.0.0.1, host.docker.internal}`
+- Reject anything else unless `config.json` contains `allow_custom_agent_zero_url = true` AND the settings UI displays a persistent amber warning banner
+- Custom-URL mode also writes an audit entry at WARN level on startup and on every Agent Zero call
+
+Rationale: `agent_zero_url` is a freeform config field. Without an allowlist, a tampered config.json silently POSTs the complete case payload (PII, investigator names, evidence descriptions, hashes) to an attacker-controlled server on the next `ai_summarize_case` call. The allowlist is the primary exfiltration control for the entire AI surface.
+
+### Outbound call timeout table (SEC-4 SHOULD-DO 2)
+
+| Endpoint | Connect | Total | Response body limit |
+|---|---|---|---|
+| `dfars_enhance` | 10 s | 30 s | 16 KiB |
+| `dfars_classify` | 10 s | 30 s | 8 KiB |
+| `dfars_summarize` | 10 s | 120 s | 64 KiB |
+| `dfars_analyze_evidence` | 10 s | 180 s | 128 KiB |
+| `dfars_forensic_analyze` | 10 s | 300 s | 256 KiB |
+
+Each call runs through a `bounded_body(resp, max_bytes) -> Result<Bytes, AppError::PayloadTooLarge>` helper so a mangled or malicious Agent Zero response can't OOM the app.
+
+v1 used a flat 60 s timeout for enhance/classify and 120 s for summarize — these new per-endpoint values better match real LLM latency tails.
+
+### Tauri command surface (4 AI commands + forensic analyze)
+
+Four commands call Agent Zero from the Tauri side. Each is session-gated (`require_session()` as the first line), each is audit-logged, each logs the exact field list sent to Agent Zero so there's an investigator-visible record of what left the machine:
+
+- `ai_enhance(token, text)` — rewrites a narrative description. 30 s timeout. Sends only the narrative text.
+- `ai_classify(token, text)` — returns categorization JSON. 30 s timeout. Sends only the narrative text.
+- `ai_summarize_case(token, case_id)` — executive summary + conclusion. **120 s timeout.** Sends the ENTIRE case payload including case header, tags, evidence, custody chains, hashes, tools, analysis notes. **SEC-4 SHOULD-DO 4:** one-time pre-call consent banner (`shown_ai_summarize_consent` flag in config.json) warning the investigator exactly which fields are about to leave the machine.
+- `evidence_forensic_analyze(token, evidence_id, narrative)` — AI-enhanced evidence analysis. **300 s timeout.** Sends full evidence record + file download URLs (the plugin then calls back to DFARS's axum server to fetch the files). This is the most sensitive call — the largest data surface and the longest timeout.
+
+### Data exfiltration surface — what each call sends
+
+Audit-log the exact field list on every call. Investigator-visible so there's a paper trail of "what left the machine."
+
+| Command | Fields sent |
+|---|---|
+| `ai_enhance` | `text` (narrative only) |
+| `ai_classify` | `text` (narrative only) |
+| `ai_summarize_case` | `case_id`, full case record, all evidence, all custody, all hashes, all tools, all analysis notes, all tags |
+| `evidence_forensic_analyze` | `evidence_id`, evidence record, evidence files manifest (paths + sha256), dfars_api_token (for plugin callback) |
+
+The `dfars_api_token` pass-through for `evidence_forensic_analyze` is intentional — Agent Zero can't authenticate to the DFARS axum server without a token, and per-call passing is equivalent to the pre-stored-in-AZ-config model. Confirmed acceptable per SEC-4/5 review OQ-SEC4-3.
 
 ## 9. Migration phases
 
@@ -431,7 +538,7 @@ v1 data lives at `%APPDATA%\DFARS\{forensics.db,auth.db,config.json,evidence_fil
 
 **Still deferred:**
 
-2. **axum vs. dropping the external REST API.** Agent Zero is the only known consumer. Worth considering: expose a *minimal* `axum` surface only for the endpoints Agent Zero actually calls (probably 4–5 of the 15), rather than porting the full `/api/v1/*` tree. *Owner: audit agent-zero plugin before phase 5.*
+2. ✅ **axum vs. dropping the external REST API — RESOLVED.** Agent Zero plugin audit (`dfars_client.py` + `dfars_forensic_analyze.py`) confirmed all 12 v1 endpoints are in active use. "Minimal surface" and "full port" collapse to the same 12 endpoints. Port all 12 with SEC-4/5 constraints applied per §6 External REST API.
 5. **Graph library: Cytoscape.js vs. sticking with vis-network.** Vis-network is what v1 uses; porting saves UI work but keeps an unmaintained dependency. Decide before phase 4.
 
 ## 14. Milestones and dependencies
