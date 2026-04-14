@@ -507,7 +507,7 @@ v1 data lives at `%APPDATA%\DFARS\{forensics.db,auth.db,config.json,evidence_fil
 - **auth.db**: schema byte-identical. Argon2 hashes + TOTP secrets verify unmodified (given the Fernet compat check in §7).
 - **config.json**: additive fields only (no renames). v2 ignores unknown fields and fills in defaults for missing new ones.
 - **evidence_files/**: paths stored in the DB are absolute → remain valid.
-- **Keyring entry**: `service="dfars_desktop", account="fernet_key"` → both apps read it.
+- **Keyring entry**: `service="DFARS Desktop", account="totp_encryption_key"` → both apps read it. (Corrected per SEC-1 review — earlier spec draft had the wrong names, see §7 for full context.)
 
 **First v2 launch** runs `sqlx::migrate!` which is idempotent against the v1 schema (every `CREATE TABLE IF NOT EXISTS`). If the checksum of the embedded migration doesn't match what sqlx would expect of a fresh DB, v2 records the migration as already-applied rather than re-running it — i.e. we ship the initial migration with `-- sqlx: idempotent` and use `sqlx::migrate::Migrator::run_direct()` on legacy DBs.
 
@@ -515,10 +515,83 @@ v1 data lives at `%APPDATA%\DFARS\{forensics.db,auth.db,config.json,evidence_fil
 
 ## 11. Packaging, signing, updates
 
-- `tauri.conf.json` configures the MSI bundler, app identifier `com.dfars.desktop`, icons, and the `updater` section.
-- **Ed25519 keys are reused from v1** — `packaging/keygen.py` output already produced the public key that Tauri's updater expects (both use `ed25519-dalek`-compatible signatures). The private key stays out of the repo.
-- **Code signing (Authenticode)** remains a known gap (same as v1); revisit once we have a cert.
-- **Updater manifest**: Tauri's updater wants a `latest.json` hosted over HTTPS containing version + platform-specific URLs + Ed25519 signatures. We serve this from GitHub Releases for the first pass.
+> **Revised 2026-04-13** after SEC-8 packaging review. The original §11 had two factual errors: (a) it claimed v1's Ed25519 key was reusable in Tauri (it's PKCS8 PEM; Tauri uses minisign format — incompatible); (b) it assumed GitHub Releases hosting (repo is private; Tauri updater has no auth-header support for private-repo asset URLs). Both corrected below.
+
+### Installer
+
+- `tauri.conf.json` configures the **NSIS** bundler, app identifier `com.dfars.desktop`, icons, and a `plugins.updater` section. NSIS chosen over WiX per SEC-8 MUST-DO 3 / OQ-SEC8-1 because NSIS supports per-user install scope without admin elevation; WiX per-user mode requires custom fragments and more moving parts.
+- **Install target: `%LOCALAPPDATA%\Programs\DFARS Desktop\`** — per-user, no UAC prompt. NOT `%ProgramFiles%` (which requires admin). Verify on a clean VM: `tauri build` → install → confirm no elevation prompt → confirm install path.
+- v1's `installer.iss` with `PrivilegesRequired=admin` and `DefaultDirName={autopf}` is NOT replicated — those settings are explicitly wrong for v2's single-user model.
+
+### Signing keys (SEC-8 MUST-DOs 1 + 2)
+
+- **A new minisign-format Ed25519 key pair is generated with `cargo tauri signer generate -p`** (`-p` adds a passphrase — SEC-8 SHOULD-DO 1). The v1 PKCS8 key at `packaging/release_private_key.pem` is NOT reused — Tauri's updater requires minisign format and the conversion path is error-prone enough to risk silently broken signature verification.
+- **Private key location: `%USERPROFILE%\.dfars-release\tauri-signing-key.key`** — OUTSIDE the repo tree, ACL-hardened:
+  ```
+  icacls %USERPROFILE%\.dfars-release /inheritance:r
+  icacls %USERPROFILE%\.dfars-release /grant:r "%USERNAME%:(OI)(CI)F"
+  ```
+  Expected verify: `icacls` output shows only `<current-user>:(F)` — no `SYSTEM`, no `Administrators`.
+- **Public key**: embedded in `tauri.conf.json` under `plugins.updater.pubkey` as the minisign public key string (not a PEM). Not sensitive — committed with the repo.
+- **Consequence of new key**: v1 installs cannot auto-update to v2 via the updater. Acceptable for a single-user tool — user performs a one-time manual install of v2.0.0 via the NSIS MSI, then v2.x updates flow through the Tauri updater automatically once update hosting is set up.
+
+### Auto-update hosting — DEFERRED to post-v2.0.0 (OQ-SEC8-3 resolution)
+
+The GitHub repo is private. The Tauri updater plugin fetches release assets via plain HTTPS GET with no auth header support, so it cannot pull from private-repo release URLs. Rather than make the repo public or provision external hosting, v2.0.0 ships with:
+
+- **The updater plugin wired in `tauri.conf.json`** but with a placeholder `endpoints = ["https://updates.dfars-desktop.invalid/latest.json"]` that returns an unreachable host.
+- **Manual "Check for updates" button in `settings/security.tsx`** (NOT a launch-time auto-check, per OQ-SEC8-2 resolution — a forensic tool should not produce unexpected outbound traffic on every launch). When the user clicks it, the updater hits the placeholder endpoint and surfaces a friendly "Update server not configured — download updates manually from the GitHub Releases page" message.
+- **New Ed25519 minisign keypair generated + ACL-hardened in Phase 6** anyway, stored for future use when the user picks a hosting story (Cloudflare R2, public-releases-repo, or making the main repo public). Phase 6 includes a working `cargo tauri build` that produces `latest.json` + `.sig` files alongside the MSI so the release workflow is ready to go when hosting lands.
+
+**When auto-update hosting is eventually set up** (a 6.1 or 7.x task), the flow is:
+1. Run `cargo tauri build` — produces MSI + `.sig` + `latest.json`
+2. Upload those three files to the chosen host (R2 bucket or public release repo)
+3. Update `plugins.updater.endpoints` in `tauri.conf.json` to point at the real URL
+4. Rebuild + release v2.1.0 so it contains the updated endpoint
+5. Users on v2.0.0 will need to manually install v2.1.0 one time (the v2.0.0 updater endpoint is unreachable); subsequent versions auto-update normally
+
+### Update check UX
+
+- **Manual-only** per OQ-SEC8-2. No `checkOnStartup` flag set.
+- "Check for updates" button lives in `settings/security.tsx` next to the existing MFA / API tokens / security posture sections.
+- Button states: idle → spinner ("checking...") → one of {"up to date", "update available v{X}", "update server not configured"}.
+- On "update available", show a Shadcn dialog with release notes (from `latest.json` body) + "Install and restart" / "Later" buttons. "Install and restart" invokes the Tauri updater's install flow.
+
+### Audit log file (SEC-8 SHOULD-DO 4)
+
+Phase 1 added `tracing-appender` to `Cargo.toml` but it's not yet wired. Phase 6 wires it:
+
+- **Location**: `%LOCALAPPDATA%\DFARS\Logs\dfars-desktop.log`
+- **Rotation**: size-based rolling, 10 MB per file, keep 5 most recent → 50 MB max disk usage
+- **Mode**: `tracing_appender::non_blocking` so the Tauri main thread never blocks on log I/O (the drop guard is held by `AppState`)
+- **Filter**: `tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"))` — honors `RUST_LOG` env var at launch, defaults to INFO level for the app's own crate and WARN for dependencies
+- **Directory creation**: `fs::create_dir_all(&log_dir)` at startup before any `tracing::info!` call
+- **Subscriber setup**: runs in `lib.rs::run()` BEFORE `tauri::Builder::default()` so every tracing macro gets captured
+- **Redaction requirements** (hard — enforced via code review):
+  - Never log plaintext passwords, session tokens, API tokens, Fernet keys, TOTP secrets, recovery codes
+  - Never log full case payloads, evidence file contents, or narrative text bodies
+  - Never log filesystem paths beyond the top-level directory (`%APPDATA%\DFARS\...` is fine; individual case/evidence file paths are not)
+  - DO log: command names, HTTP method + path for axum routes, error variants, durations, counts, usernames (they're already in the audit trail), timestamps
+
+Separate from the file-based `dfars-desktop.log`, the existing pipe-delimited audit trail files (`auth_audit.txt`, `case_audit.txt`, etc.) from Phase 1 continue to exist for chain-of-custody defensibility. Two logs, two purposes — `.log` is for debugging, `.txt` audit files are the legal record.
+
+### Code signing (Authenticode) — KNOWN GAP
+
+Both v1 and v2 ship unsigned. Windows SmartScreen will flag first-time installers with the "Windows protected your PC" dialog until the installer accumulates enough reputation to clear it. Documented in the user-facing README as a known risk:
+
+> **First install will trigger a SmartScreen warning.** Click "More info" → "Run anyway". The installer is legitimate; it's unsigned because Authenticode certificates cost $100–400/year and this is a personal forensics tool. Subsequent launches are not affected.
+
+Revisit if/when the user decides to pursue an EV certificate.
+
+### Bundle size optimization (Phase 6 polish)
+
+Current main bundle is 2,097 KB raw / 637 KB gzip (as of Phase 5). Vite's 500 KB advisory is firing. Phase 6 splits the heavy routes via `React.lazy`:
+
+- `case.$caseId.link-analysis.tsx` → lazy-load (Cytoscape ~300 KB + vis-timeline ~600 KB are only needed on this route)
+- `components/report-dialog.tsx` → lazy-load (react-markdown + remark-gfm ~200 KB only needed when opening a report preview)
+- `routes/settings/integrations.tsx` → lazy-load (Agent Zero + SMTP forms, rarely visited)
+
+Target: main bundle under 1 MB raw / 300 KB gzip after splitting. Remaining chunks load on route navigation. No user-facing latency impact on the common path (login → dashboard → case detail).
 
 ## 12. Testing
 
