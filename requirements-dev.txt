@@ -1,6 +1,0 @@
-# Build / packaging tools — NOT bundled into the frozen .exe.
-# Install with: pip install -r requirements-dev.txt
-
--r requirements.txt
-
-pyinstaller>=6.10,<7.0
