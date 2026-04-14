@@ -520,6 +520,7 @@ v1 data lives at `%APPDATA%\DFARS\{forensics.db,auth.db,config.json,evidence_fil
 ### Installer
 
 - `tauri.conf.json` configures the **NSIS** bundler, app identifier `com.dfars.desktop`, icons, and a `plugins.updater` section. NSIS chosen over WiX per SEC-8 MUST-DO 3 / OQ-SEC8-1 because NSIS supports per-user install scope without admin elevation; WiX per-user mode requires custom fragments and more moving parts.
+- NSIS install mode string is **`"currentUser"`** (not `"perUser"` as an earlier draft said — Tauri 2's actual enum is `{"currentUser", "perMachine", "both"}`).
 - **Install target: `%LOCALAPPDATA%\Programs\DFARS Desktop\`** — per-user, no UAC prompt. NOT `%ProgramFiles%` (which requires admin). Verify on a clean VM: `tauri build` → install → confirm no elevation prompt → confirm install path.
 - v1's `installer.iss` with `PrivilegesRequired=admin` and `DefaultDirName={autopf}` is NOT replicated — those settings are explicitly wrong for v2's single-user model.
 

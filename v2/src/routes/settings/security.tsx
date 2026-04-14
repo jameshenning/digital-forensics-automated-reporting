@@ -34,6 +34,8 @@ import {
   Copy,
   AlertTriangle,
   ShieldAlert,
+  RefreshCw,
+  ArrowDownToLine,
 } from "lucide-react";
 
 import {
@@ -43,12 +45,15 @@ import {
   authTokensCreate,
   authTokensRevoke,
   settingsGetSecurityPosture,
+  settingsCheckForUpdates,
 } from "@/lib/bindings";
+import type { UpdateCheckResult } from "@/lib/bindings";
 import { useSession } from "@/lib/session";
 import { getToken } from "@/lib/session";
 import { queryKeys } from "@/lib/query";
 import { toastError, toastSuccess } from "@/lib/error-toast";
 import { requireAuthBeforeLoad } from "@/lib/auth-guard";
+import { openUrl } from "@tauri-apps/plugin-opener";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -430,6 +435,146 @@ function CreateTokenDialog({ sessionToken }: CreateTokenDialogProps) {
 }
 
 // ---------------------------------------------------------------------------
+// Updates section
+// ---------------------------------------------------------------------------
+
+const GITHUB_RELEASES_URL =
+  "https://github.com/jameshenning/digital-forensics-automated-reporting/releases";
+
+/**
+ * Pill component for displaying the update-check result inline.
+ * Colors match UpdateStatus semantics.
+ */
+function UpdateStatusPill({
+  result,
+  checkedAt,
+}: {
+  result: UpdateCheckResult;
+  checkedAt: Date;
+}) {
+  const pillClasses: Record<string, string> = {
+    UpToDate:
+      "inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium bg-green-500/15 text-green-700 dark:text-green-400 border border-green-500/30",
+    UpdateAvailable:
+      "inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium bg-amber-500/15 text-amber-700 dark:text-amber-400 border border-amber-500/30",
+    NotConfigured:
+      "inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium bg-muted text-muted-foreground border",
+    NetworkError:
+      "inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium bg-destructive/15 text-destructive border border-destructive/30",
+  };
+
+  const labelMap: Record<string, string> = {
+    UpToDate: "You're on the latest version",
+    UpdateAvailable: `Update available: v${result.available_version ?? "?"}`,
+    NotConfigured: "Update server not configured",
+    NetworkError: "Network error — try again later",
+  };
+
+  return (
+    <div className="flex flex-col gap-2">
+      <div className="flex flex-wrap items-center gap-3">
+        <span className={pillClasses[result.status]}>
+          {labelMap[result.status]}
+        </span>
+        <span className="text-xs text-muted-foreground">
+          Checked at {checkedAt.toLocaleTimeString()}
+        </span>
+      </div>
+
+      {result.status === "UpdateAvailable" && (
+        <Button
+          size="sm"
+          className="w-fit"
+          onClick={() => void openUrl(GITHUB_RELEASES_URL)}
+        >
+          <ArrowDownToLine className="h-4 w-4" />
+          Download from GitHub Releases
+        </Button>
+      )}
+
+      {result.status === "NotConfigured" && (
+        <p className="text-xs text-muted-foreground">
+          Auto-update hosting is not configured for v2.0.0. Download newer
+          versions manually from{" "}
+          <button
+            type="button"
+            className="underline underline-offset-2 hover:text-foreground transition-colors"
+            onClick={() => void openUrl(GITHUB_RELEASES_URL)}
+          >
+            GitHub Releases
+          </button>
+          .
+        </p>
+      )}
+    </div>
+  );
+}
+
+function UpdatesSection() {
+  const token = getToken() ?? "";
+  const [checkResult, setCheckResult] = useState<UpdateCheckResult | null>(
+    null
+  );
+  const [checkedAt, setCheckedAt] = useState<Date | null>(null);
+
+  const checkMutation = useMutation({
+    mutationFn: () => settingsCheckForUpdates({ token }),
+    onSuccess: (result) => {
+      setCheckResult(result);
+      setCheckedAt(new Date());
+    },
+    onError: (err) => {
+      // Surface transport-level errors that didn't reach the Rust handler.
+      // The Rust handler itself returns UpdateCheckResult, not an error,
+      // so this path is only for Tauri IPC failures.
+      toastError(err);
+    },
+  });
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2 text-base">
+          <RefreshCw className="h-4 w-4" />
+          Updates
+        </CardTitle>
+        <CardDescription>
+          Check for new versions of DFARS Desktop. Automatic background checks
+          are disabled by design — forensic tools should not produce unexpected
+          outbound traffic. Click the button below when you want to check.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-4">
+        <div className="flex items-center gap-3">
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={checkMutation.isPending}
+            onClick={() => checkMutation.mutate()}
+          >
+            {checkMutation.isPending ? (
+              <>
+                <RefreshCw className="h-4 w-4 animate-spin" />
+                Checking for updates…
+              </>
+            ) : (
+              <>
+                <RefreshCw className="h-4 w-4" />
+                Check for updates
+              </>
+            )}
+          </Button>
+        </div>
+
+        {checkResult !== null && checkedAt !== null && (
+          <UpdateStatusPill result={checkResult} checkedAt={checkedAt} />
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Main page
 // ---------------------------------------------------------------------------
 
@@ -666,6 +811,9 @@ function SecurityPage() {
             )}
           </CardContent>
         </Card>
+
+        {/* Updates section (Phase 6 — SEC-8 SHOULD-DO 3) */}
+        <UpdatesSection />
       </main>
     </div>
   );

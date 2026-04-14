@@ -1246,6 +1246,45 @@ export function evidenceForensicAnalyze(args: {
 // Phase 5 — Integration settings commands
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Phase 6 — Update check types + command
+// ---------------------------------------------------------------------------
+
+/**
+ * The status codes returned by `settings_check_for_updates`.
+ *
+ * - UpToDate        — current version is already the latest
+ * - UpdateAvailable — a newer version is available; `available_version` is populated
+ * - NotConfigured   — the updater endpoint is a placeholder / unreachable
+ * - NetworkError    — the update server could not be reached
+ */
+export type UpdateStatus =
+  | "UpToDate"
+  | "UpdateAvailable"
+  | "NotConfigured"
+  | "NetworkError";
+
+export interface UpdateCheckResult {
+  status: UpdateStatus;
+  message: string;
+  available_version: string | null; // non-null only when status === 'UpdateAvailable'
+}
+
+/**
+ * Check for a newer version of DFARS Desktop.
+ *
+ * Manual-only — never called on startup. See §11 of v2-migration-spec.md
+ * (OQ-SEC8-2): forensic tools must not produce unexpected outbound traffic.
+ *
+ * For v2.0.0 the endpoint is a placeholder so the result is almost always
+ * NotConfigured. The UI handles this gracefully.
+ */
+export function settingsCheckForUpdates(args: {
+  token: string;
+}): Promise<UpdateCheckResult> {
+  return invoke<UpdateCheckResult>("settings_check_for_updates", args);
+}
+
 /** Get the current Agent Zero integration settings. */
 export function settingsGetAgentZero(args: {
   token: string;

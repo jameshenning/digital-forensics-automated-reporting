@@ -8,7 +8,7 @@
  * The Phase 2 "coming in Phase 3" placeholder card is removed.
  */
 
-import React from "react";
+import React, { lazy, Suspense } from "react";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
@@ -73,7 +73,13 @@ import { CustodyPanel } from "@/components/custody-panel";
 import { HashPanel } from "@/components/hash-panel";
 import { ToolsPanel } from "@/components/tools-panel";
 import { AnalysisPanel } from "@/components/analysis-panel";
-import { ReportDialog } from "@/components/report-dialog";
+// Lazy-load ReportDialog: it pulls in react-markdown + remark-gfm (~200 KB)
+// that are only needed when the investigator explicitly opens a report preview.
+const ReportDialog = lazy(() =>
+  import("@/components/report-dialog").then((m) => ({
+    default: m.ReportDialog,
+  }))
+);
 import { AiConsentDialog } from "@/components/ai-consent-dialog";
 import { DriveScanButton } from "@/components/drive-scan-button";
 
@@ -494,12 +500,15 @@ function CaseDetailPage() {
           </CardContent>
         </Card>
 
-        {/* Report dialog (Phase 3b) */}
-        <ReportDialog
-          caseId={caseId}
-          open={reportOpen}
-          onClose={() => setReportOpen(false)}
-        />
+        {/* Report dialog (Phase 3b) — lazy-loaded so react-markdown + remark-gfm
+            only enter the bundle when the investigator opens a report preview. */}
+        <Suspense fallback={null}>
+          <ReportDialog
+            caseId={caseId}
+            open={reportOpen}
+            onClose={() => setReportOpen(false)}
+          />
+        </Suspense>
 
         {/* AI consent dialog (Phase 5 — shown once before first ai_summarize_case) */}
         <AiConsentDialog

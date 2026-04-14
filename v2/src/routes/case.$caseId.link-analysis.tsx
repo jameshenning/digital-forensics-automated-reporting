@@ -11,7 +11,7 @@
  *   EntitiesPanel, LinksPanel, EventsPanel
  */
 
-import React from "react";
+import React, { lazy, Suspense } from "react";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import {
@@ -31,6 +31,7 @@ import { ENTITY_TYPES } from "@/lib/link-analysis-enums";
 import { entityTypeColor } from "@/lib/link-analysis-enums";
 
 import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import {
   Sheet,
@@ -42,11 +43,46 @@ import {
 import { Switch } from "@/components/ui/switch";
 import { Separator } from "@/components/ui/separator";
 
-import { GraphCanvas } from "@/components/graph-canvas";
-import { CrimeLineCanvas } from "@/components/crime-line-canvas";
+// Lazy-load the heavy canvas components (Cytoscape ~300 KB + vis-timeline ~600 KB).
+// They are only needed on this route and account for ~900 KB of the bundle.
+// Each is wrapped in a Suspense boundary with a skeleton fallback so the
+// filter bar + tabs render immediately while the chunk loads.
+const GraphCanvas = lazy(() =>
+  import("@/components/graph-canvas").then((m) => ({ default: m.GraphCanvas }))
+);
+const CrimeLineCanvas = lazy(() =>
+  import("@/components/crime-line-canvas").then((m) => ({
+    default: m.CrimeLineCanvas,
+  }))
+);
+
 import { EntitiesPanel } from "@/components/entities-panel";
 import { LinksPanel } from "@/components/links-panel";
 import { EventsPanel } from "@/components/events-panel";
+
+// ---------------------------------------------------------------------------
+// Suspense fallback skeletons
+// ---------------------------------------------------------------------------
+
+/** Full-height placeholder shown while the GraphCanvas chunk is loading. */
+function GraphCanvasSkeleton() {
+  return (
+    <div className="flex flex-col gap-2 h-full min-h-[400px]">
+      <Skeleton className="h-8 w-48 rounded-md" />
+      <Skeleton className="flex-1 rounded-md" />
+    </div>
+  );
+}
+
+/** Full-height placeholder shown while the CrimeLineCanvas chunk is loading. */
+function CrimeLineCanvasSkeleton() {
+  return (
+    <div className="flex flex-col gap-2 h-full min-h-[300px]">
+      <Skeleton className="h-6 w-64 rounded-md" />
+      <Skeleton className="flex-1 rounded-md" />
+    </div>
+  );
+}
 
 export const Route = createFileRoute("/case/$caseId/link-analysis")({
   beforeLoad: requireAuthBeforeLoad,
@@ -264,7 +300,9 @@ function LinkAnalysisPage() {
                 Reset
               </Button>
             </div>
-            <GraphCanvas caseId={caseId} filter={graphFilter} />
+            <Suspense fallback={<GraphCanvasSkeleton />}>
+              <GraphCanvas caseId={caseId} filter={graphFilter} />
+            </Suspense>
           </TabsContent>
 
           {/* ── Crime Line tab ── */}
@@ -324,7 +362,9 @@ function LinkAnalysisPage() {
                 Reset
               </Button>
             </div>
-            <CrimeLineCanvas caseId={caseId} filter={timelineFilter} />
+            <Suspense fallback={<CrimeLineCanvasSkeleton />}>
+              <CrimeLineCanvas caseId={caseId} filter={timelineFilter} />
+            </Suspense>
           </TabsContent>
         </Tabs>
       </main>

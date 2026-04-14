@@ -19,10 +19,12 @@ pub mod uploads;
 #[allow(dead_code, unused_imports)] // helpers may be unused by the current test set but are kept for future phases
 pub(crate) mod test_helpers;
 
+use std::path::Path;
 use std::sync::Arc;
 
 use tauri::Manager;
-use tracing_appender::rolling;
+use tracing_appender::non_blocking::WorkerGuard;
+use tracing_appender::rolling::{RollingFileAppender, Rotation};
 use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
 use commands::{
@@ -60,38 +62,136 @@ use commands::{
     },
     reports_cmd::{case_report_generate, case_report_preview},
     system_cmd::settings_get_security_posture,
+    updates_cmd::settings_check_for_updates,
 };
+
+// ─── Public re-exports for integration test access ────────────────────────────
+// Integration tests live in `tests/` and can only access `pub` items from the
+// crate root.  Re-export the types they need here.
+pub use commands::updates_cmd::{UpdateCheckResult, UpdateStatus};
+
+// ─── Tracing initializer ───────────────────────────────────────────────────────
+
+/// Initialize the tracing subscriber with a rolling file appender and a stdout layer.
+///
+/// Call this exactly ONCE per process, before `tauri::Builder::default()`.
+/// Returns a `WorkerGuard` that MUST be kept alive for the entire process
+/// lifetime.  Dropping it causes the non-blocking writer to flush synchronously
+/// from the calling thread rather than from the background writer thread,
+/// potentially blocking the Tauri main thread during shutdown.
+///
+/// **Load-bearing: do not drop the returned guard early.**
+///
+/// # Rotation strategy
+/// Daily rotation with max 7 files (~1 week of logs).  The `tracing-appender`
+/// 0.2 crate exposes time-based rotation only (HOURLY / DAILY / NEVER); size-
+/// based rotation is not available without a third-party crate.  DAILY rotation
+/// is appropriate for a forensic desktop app — it gives 1-week coverage without
+/// accumulating unbounded disk space.
+///
+/// # Idempotency
+/// Uses `try_init()` so that calling this function twice (e.g., in a test that
+/// initialises its own subscriber first) does not panic — the second call is
+/// silently ignored.
+pub fn init_tracing(log_dir: &Path) -> Result<WorkerGuard, crate::error::AppError> {
+    std::fs::create_dir_all(log_dir).map_err(|e| {
+        crate::error::AppError::Io(format!("create log dir {}: {e}", log_dir.display()))
+    })?;
+
+    let file_appender = RollingFileAppender::builder()
+        .rotation(Rotation::DAILY)
+        .filename_prefix("dfars-desktop")
+        .filename_suffix("log")
+        .max_log_files(7)
+        .build(log_dir)
+        .map_err(|e| crate::error::AppError::Io(format!("rolling appender: {e}")))?;
+
+    let (non_blocking, guard) = tracing_appender::non_blocking(file_appender);
+
+    // File layer: plain text, no ANSI escape codes, with target + line numbers.
+    // AUDIT-LOG-SAFE: no secrets are formatted into log fields anywhere in this
+    // crate (see redaction audit in Phase 6 implementation notes).
+    let file_layer = fmt::layer()
+        .with_writer(non_blocking)
+        .with_ansi(false)
+        .with_target(true)
+        .with_line_number(true)
+        .with_thread_ids(false);
+
+    // Stdout layer: colored output for terminal debugging during development.
+    let stdout_layer = fmt::layer()
+        .with_ansi(true)
+        .with_target(true);
+
+    let filter = EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| EnvFilter::new("dfars_desktop_lib=info,tauri=info,warn"));
+
+    // try_init() is idempotent-safe: if a subscriber is already set (e.g., in
+    // tests that install their own subscriber), the error is silently ignored.
+    let _ = tracing_subscriber::registry()
+        .with(filter)
+        .with(file_layer)
+        .with(stdout_layer)
+        .try_init();
+
+    Ok(guard)
+}
+
+// ─── App entry point ───────────────────────────────────────────────────────────
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // ── Tracing ───────────────────────────────────────────────────────────────
+    // Resolve %LOCALAPPDATA%\DFARS\Logs\ via the `directories` crate.
+    // This runs BEFORE tauri::Builder::default() so the very first log line
+    // (version + log_dir) appears in the file appender output.
+    let log_dir = directories::BaseDirs::new()
+        .map(|b| b.data_local_dir().join("DFARS").join("Logs"))
+        .unwrap_or_else(|| std::path::PathBuf::from("logs"));
+
+    // The guard is moved into Tauri's managed state below so it lives for the
+    // entire process lifetime.  This is the approved pattern (vs. mem::forget):
+    // Tauri drops managed state at process exit in the correct order, flushing
+    // the non-blocking writer before the process exits.
+    //
+    // Load-bearing: do not remove this field from managed state.
+    let log_guard = init_tracing(&log_dir)
+        .unwrap_or_else(|e| {
+            // Can't log yet — print to stderr and continue without file logging.
+            eprintln!("DFARS: failed to initialize tracing: {e}");
+            // Create a no-op guard by using a /dev/null-equivalent: a
+            // non_blocking writer over a sink, so we still get a WorkerGuard.
+            let (_, guard) = tracing_appender::non_blocking(std::io::sink());
+            guard
+        });
+
+    tracing::info!(
+        version = env!("CARGO_PKG_VERSION"),
+        log_dir = %log_dir.display(),
+        "DFARS Desktop starting"
+    );
+
+    // ── Tauri builder ─────────────────────────────────────────────────────────
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        // Phase 6: updater plugin.
+        //
+        // TODO: replace the placeholder pubkey in tauri.conf.json with the
+        // output of `cargo tauri signer generate -p` before any release build.
+        // See docs/sec-8-packaging-review.md §2.2 and v2-migration-spec.md §11.
+        //
+        // With the placeholder pubkey, the plugin initializes but any attempt
+        // to check for updates will fail with a signature-verification error
+        // (or DNS failure on the placeholder host).  The `settings_check_for_updates`
+        // command handles this gracefully by returning `NotConfigured`.
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
-            // ── Logging ───────────────────────────────────────────────────────
-            // Write to %LOCALAPPDATA%\DFARS\Logs\dfars-desktop.log
-            // Rolling daily, keep 7 files.
-            let log_dir = app
-                .path()
-                .app_log_dir()
-                .unwrap_or_else(|_| std::path::PathBuf::from("logs"));
-            std::fs::create_dir_all(&log_dir)
-                .expect("failed to create log directory");
-
-            let file_appender = rolling::daily(&log_dir, "dfars-desktop.log");
-            let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
-
-            // Keep the guard alive for the process lifetime by leaking it.
-            // This is intentional: we want the log writer to stay alive until exit.
-            std::mem::forget(_guard);
-
-            tracing_subscriber::registry()
-                .with(EnvFilter::try_from_default_env().unwrap_or_else(|_| {
-                    EnvFilter::new("dfars_desktop_lib=info,warn")
-                }))
-                .with(fmt::layer().with_writer(non_blocking))
-                .init();
-
-            tracing::info!(version = env!("CARGO_PKG_VERSION"), "DFARS Desktop starting");
+            // Move the guard into Tauri managed state so it is held alive for
+            // the entire process.  Tauri drops managed state at process exit.
+            //
+            // Load-bearing: do not remove — dropping it makes log writes
+            // synchronous and may block the Tauri main thread during shutdown.
+            app.manage(log_guard);
 
             // ── Paths ─────────────────────────────────────────────────────────
             let app_data = app
@@ -266,6 +366,8 @@ pub fn run() {
             settings_set_smtp,
             settings_test_smtp,
             settings_acknowledge_ai_consent,
+            // Update commands (Phase 6)
+            settings_check_for_updates,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
