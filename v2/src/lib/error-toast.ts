@@ -61,6 +61,18 @@ const ERROR_MESSAGES: Record<AppErrorCode, string> = {
     "Do not rely on it as evidence until a source reacquisition is performed.",
   ReportGenerationFailed:
     "Report generation failed. Check that all required case data is present and try again.",
+  // Phase 4 — link analysis error codes
+  EntityNotFound:
+    "Entity not found. It may have been deleted.",
+  EntityCycle:
+    "This parent assignment would create a circular parent-child cycle in the entity hierarchy. " +
+    "An entity cannot be its own ancestor. Choose a different parent entity.",
+  LinkNotFound:
+    "Link not found. It may have been deleted.",
+  LinkEndpointMissing:
+    "One or both link endpoints no longer exist. Check that the source and target entities or evidence items are still present.",
+  EventNotFound:
+    "Case event not found. It may have been deleted.",
 };
 
 /**

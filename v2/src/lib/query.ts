@@ -5,6 +5,8 @@
  * This prevents cache-key typos and makes invalidation surgical.
  */
 
+import type { GraphFilter, TimelineFilter } from "@/lib/bindings";
+
 export const queryKeys = {
   /** auth_current_user — the session source of truth */
   currentUser: ["auth", "currentUser"] as const,
@@ -79,5 +81,37 @@ export const queryKeys = {
   reports: {
     preview: (caseId: string) =>
       ["reports", "preview", caseId] as const,
+  },
+
+  /** Entity query keys (Phase 4) */
+  entities: {
+    listForCase: (caseId: string) =>
+      ["entities", "list", caseId] as const,
+    detail: (entityId: number) =>
+      ["entities", "detail", entityId] as const,
+  },
+
+  /** Link query keys (Phase 4) */
+  links: {
+    listForCase: (caseId: string) =>
+      ["links", "list", caseId] as const,
+  },
+
+  /** Case event query keys (Phase 4) */
+  events: {
+    listForCase: (caseId: string) =>
+      ["events", "list", caseId] as const,
+  },
+
+  /** Graph query keys (Phase 4) */
+  graph: {
+    forCase: (caseId: string, filter: GraphFilter) =>
+      ["graph", caseId, filter] as const,
+  },
+
+  /** Crime-line query keys (Phase 4) */
+  crimeLine: {
+    forCase: (caseId: string, filter: TimelineFilter) =>
+      ["crime-line", caseId, filter] as const,
   },
 } as const;

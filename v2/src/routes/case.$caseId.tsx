@@ -18,6 +18,7 @@ import {
   AlertCircle,
   RefreshCw,
   FileText,
+  Network,
 } from "lucide-react";
 
 import { requireAuthBeforeLoad } from "@/lib/auth-guard";
@@ -326,6 +327,19 @@ function CaseDetailPage() {
                 >
                   <FileText className="h-4 w-4 mr-1" />
                   Report
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() =>
+                    void navigate({
+                      to: "/case/$caseId/link-analysis",
+                      params: { caseId },
+                    })
+                  }
+                >
+                  <Network className="h-4 w-4 mr-1" />
+                  Link Analysis
                 </Button>
                 <Button
                   size="sm"

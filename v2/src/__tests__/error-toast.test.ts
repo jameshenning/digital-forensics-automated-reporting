@@ -51,6 +51,12 @@ const ERROR_CODES: AppErrorCode[] = [
   "OneDriveSyncWarning",
   "HashMismatchOnDownload",
   "ReportGenerationFailed",
+  // Phase 4 additions
+  "EntityNotFound",
+  "EntityCycle",
+  "LinkNotFound",
+  "LinkEndpointMissing",
+  "EventNotFound",
 ];
 
 describe("toastError", () => {
@@ -269,5 +275,47 @@ describe("Phase 3b file + report error codes — message content", () => {
     toastError({ code: "ReportGenerationFailed", message: "" });
     const msg = vi.mocked(toast.error).mock.calls[0][0] as string;
     expect(msg.toLowerCase()).toMatch(/report/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 4 link-analysis error code messages
+// ---------------------------------------------------------------------------
+
+describe("Phase 4 link-analysis error codes — message content", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("EntityNotFound message mentions 'not found'", () => {
+    toastError({ code: "EntityNotFound", message: "" });
+    const msg = vi.mocked(toast.error).mock.calls[0][0] as string;
+    expect(msg.toLowerCase()).toMatch(/not found/);
+  });
+
+  it("EntityCycle message explicitly explains parent-child cycle", () => {
+    toastError({ code: "EntityCycle", message: "" });
+    const msg = vi.mocked(toast.error).mock.calls[0][0] as string;
+    expect(msg.toLowerCase()).toMatch(/cycle|circular|ancestor/);
+    expect(msg.toLowerCase()).toMatch(/parent/);
+    expect(msg.length).toBeGreaterThan(60);
+  });
+
+  it("LinkNotFound message mentions 'not found'", () => {
+    toastError({ code: "LinkNotFound", message: "" });
+    const msg = vi.mocked(toast.error).mock.calls[0][0] as string;
+    expect(msg.toLowerCase()).toMatch(/not found/);
+  });
+
+  it("LinkEndpointMissing message mentions 'endpoint' or 'source'/'target'", () => {
+    toastError({ code: "LinkEndpointMissing", message: "" });
+    const msg = vi.mocked(toast.error).mock.calls[0][0] as string;
+    expect(msg.toLowerCase()).toMatch(/endpoint|source|target/);
+  });
+
+  it("EventNotFound message mentions 'not found'", () => {
+    toastError({ code: "EventNotFound", message: "" });
+    const msg = vi.mocked(toast.error).mock.calls[0][0] as string;
+    expect(msg.toLowerCase()).toMatch(/not found/);
   });
 });

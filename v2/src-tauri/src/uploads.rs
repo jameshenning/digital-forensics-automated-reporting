@@ -976,8 +976,15 @@ mod tests {
         assert_eq!(sha, expected);
     }
 
+    // Serialize tests that mutate the process-wide `OneDrive` env var.
+    // Rust's test runner executes tests in parallel by default; without this
+    // mutex, two tests can race on set_var/remove_var and produce flaky
+    // failures depending on interleaving.
+    static ONEDRIVE_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     #[test]
     fn onedrive_risk_detected_when_appdata_under_onedrive() {
+        let _guard = ONEDRIVE_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let dir = tempfile::tempdir().unwrap();
         let od_path = dir.path().to_string_lossy().to_string();
         let appdata_sub = dir.path().join("AppData").join("Roaming");
@@ -993,6 +1000,7 @@ mod tests {
 
     #[test]
     fn onedrive_risk_not_detected_when_appdata_outside() {
+        let _guard = ONEDRIVE_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let od_dir = tempfile::tempdir().unwrap();
         let appdata_dir = tempfile::tempdir().unwrap();
 

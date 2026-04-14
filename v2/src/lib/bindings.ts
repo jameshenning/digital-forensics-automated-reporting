@@ -46,7 +46,13 @@ export type AppErrorCode =
   | "PathTraversalBlocked"
   | "OneDriveSyncWarning"
   | "HashMismatchOnDownload"
-  | "ReportGenerationFailed";
+  | "ReportGenerationFailed"
+  // Phase 4 — link analysis error codes
+  | "EntityNotFound"
+  | "EntityCycle"
+  | "LinkNotFound"
+  | "LinkEndpointMissing"
+  | "EventNotFound";
 
 export interface AppError {
   code: AppErrorCode;
@@ -790,4 +796,280 @@ export function caseReportGenerate(args: {
   format: "Markdown" | "Html";
 }): Promise<string> {
   return invoke<string>("case_report_generate", args);
+}
+
+// ---------------------------------------------------------------------------
+// Phase 4 — Link Analysis types
+// ---------------------------------------------------------------------------
+
+export type EntityType =
+  | "person"
+  | "business"
+  | "phone"
+  | "email"
+  | "alias"
+  | "address"
+  | "account"
+  | "vehicle";
+
+export type PersonSubtype =
+  | "suspect"
+  | "victim"
+  | "witness"
+  | "investigator"
+  | "poi"
+  | "other";
+
+export interface Entity {
+  entity_id: number;
+  case_id: string;
+  entity_type: EntityType;
+  display_name: string;
+  subtype: PersonSubtype | null;
+  organizational_rank: string | null;
+  parent_entity_id: number | null;
+  notes: string | null;
+  metadata_json: string | null;
+  is_deleted: number; // 0 | 1
+  created_at: string;
+  updated_at: string;
+}
+
+export type EntityInput = Omit<
+  Entity,
+  "entity_id" | "case_id" | "is_deleted" | "created_at" | "updated_at"
+>;
+
+export type LinkEndpointKind = "entity" | "evidence";
+
+export interface Link {
+  link_id: number;
+  case_id: string;
+  source_type: LinkEndpointKind;
+  source_id: string;
+  target_type: LinkEndpointKind;
+  target_id: string;
+  link_label: string | null;
+  directional: number; // 0 | 1
+  weight: number;
+  notes: string | null;
+  is_deleted: number;
+  created_at: string;
+}
+
+export interface LinkInput {
+  source_type: LinkEndpointKind;
+  source_id: string;
+  target_type: LinkEndpointKind;
+  target_id: string;
+  link_label: string | null;
+  directional: number | null; // null → 1
+  weight: number | null; // null → 1.0
+  notes: string | null;
+}
+
+export type EventCategory =
+  | "observation"
+  | "communication"
+  | "movement"
+  | "custodial"
+  | "other";
+
+export interface CaseEvent {
+  event_id: number;
+  case_id: string;
+  title: string;
+  description: string | null;
+  event_datetime: string;
+  event_end_datetime: string | null;
+  category: EventCategory | null;
+  related_entity_id: number | null;
+  related_evidence_id: string | null;
+  is_deleted: number;
+  created_at: string;
+}
+
+export type EventInput = Omit<
+  CaseEvent,
+  "event_id" | "case_id" | "is_deleted" | "created_at"
+>;
+
+export interface GraphNode {
+  id: string; // 'entity:<id>' or 'evidence:<id>'
+  label: string;
+  kind: "entity" | "evidence";
+  entity_type: string | null;
+  subtype: string | null;
+}
+
+export interface GraphEdge {
+  id: string; // 'link:<id>'
+  source: string;
+  target: string;
+  label: string | null;
+  directional: boolean;
+  weight: number;
+}
+
+export interface GraphPayload {
+  nodes: GraphNode[];
+  edges: GraphEdge[];
+}
+
+export interface GraphFilter {
+  entity_types: EntityType[] | null; // null → all
+  include_evidence: boolean;
+}
+
+export interface TimelineItem {
+  id: string;
+  group: string;
+  content: string;
+  start: string;
+  end: string | null;
+  category: string | null;
+  source_type: "investigator" | "auto";
+  source_table: string;
+}
+
+export interface TimelineGroup {
+  id: string;
+  content: string;
+}
+
+export interface TimelinePayload {
+  items: TimelineItem[];
+  groups: TimelineGroup[];
+}
+
+export interface TimelineFilter {
+  start: string | null;
+  end: string | null;
+}
+
+// ---------------------------------------------------------------------------
+// Phase 4 — Link Analysis commands
+// ---------------------------------------------------------------------------
+
+/** List all entities for a case (excludes soft-deleted rows). */
+export function entitiesListForCase(args: {
+  token: string;
+  case_id: string;
+}): Promise<Entity[]> {
+  return invoke<Entity[]>("entities_list", args);
+}
+
+/** Add a new entity to a case. */
+export function entityAdd(args: {
+  token: string;
+  case_id: string;
+  input: EntityInput;
+}): Promise<Entity> {
+  return invoke<Entity>("entity_add", args);
+}
+
+/** Update an existing entity. */
+export function entityUpdate(args: {
+  token: string;
+  case_id: string;
+  entity_id: number;
+  input: EntityInput;
+}): Promise<Entity> {
+  return invoke<Entity>("entity_update", args);
+}
+
+/** Soft-delete an entity. Rejects with EntityNotFound if the entity does not exist. */
+export function entityDelete(args: {
+  token: string;
+  case_id: string;
+  entity_id: number;
+}): Promise<void> {
+  return invoke<void>("entity_delete", args);
+}
+
+/** List all links for a case. */
+export function linksListForCase(args: {
+  token: string;
+  case_id: string;
+}): Promise<Link[]> {
+  return invoke<Link[]>("links_list", args);
+}
+
+/** Add a new link between two nodes. */
+export function linkAdd(args: {
+  token: string;
+  case_id: string;
+  input: LinkInput;
+}): Promise<Link> {
+  return invoke<Link>("link_add", args);
+}
+
+/** Delete a link. */
+export function linkDelete(args: {
+  token: string;
+  case_id: string;
+  link_id: number;
+}): Promise<void> {
+  return invoke<void>("link_delete", args);
+}
+
+/** List all case events. */
+export function eventsListForCase(args: {
+  token: string;
+  case_id: string;
+}): Promise<CaseEvent[]> {
+  return invoke<CaseEvent[]>("events_list", args);
+}
+
+/** Add a new case event. */
+export function eventAdd(args: {
+  token: string;
+  case_id: string;
+  input: EventInput;
+}): Promise<CaseEvent> {
+  return invoke<CaseEvent>("event_add", args);
+}
+
+/** Update an existing case event. */
+export function eventUpdate(args: {
+  token: string;
+  case_id: string;
+  event_id: number;
+  input: EventInput;
+}): Promise<CaseEvent> {
+  return invoke<CaseEvent>("event_update", args);
+}
+
+/** Delete a case event. */
+export function eventDelete(args: {
+  token: string;
+  case_id: string;
+  event_id: number;
+}): Promise<void> {
+  return invoke<void>("event_delete", args);
+}
+
+/**
+ * Fetch the graph payload for Cytoscape.
+ * `filter.entity_types = null` → include all entity types.
+ */
+export function caseGraph(args: {
+  token: string;
+  case_id: string;
+  filter: GraphFilter;
+}): Promise<GraphPayload> {
+  return invoke<GraphPayload>("case_graph", args);
+}
+
+/**
+ * Fetch the crime-line (timeline) payload for vis-timeline.
+ * `start` / `end` are ISO datetime strings or null (no filter).
+ */
+export function caseCrimeLine(args: {
+  token: string;
+  case_id: string;
+  start: string | null;
+  end: string | null;
+}): Promise<TimelinePayload> {
+  return invoke<TimelinePayload>("case_crime_line", args);
 }

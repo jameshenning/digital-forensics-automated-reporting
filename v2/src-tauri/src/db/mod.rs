@@ -1,9 +1,13 @@
 pub mod analysis;
 pub mod cases;
 pub mod custody;
+pub mod entities;
+pub mod events;
 pub mod evidence;
 pub mod evidence_files;
+pub mod graph;
 pub mod hashes;
+pub mod links;
 pub mod tools;
 
 use sqlx::{sqlite::{SqliteConnectOptions, SqlitePoolOptions}, SqlitePool};

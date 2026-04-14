@@ -17,9 +17,9 @@
 /// ║      - hash_verification                                                    ║
 /// ║      - tool_usage                                                           ║
 /// ║      - analysis_notes                                                       ║
-/// ║      - entities                                                              ║
-/// ║      - entity_links                                                         ║
-/// ║      - case_events                                                          ║
+/// ║      - entities         (Phase 4 — link_analysis_cmd)                       ║
+/// ║      - entity_links     (Phase 4 — link_analysis_cmd)                       ║
+/// ║      - case_events      (Phase 4 — link_analysis_cmd)                       ║
 /// ║      - evidence_files                                                       ║
 /// ║      - evidence_analyses                                                    ║
 /// ║      - case_shares                                                          ║
@@ -42,6 +42,7 @@
 pub mod auth_cmd;
 pub mod cases_cmd;
 pub mod files_cmd;
+pub mod link_analysis_cmd;
 pub mod records_cmd;
 pub mod reports_cmd;
 pub mod system_cmd;

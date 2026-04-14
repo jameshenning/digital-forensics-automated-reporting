@@ -80,6 +80,23 @@ pub enum AppError {
     #[error("internal error: {0}")]
     Internal(String),
 
+    // ─── Phase 4: link analysis ───────────────────────────────────────────────
+
+    #[error("entity not found: entity_id={entity_id}")]
+    EntityNotFound { entity_id: i64 },
+
+    #[error("entity cycle detected: entity_id={entity_id} would create a cycle in the parent chain")]
+    EntityCycle { entity_id: i64 },
+
+    #[error("link not found: link_id={link_id}")]
+    LinkNotFound { link_id: i64 },
+
+    #[error("link endpoint missing: {kind} id={id} does not exist in this case")]
+    LinkEndpointMissing { kind: String, id: String },
+
+    #[error("event not found: event_id={event_id}")]
+    EventNotFound { event_id: i64 },
+
     // ─── Phase 3b: evidence files ─────────────────────────────────────────────
 
     #[error("evidence file not found: file_id={file_id}")]
