@@ -174,17 +174,11 @@ pub fn run() {
     // ── Tauri builder ─────────────────────────────────────────────────────────
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
-        // Phase 6: updater plugin.
-        //
-        // TODO: replace the placeholder pubkey in tauri.conf.json with the
-        // output of `cargo tauri signer generate -p` before any release build.
-        // See docs/sec-8-packaging-review.md §2.2 and v2-migration-spec.md §11.
-        //
-        // With the placeholder pubkey, the plugin initializes but any attempt
-        // to check for updates will fail with a signature-verification error
-        // (or DNS failure on the placeholder host).  The `settings_check_for_updates`
-        // command handles this gracefully by returning `NotConfigured`.
-        .plugin(tauri_plugin_updater::Builder::new().build())
+        // Note: tauri-plugin-updater was wired here in Phase 6 as an inert
+        // placeholder. Removed per SEC-9 before v2.0.0 release — shipping a
+        // placeholder pubkey + unreachable endpoint is worse than no updater
+        // at all. Auto-update reintroduced post-v2.0.0 once hosting is chosen.
+        // See docs/sec-9-final-release-review.md and v2-migration-spec.md §11.
         .setup(|app| {
             // Move the guard into Tauri managed state so it is held alive for
             // the entire process.  Tauri drops managed state at process exit.
