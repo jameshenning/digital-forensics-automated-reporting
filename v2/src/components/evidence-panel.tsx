@@ -19,12 +19,16 @@ import {
   Shield,
   Hash,
   Paperclip,
+  Sparkles,
+  FlaskConical,
 } from "lucide-react";
 
 import {
   evidenceListForCase,
   evidenceAdd,
   evidenceDelete,
+  aiEnhance,
+  settingsGetAgentZero,
   type Evidence,
   type EvidenceInput,
   type AppError,
@@ -59,6 +63,7 @@ import { EvidenceForm } from "@/components/evidence-form";
 import { CustodyPanel } from "@/components/custody-panel";
 import { HashPanel } from "@/components/hash-panel";
 import { EvidenceFilesPanel } from "@/components/evidence-files-panel";
+import { ForensicAnalyzeDialog } from "@/components/forensic-analyze-dialog";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -113,6 +118,7 @@ function formValuesToInput(values: EvidenceFormValues): EvidenceInput {
 interface EvidenceCardProps {
   evidence: Evidence;
   caseId: string;
+  agentZeroConfigured: boolean;
   onDelete: (evidenceId: string) => void;
   isDeleting: boolean;
   hasDependentsError: boolean;
@@ -123,15 +129,29 @@ interface EvidenceCardProps {
 function EvidenceCard({
   evidence: ev,
   caseId,
+  agentZeroConfigured,
   onDelete,
   isDeleting,
   hasDependentsError,
   onDialogClose,
   onNavigateToCaseEdit,
 }: EvidenceCardProps) {
+  const token = getToken() ?? "";
   const [custodyOpen, setCustodyOpen] = React.useState(false);
   const [hashOpen, setHashOpen] = React.useState(false);
   const [filesOpen, setFilesOpen] = React.useState(false);
+  const [forensicOpen, setForensicOpen] = React.useState(false);
+
+  // Polish description with AI
+  const [description, setDescription] = React.useState(ev.description);
+  const enhanceMutation = useMutation({
+    mutationFn: () => aiEnhance({ token, text: description }),
+    onSuccess: (newText) => {
+      setDescription(newText);
+      toastSuccess("Description polished by AI. Review and save if appropriate.");
+    },
+    onError: toastError,
+  });
 
   const handleDeleteAttempt = () => {
     onDelete(ev.evidence_id);
@@ -161,7 +181,7 @@ function EvidenceCard({
               {ev.status}
             </Badge>
           </div>
-          <p className="text-sm text-muted-foreground mt-0.5">{ev.description}</p>
+          <p className="text-sm text-muted-foreground mt-0.5">{description}</p>
           <p className="text-xs text-muted-foreground mt-0.5">
             Collected by {ev.collected_by} &middot; {fmtDatetime(ev.collection_datetime)}
             {ev.location && <span> &middot; {ev.location}</span>}
@@ -177,6 +197,33 @@ function EvidenceCard({
 
         {/* Actions */}
         <div className="flex gap-1 shrink-0">
+          {/* AI: Polish description */}
+          {agentZeroConfigured && (
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-7 px-1.5 text-xs"
+              disabled={enhanceMutation.isPending || description.trim().length === 0}
+              onClick={() => enhanceMutation.mutate()}
+              title="Polish description with AI"
+            >
+              <Sparkles className="h-3.5 w-3.5" />
+              <span className="sr-only">Polish description with AI</span>
+            </Button>
+          )}
+          {/* AI: Forensic analysis */}
+          {agentZeroConfigured && (
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-7 px-1.5 text-xs"
+              onClick={() => setForensicOpen(true)}
+              title="Run forensic analysis"
+            >
+              <FlaskConical className="h-3.5 w-3.5" />
+              <span className="sr-only">Run forensic analysis</span>
+            </Button>
+          )}
           <AlertDialog onOpenChange={handleDialogChange}>
             <AlertDialogTrigger asChild>
               <Button
@@ -307,6 +354,14 @@ function EvidenceCard({
           />
         </div>
       )}
+
+      {/* Forensic analysis dialog (Phase 5) */}
+      <ForensicAnalyzeDialog
+        evidenceId={ev.evidence_id}
+        caseId={caseId}
+        open={forensicOpen}
+        onClose={() => setForensicOpen(false)}
+      />
     </div>
   );
 }
@@ -322,6 +377,15 @@ export function EvidencePanel({ caseId, onNavigateToCaseEdit }: EvidencePanelPro
   const [deletingId, setDeletingId] = React.useState<string | null>(null);
   // Track which evidence item hit the EvidenceHasDependents error for dialog display
   const [dependentsErrorId, setDependentsErrorId] = React.useState<string | null>(null);
+
+  // Read Agent Zero configured state so cards can show/hide AI buttons
+  const { data: azSettings } = useQuery({
+    queryKey: queryKeys.agentZero.settings,
+    queryFn: () => settingsGetAgentZero({ token }),
+    enabled: !!token,
+    refetchOnWindowFocus: false,
+  });
+  const agentZeroConfigured = azSettings?.is_configured ?? false;
 
   const { data, isLoading, isError, error } = useQuery<Evidence[]>({
     queryKey: queryKeys.evidence.listForCase(caseId),
@@ -412,6 +476,7 @@ export function EvidencePanel({ caseId, onNavigateToCaseEdit }: EvidencePanelPro
           key={ev.evidence_id}
           evidence={ev}
           caseId={caseId}
+          agentZeroConfigured={agentZeroConfigured}
           onDelete={handleDelete}
           isDeleting={deletingId === ev.evidence_id}
           hasDependentsError={dependentsErrorId === ev.evidence_id}

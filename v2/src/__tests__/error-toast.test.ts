@@ -57,6 +57,16 @@ const ERROR_CODES: AppErrorCode[] = [
   "LinkNotFound",
   "LinkEndpointMissing",
   "EventNotFound",
+  // Phase 5 additions (excluding AiSummarizeConsentRequired — handled by dialog, not toast)
+  "NetworkBindRefused",
+  "AgentZeroUrlRejected",
+  "AgentZeroNotConfigured",
+  "AgentZeroTimeout",
+  "AgentZeroServerError",
+  "PayloadTooLarge",
+  "SmtpConnectFailed",
+  "SmtpSendFailed",
+  "DriveScanTooLarge",
 ];
 
 describe("toastError", () => {
@@ -317,5 +327,74 @@ describe("Phase 4 link-analysis error codes — message content", () => {
     toastError({ code: "EventNotFound", message: "" });
     const msg = vi.mocked(toast.error).mock.calls[0][0] as string;
     expect(msg.toLowerCase()).toMatch(/not found/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 5 AI + integration + drive error code messages
+// ---------------------------------------------------------------------------
+
+describe("Phase 5 AI/integration/drive error codes — message content", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("NetworkBindRefused message mentions 'bind' or 'port'", () => {
+    toastError({ code: "NetworkBindRefused", message: "" });
+    const msg = vi.mocked(toast.error).mock.calls[0][0] as string;
+    expect(msg.toLowerCase()).toMatch(/bind|port|server/);
+  });
+
+  it("AgentZeroUrlRejected message mentions 'allowlist' or 'localhost'", () => {
+    toastError({ code: "AgentZeroUrlRejected", message: "" });
+    const msg = vi.mocked(toast.error).mock.calls[0][0] as string;
+    expect(msg.toLowerCase()).toMatch(/localhost|allowlist|127\.0\.0\.1/i);
+  });
+
+  it("AgentZeroNotConfigured message instructs user to go to Settings", () => {
+    toastError({ code: "AgentZeroNotConfigured", message: "" });
+    const msg = vi.mocked(toast.error).mock.calls[0][0] as string;
+    expect(msg.toLowerCase()).toMatch(/settings|configure/);
+  });
+
+  it("AgentZeroTimeout message mentions 'respond' or 'container'", () => {
+    toastError({ code: "AgentZeroTimeout", message: "" });
+    const msg = vi.mocked(toast.error).mock.calls[0][0] as string;
+    expect(msg.toLowerCase()).toMatch(/respond|container|running/);
+  });
+
+  it("AgentZeroServerError message mentions 'error' or 'logs'", () => {
+    toastError({ code: "AgentZeroServerError", message: "" });
+    const msg = vi.mocked(toast.error).mock.calls[0][0] as string;
+    expect(msg.toLowerCase()).toMatch(/error|logs|response/);
+  });
+
+  it("PayloadTooLarge message mentions 'too large' or 'response'", () => {
+    toastError({ code: "PayloadTooLarge", message: "" });
+    const msg = vi.mocked(toast.error).mock.calls[0][0] as string;
+    expect(msg.toLowerCase()).toMatch(/large|response|agent zero/i);
+  });
+
+  it("AiSummarizeConsentRequired does NOT call toast.error (dialog-handled)", () => {
+    toastError({ code: "AiSummarizeConsentRequired", message: "" });
+    expect(toast.error).not.toHaveBeenCalled();
+  });
+
+  it("SmtpConnectFailed message mentions 'SMTP' or 'connect'", () => {
+    toastError({ code: "SmtpConnectFailed", message: "" });
+    const msg = vi.mocked(toast.error).mock.calls[0][0] as string;
+    expect(msg.toLowerCase()).toMatch(/smtp|connect|host/);
+  });
+
+  it("SmtpSendFailed message mentions 'password' or 'rejected'", () => {
+    toastError({ code: "SmtpSendFailed", message: "" });
+    const msg = vi.mocked(toast.error).mock.calls[0][0] as string;
+    expect(msg.toLowerCase()).toMatch(/reject|password|username|from/);
+  });
+
+  it("DriveScanTooLarge message mentions 'files' or 'scan'", () => {
+    toastError({ code: "DriveScanTooLarge", message: "" });
+    const msg = vi.mocked(toast.error).mock.calls[0][0] as string;
+    expect(msg.toLowerCase()).toMatch(/file|scan|drive/);
   });
 });

@@ -58,6 +58,21 @@ pub const ONEDRIVE_WARNING_EMITTED: &str = "ONEDRIVE_WARNING_EMITTED";
 // ─── Report action codes (Phase 3b) ──────────────────────────────────────────
 pub const REPORT_GENERATED: &str = "REPORT_GENERATED";
 
+// ─── Phase 5: AI + network action codes ──────────────────────────────────────
+pub const AI_ENHANCE_CALLED: &str = "AI_ENHANCE_CALLED";
+pub const AI_CLASSIFY_CALLED: &str = "AI_CLASSIFY_CALLED";
+pub const AI_SUMMARIZE_CALLED: &str = "AI_SUMMARIZE_CALLED";
+pub const FORENSIC_ANALYZE_CALLED: &str = "FORENSIC_ANALYZE_CALLED";
+pub const AGENT_ZERO_CUSTOM_URL_ACTIVE: &str = "AGENT_ZERO_CUSTOM_URL_ACTIVE";
+pub const API_SERVER_NONLOOPBACK_BIND: &str = "API_SERVER_NONLOOPBACK_BIND";
+
+// ─── Phase 5: record action codes (for axum actor audit) ─────────────────────
+pub const EVIDENCE_ADDED: &str = "EVIDENCE_ADDED";
+pub const CUSTODY_ADDED: &str = "CUSTODY_ADDED";
+pub const HASH_ADDED: &str = "HASH_ADDED";
+pub const TOOL_ADDED: &str = "TOOL_ADDED";
+pub const ANALYSIS_ADDED: &str = "ANALYSIS_ADDED";
+
 // ─── Path helpers ─────────────────────────────────────────────────────────────
 
 fn audit_dir() -> PathBuf {

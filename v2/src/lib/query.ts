@@ -114,4 +114,25 @@ export const queryKeys = {
     forCase: (caseId: string, filter: TimelineFilter) =>
       ["crime-line", caseId, filter] as const,
   },
+
+  /** Agent Zero integration settings (Phase 5) */
+  agentZero: {
+    settings: ["agentZero", "settings"] as const,
+    status: ["agentZero", "status"] as const,
+  },
+
+  /** SMTP settings (Phase 5) */
+  smtp: {
+    settings: ["smtp", "settings"] as const,
+  },
+
+  /** Drive list (Phase 5) */
+  drives: {
+    list: ["drives", "list"] as const,
+  },
+
+  /** Network binding status (Phase 5) */
+  network: {
+    status: ["network", "status"] as const,
+  },
 } as const;

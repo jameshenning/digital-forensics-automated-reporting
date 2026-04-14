@@ -10,12 +10,27 @@
 ///   displayed in the management UI.  We use it to do an indexed lookup
 ///   (O(1)) before running the expensive Argon2 verification, reducing
 ///   Argon2 calls from O(n tokens) to O(1) regardless of token count.
+///
+/// Timing-oracle invariant (SEC-5 MUST-DO 1):
+///   Both the "no preview match" and "wrong hash" code paths must take
+///   approximately equal time (~100ms, the Argon2 verify cost).  This is
+///   enforced by `dummy_verify`: callers (axum middleware) MUST call it
+///   whenever they would otherwise return early without running Argon2.
+///   See `bearer_auth_middleware` in `axum_server.rs` for usage.
+///
+/// ISOLATION INVARIANT (SEC-5 MUST-DO 2):
+///   Session tokens (`sess_...`, in-memory only) and API bearer tokens
+///   (`dfars_...`, persisted in `api_tokens`) are STRICTLY DISJOINT.
+///   - An API bearer token MUST NEVER be inserted into the session HashMap.
+///   - A session token MUST NEVER be stored in `api_tokens`.
+///   Tests for both directions live in `tests/phase5_network_integration.rs`.
 use sqlx::SqlitePool;
 use tracing::info;
 use zeroize::Zeroizing;
 
 use crate::auth::argon;
 use crate::error::AppError;
+use crate::state::AppState;
 
 const TOKEN_PREFIX: &str = "dfars_";
 const TOKEN_BYTES: usize = 32;
@@ -166,7 +181,15 @@ pub async fn verify(pool: &SqlitePool, plaintext: &str) -> Result<Option<Verifie
 
     let row = match row {
         Some(r) => r,
-        None => return Ok(None),
+        None => {
+            // MUST-DO 1 (SEC-5): Run a dummy Argon2 verify so the no-match path
+            // takes ~100ms (same as the real Argon2 verify below), eliminating
+            // the timing oracle that distinguishes "no preview match" (~µs) from
+            // "wrong hash" (~100ms).  Callers must NOT short-circuit before this.
+            // See also: `dummy_verify()` called from `bearer_auth_middleware`.
+            let _ = argon::verify_password("dummy-plaintext-does-not-match", &_dummy_placeholder());
+            return Ok(None);
+        }
     };
 
     let token_hash: String = row.try_get("token_hash")?;
@@ -202,11 +225,35 @@ pub async fn verify(pool: &SqlitePool, plaintext: &str) -> Result<Option<Verifie
     }))
 }
 
-#[derive(Debug)]
-#[allow(dead_code)]
+#[derive(Debug, Clone)]
 pub struct VerifiedToken {
     pub token_id: i64,
     pub user_id: i64,
     pub name: String,
     pub username: String,
+}
+
+// ─── Timing-oracle mitigation helpers (SEC-5 MUST-DO 1) ─────────────────────
+
+/// Run a dummy Argon2 verify against the app's pre-computed dummy hash.
+///
+/// Called by `bearer_auth_middleware` whenever a token prefix is invalid
+/// (e.g. `sess_...`) so that the rejection path is not measurably faster
+/// than the "no preview match" path.
+///
+/// Invariant: this function must execute a full Argon2 verify and take
+/// approximately the same time as a real token verification failure.
+pub async fn dummy_verify(state: &AppState) {
+    // Use the dummy hash from AppState so we don't need to call hash() here.
+    let _ = argon::verify_password("dummy-plaintext-timing-guard", &state.dummy_hash);
+}
+
+/// Internal placeholder — returns a valid Argon2 PHC hash of a dummy secret.
+/// Used inside `verify()` for the no-preview-match path.
+fn _dummy_placeholder() -> String {
+    // This is intentionally pre-computed at call time using the cheaper
+    // `make_dummy_hash()` function. In practice the axum middleware calls
+    // `dummy_verify(state)` which uses the AppState.dummy_hash instead, so
+    // this path only fires if verify() is called directly.
+    argon::make_dummy_hash()
 }

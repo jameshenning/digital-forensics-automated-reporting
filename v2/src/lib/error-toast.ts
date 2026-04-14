@@ -73,16 +73,55 @@ const ERROR_MESSAGES: Record<AppErrorCode, string> = {
     "One or both link endpoints no longer exist. Check that the source and target entities or evidence items are still present.",
   EventNotFound:
     "Case event not found. It may have been deleted.",
+  // Phase 5 — AI + integration + drive error codes
+  NetworkBindRefused:
+    "The DFARS internal server could not bind to the requested address. " +
+    "Another process may be using the port. Check Settings > Integrations for guidance.",
+  AgentZeroUrlRejected:
+    "The Agent Zero URL is not in the allowed list (localhost, 127.0.0.1, host.docker.internal). " +
+    "Enable 'Allow custom URL' in Settings > Integrations to override.",
+  AgentZeroNotConfigured:
+    "Agent Zero is not configured. Go to Settings > Integrations to set up your Agent Zero URL and API key.",
+  AgentZeroTimeout:
+    "Agent Zero did not respond in time. Check that the Agent Zero container is running and try again.",
+  AgentZeroServerError:
+    "Agent Zero returned an error response. Check the Agent Zero container logs for details.",
+  PayloadTooLarge:
+    "The response from Agent Zero was too large to process. This is unexpected — check Agent Zero for misconfigured output.",
+  AiSummarizeConsentRequired:
+    // NOT shown as a toast — triggers the AiConsentDialog instead.
+    // This string is a fallback only if toastError is somehow called directly.
+    "Consent required before sending case data to Agent Zero. See the consent dialog.",
+  SmtpConnectFailed:
+    "Could not connect to the SMTP server. Check the host, port, and TLS settings in Settings > Integrations.",
+  SmtpSendFailed:
+    "The SMTP server accepted the connection but rejected the message. Check your username, password, and 'from' address.",
+  DriveScanTooLarge:
+    "The drive has too many files to scan in a single operation. Try scanning a specific subdirectory instead.",
 };
 
 /**
  * Show an error toast for an AppError.
  * If `err` is not shaped like an AppError, shows a generic message.
  */
+/**
+ * Returns a sentinel value instead of toasting for error codes that must be
+ * handled by a dedicated dialog rather than a toast notification.
+ *
+ * Currently: 'AiSummarizeConsentRequired' — the caller must show the
+ * AiConsentDialog instead.
+ */
+export const DIALOG_HANDLED_CODES = new Set<AppErrorCode>([
+  "AiSummarizeConsentRequired",
+]);
+
 export function toastError(err: unknown): void {
   const appErr = err as Partial<AppError>;
 
   if (appErr?.code && appErr.code in ERROR_MESSAGES) {
+    // AiSummarizeConsentRequired must NOT show a toast — the dialog handles it.
+    if (appErr.code === "AiSummarizeConsentRequired") return;
+
     let msg = ERROR_MESSAGES[appErr.code];
 
     // Augment the lockout message with the countdown if available
@@ -92,6 +131,16 @@ export function toastError(err: unknown): void {
       msg = mins > 0
         ? `Account locked for ${mins}m ${secs}s. Please try again later.`
         : `Account locked for ${secs}s. Please try again later.`;
+    }
+
+    // Augment Agent Zero timeout with the duration if available
+    if (appErr.code === "AgentZeroTimeout" && appErr.seconds_remaining) {
+      msg = `Agent Zero did not respond within ${appErr.seconds_remaining} seconds. Check that the Agent Zero container is running and try again.`;
+    }
+
+    // Augment drive scan error with file count if available
+    if (appErr.code === "DriveScanTooLarge" && appErr.seconds_remaining) {
+      msg = `The drive has ${appErr.seconds_remaining}+ files, which is too many to scan in one operation. Try a specific subdirectory.`;
     }
 
     toast.error(msg);

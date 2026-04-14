@@ -52,7 +52,18 @@ export type AppErrorCode =
   | "EntityCycle"
   | "LinkNotFound"
   | "LinkEndpointMissing"
-  | "EventNotFound";
+  | "EventNotFound"
+  // Phase 5 — AI + integration + drive error codes
+  | "NetworkBindRefused"
+  | "AgentZeroUrlRejected"
+  | "AgentZeroNotConfigured"
+  | "AgentZeroTimeout"
+  | "AgentZeroServerError"
+  | "PayloadTooLarge"
+  | "AiSummarizeConsentRequired"
+  | "SmtpConnectFailed"
+  | "SmtpSendFailed"
+  | "DriveScanTooLarge";
 
 export interface AppError {
   code: AppErrorCode;
@@ -1072,4 +1083,259 @@ export function caseCrimeLine(args: {
   end: string | null;
 }): Promise<TimelinePayload> {
   return invoke<TimelinePayload>("case_crime_line", args);
+}
+
+// ---------------------------------------------------------------------------
+// Phase 5 — AI / Agent Zero types
+// ---------------------------------------------------------------------------
+
+export interface AiClassificationResult {
+  case_type: string | null;
+  priority: "Low" | "Medium" | "High" | "Critical" | null;
+  status: string | null;
+  tags: string[] | null;
+  rationale: string | null;
+}
+
+export interface AiCaseSummary {
+  executive_summary: string; // markdown
+  key_findings: string[];
+  conclusion: string;
+  tools_used: string[] | null;
+  platforms_used: string[] | null;
+}
+
+export interface ForensicAnalysisResult {
+  narrative: string;
+  tools_used: string; // comma-separated
+  platforms_used: string;
+  error_message: string | null;
+}
+
+// ---------------------------------------------------------------------------
+// Phase 5 — Integration settings types
+// ---------------------------------------------------------------------------
+
+export interface AgentZeroSettings {
+  url: string | null;
+  api_key_set: boolean;
+  port: number;
+  allow_custom_url: boolean;
+  is_configured: boolean;
+  shown_ai_summarize_consent: boolean;
+}
+
+export interface AgentZeroInput {
+  url: string;
+  api_key: string | null; // null = leave unchanged
+  port: number;
+  allow_custom_url: boolean;
+}
+
+export interface AgentZeroTestResult {
+  ok: true;
+  plugin_version: string | null;
+}
+
+export interface SmtpSettings {
+  host: string;
+  port: number;
+  username: string;
+  from: string;
+  password_set: boolean;
+  tls: boolean;
+}
+
+export interface SmtpInput {
+  host: string;
+  port: number;
+  username: string;
+  password: string | null; // null = leave unchanged
+  from: string;
+  tls: boolean;
+}
+
+export interface SmtpTestResult {
+  ok: true;
+}
+
+export interface NetworkStatus {
+  bind_host: string;
+  allow_network_bind: boolean;
+  axum_running: boolean;
+  axum_url: string;
+}
+
+// ---------------------------------------------------------------------------
+// Phase 5 — Drive types
+// ---------------------------------------------------------------------------
+
+export interface Drive {
+  letter: string;
+  label: string;
+  total_bytes: number;
+  free_bytes: number;
+  drive_type: string;
+}
+
+export interface DriveScanResult {
+  root: string;
+  file_count: number;
+  total_bytes: number;
+  top_extensions: Record<string, number>;
+}
+
+// ---------------------------------------------------------------------------
+// Phase 5 — AI helper commands
+// ---------------------------------------------------------------------------
+
+/**
+ * Send narrative text to the Agent Zero enhance plugin.
+ * 30 s timeout. Returns the rewritten text.
+ * Rejects with AgentZeroNotConfigured if Agent Zero is not set up.
+ */
+export function aiEnhance(args: {
+  token: string;
+  text: string;
+}): Promise<string> {
+  return invoke<string>("ai_enhance", args);
+}
+
+/**
+ * Send text to Agent Zero for classification.
+ * 30 s timeout. Returns structured classification suggestions.
+ * Rejects with AgentZeroNotConfigured if Agent Zero is not set up.
+ */
+export function aiClassify(args: {
+  token: string;
+  text: string;
+}): Promise<AiClassificationResult> {
+  return invoke<AiClassificationResult>("ai_classify", args);
+}
+
+/**
+ * Send the full case payload to Agent Zero and receive an executive summary.
+ * 120 s timeout.
+ *
+ * IMPORTANT: On the first call per install, this rejects with
+ * AppError.code === 'AiSummarizeConsentRequired'. The frontend MUST show the
+ * AiConsentDialog and call settingsAcknowledgeAiConsent() before retrying.
+ * Do NOT display a toast for this error code — the dialog handles it.
+ */
+export function aiSummarizeCase(args: {
+  token: string;
+  case_id: string;
+}): Promise<AiCaseSummary> {
+  return invoke<AiCaseSummary>("ai_summarize_case", args);
+}
+
+/**
+ * Send evidence metadata + narrative to Agent Zero for forensic analysis.
+ * 300 s timeout (Agent Zero runs real Kali forensic tools).
+ * Agent Zero will call back to the DFARS axum server to download evidence files.
+ */
+export function evidenceForensicAnalyze(args: {
+  token: string;
+  evidence_id: string;
+  narrative: string;
+}): Promise<ForensicAnalysisResult> {
+  return invoke<ForensicAnalysisResult>("evidence_forensic_analyze", args);
+}
+
+// ---------------------------------------------------------------------------
+// Phase 5 — Integration settings commands
+// ---------------------------------------------------------------------------
+
+/** Get the current Agent Zero integration settings. */
+export function settingsGetAgentZero(args: {
+  token: string;
+}): Promise<AgentZeroSettings> {
+  return invoke<AgentZeroSettings>("settings_get_agent_zero", args);
+}
+
+/**
+ * Save Agent Zero settings.
+ * Rejects with AgentZeroUrlRejected if the URL fails the allowlist
+ * AND allow_custom_url is false.
+ * api_key is a new plaintext value OR null to leave unchanged.
+ */
+export function settingsSetAgentZero(args: {
+  token: string;
+  input: AgentZeroInput;
+}): Promise<void> {
+  return invoke<void>("settings_set_agent_zero", args);
+}
+
+/** Test the Agent Zero connection. Returns plugin_version when successful. */
+export function settingsTestAgentZero(args: {
+  token: string;
+}): Promise<AgentZeroTestResult> {
+  return invoke<AgentZeroTestResult>("settings_test_agent_zero", args);
+}
+
+/**
+ * Record that the investigator has acknowledged the AI summarize consent.
+ * After this call, ai_summarize_case will never reject with
+ * AiSummarizeConsentRequired again on this install.
+ */
+export function settingsAcknowledgeAiConsent(args: {
+  token: string;
+}): Promise<void> {
+  return invoke<void>("settings_acknowledge_ai_consent", args);
+}
+
+/** Get the current SMTP settings. Password is NEVER returned (password_set boolean only). */
+export function settingsGetSmtp(args: {
+  token: string;
+}): Promise<SmtpSettings> {
+  return invoke<SmtpSettings>("settings_get_smtp", args);
+}
+
+/**
+ * Save SMTP settings.
+ * password is a new plaintext value OR null to leave unchanged.
+ */
+export function settingsSetSmtp(args: {
+  token: string;
+  input: SmtpInput;
+}): Promise<void> {
+  return invoke<void>("settings_set_smtp", args);
+}
+
+/** Send a test email to verify SMTP configuration. */
+export function settingsTestSmtp(args: {
+  token: string;
+  to_address: string;
+}): Promise<SmtpTestResult> {
+  return invoke<SmtpTestResult>("settings_test_smtp", args);
+}
+
+/** Get network binding status for the axum server. */
+export function systemGetNetworkStatus(args: {
+  token: string;
+}): Promise<NetworkStatus> {
+  return invoke<NetworkStatus>("system_get_network_status", args);
+}
+
+// ---------------------------------------------------------------------------
+// Phase 5 — Drive commands
+// ---------------------------------------------------------------------------
+
+/** List all available drives on the system. */
+export function drivesList(args: {
+  token: string;
+}): Promise<Drive[]> {
+  return invoke<Drive[]>("drives_list", args);
+}
+
+/**
+ * Scan the drive at `path` for the given case.
+ * Rejects with DriveScanTooLarge if the drive has too many files.
+ */
+export function driveScan(args: {
+  token: string;
+  case_id: string;
+  path: string;
+}): Promise<DriveScanResult> {
+  return invoke<DriveScanResult>("drive_scan", args);
 }

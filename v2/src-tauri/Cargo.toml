@@ -42,6 +42,19 @@ sha2 = "0.10"
 infer = "0.16"
 unicode-normalization = "0.1"
 
+# ─── Phase 5: axum REST API + outbound HTTP + mailer + drives ────────────────
+axum = { version = "0.7", default-features = false, features = ["http1", "json", "tokio"] }
+tower = { version = "0.4", features = ["limit", "timeout"] }
+tower-http = { version = "0.5", features = ["limit", "trace"] }
+hyper = { version = "1", features = ["full"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream"] }
+futures-util = "0.3"
+http = "1"
+bytes = "1"
+lettre = { version = "0.11", default-features = false, features = ["smtp-transport", "rustls-tls", "builder", "tokio1-rustls-tls"] }
+sysinfo = "0.32"
+walkdir = "2"
+
 [dev-dependencies]
 # Ephemeral temp directories for integration tests that need on-disk SQLite.
 tempfile = "3"

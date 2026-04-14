@@ -121,6 +121,48 @@ pub enum AppError {
 
     #[error("report generation failed: {reason}")]
     ReportGenerationFailed { reason: String },
+
+    // ─── Phase 5: network / Agent Zero / SMTP / drives ───────────────────────
+
+    /// SEC-5 MUST-DO 5: non-loopback bind refused without explicit opt-in.
+    #[error("network bind refused for host '{bind_host}': set allow_network_bind = true to allow")]
+    NetworkBindRefused { bind_host: String },
+
+    /// SEC-4 MUST-DO 6: Agent Zero URL not on the allowlist.
+    #[error("Agent Zero URL rejected: '{url}'")]
+    AgentZeroUrlRejected { url: String },
+
+    /// Agent Zero not configured (URL or key missing).
+    #[error("Agent Zero is not configured")]
+    AgentZeroNotConfigured,
+
+    /// Agent Zero request timed out.
+    #[error("Agent Zero request to '{endpoint}' timed out after {seconds}s")]
+    AgentZeroTimeout { endpoint: String, seconds: u64 },
+
+    /// Agent Zero returned a non-2xx HTTP status.
+    #[error("Agent Zero server error {status}: {message}")]
+    AgentZeroServerError { status: u16, message: String },
+
+    /// Response body exceeded the per-endpoint cap (MUST-DO 7).
+    #[error("response payload too large: exceeded {limit} byte limit")]
+    PayloadTooLarge { limit: usize },
+
+    /// SEC-4 MUST-DO 8: one-time consent gate for ai_summarize_case.
+    #[error("AI summarize consent required")]
+    AiSummarizeConsentRequired,
+
+    /// SMTP connection failed.
+    #[error("SMTP connection failed: {reason}")]
+    SmtpConnectFailed { reason: String },
+
+    /// SMTP send failed.
+    #[error("SMTP send failed: {reason}")]
+    SmtpSendFailed { reason: String },
+
+    /// Drive scan exceeded the file-count limit.
+    #[error("drive scan aborted: file_count={file_count} exceeded limit={limit}")]
+    DriveScanTooLarge { file_count: u64, limit: u64 },
 }
 
 impl From<sqlx::Error> for AppError {

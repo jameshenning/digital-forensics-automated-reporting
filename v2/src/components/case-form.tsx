@@ -38,6 +38,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { DrivePicker } from "@/components/drive-picker";
 
 interface CaseFormProps {
   defaultValues?: Partial<CaseFormValues>;
@@ -322,20 +323,24 @@ export function CaseForm({
           />
         </div>
 
-        {/* Evidence Drive Path */}
+        {/* Evidence Drive Path — DrivePicker with text fallback */}
         <FormField
           control={form.control}
           name="evidence_drive_path"
           render={({ field }) => (
             <FormItem>
-              <FormLabel>Evidence Drive Path</FormLabel>
+              <FormLabel>Evidence Drive</FormLabel>
               <FormControl>
-                <Input placeholder="e.g. E:\" {...field} />
+                <DrivePicker
+                  value={field.value ?? ""}
+                  onChange={field.onChange}
+                  placeholder="Select a drive or enter a path"
+                />
               </FormControl>
               <FormDescription>
                 External drive letter or path where evidence files are stored.
                 All evidence should reside on an external drive, not the primary
-                system drive.
+                system drive. Leave blank to use the default APPDATA location.
               </FormDescription>
               <FormMessage />
             </FormItem>

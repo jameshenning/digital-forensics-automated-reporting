@@ -19,10 +19,24 @@ import {
   RefreshCw,
   FileText,
   Network,
+  Sparkles,
+  Tags,
+  BookOpen,
+  Loader2,
 } from "lucide-react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 
 import { requireAuthBeforeLoad } from "@/lib/auth-guard";
-import { caseGet, caseDelete } from "@/lib/bindings";
+import {
+  caseGet,
+  caseDelete,
+  aiSummarizeCase,
+  aiClassify,
+  settingsGetAgentZero,
+  type AiCaseSummary,
+  type AiClassificationResult,
+} from "@/lib/bindings";
 import { getToken } from "@/lib/session";
 import { queryKeys } from "@/lib/query";
 import { toastError, toastSuccess } from "@/lib/error-toast";
@@ -46,6 +60,13 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from "@/components/ui/dialog";
 
 import { EvidencePanel } from "@/components/evidence-panel";
 import { CustodyPanel } from "@/components/custody-panel";
@@ -53,6 +74,8 @@ import { HashPanel } from "@/components/hash-panel";
 import { ToolsPanel } from "@/components/tools-panel";
 import { AnalysisPanel } from "@/components/analysis-panel";
 import { ReportDialog } from "@/components/report-dialog";
+import { AiConsentDialog } from "@/components/ai-consent-dialog";
+import { DriveScanButton } from "@/components/drive-scan-button";
 
 export const Route = createFileRoute("/case/$caseId")({
   beforeLoad: requireAuthBeforeLoad,
@@ -180,6 +203,21 @@ function CaseDetailPage() {
     React.useState(false);
   const [reportOpen, setReportOpen] = React.useState(false);
 
+  // AI state
+  const [consentOpen, setConsentOpen] = React.useState(false);
+  const [summaryOpen, setSummaryOpen] = React.useState(false);
+  const [summary, setSummary] = React.useState<AiCaseSummary | null>(null);
+  const [classifyOpen, setClassifyOpen] = React.useState(false);
+  const [classifyResult, setClassifyResult] = React.useState<AiClassificationResult | null>(null);
+
+  // Read Agent Zero settings to know if it's configured and get the URL for consent dialog
+  const { data: agentZeroSettings } = useQuery({
+    queryKey: queryKeys.agentZero.settings,
+    queryFn: () => settingsGetAgentZero({ token }),
+    enabled: !!token,
+    refetchOnWindowFocus: false,
+  });
+
   const { data, isLoading, isError, error, refetch } = useQuery<CaseDetail>({
     queryKey: queryKeys.cases.detail(caseId),
     queryFn: () => caseGet({ token, case_id: caseId }),
@@ -215,6 +253,37 @@ function CaseDetailPage() {
         toastError(err);
       }
     },
+  });
+
+  // AI summarize mutation
+  const summarizeMutation = useMutation({
+    mutationFn: () => aiSummarizeCase({ token, case_id: caseId }),
+    onSuccess: (result) => {
+      setSummary(result);
+      setSummaryOpen(true);
+    },
+    onError: (err) => {
+      const appErr = err as Partial<AppError>;
+      if (appErr?.code === "AiSummarizeConsentRequired") {
+        // Show blocking consent dialog instead of a toast
+        setConsentOpen(true);
+      } else {
+        toastError(err);
+      }
+    },
+  });
+
+  // AI classify mutation
+  const classifyMutation = useMutation({
+    mutationFn: () => {
+      const desc = data?.case.description ?? data?.case.case_name ?? "";
+      return aiClassify({ token, text: desc });
+    },
+    onSuccess: (result) => {
+      setClassifyResult(result);
+      setClassifyOpen(true);
+    },
+    onError: toastError,
   });
 
   // Format dates for display
@@ -320,6 +389,39 @@ function CaseDetailPage() {
                 </div>
               </div>
               <div className="flex gap-2 shrink-0 flex-wrap">
+                {/* AI buttons */}
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={summarizeMutation.isPending || !agentZeroSettings?.is_configured}
+                  onClick={() => summarizeMutation.mutate()}
+                  title={!agentZeroSettings?.is_configured ? "Configure Agent Zero in Settings" : "Summarize with AI"}
+                >
+                  {summarizeMutation.isPending ? (
+                    <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                  ) : (
+                    <BookOpen className="h-4 w-4 mr-1" />
+                  )}
+                  Summarize
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={classifyMutation.isPending || !agentZeroSettings?.is_configured}
+                  onClick={() => classifyMutation.mutate()}
+                  title={!agentZeroSettings?.is_configured ? "Configure Agent Zero in Settings" : "Classify with AI"}
+                >
+                  {classifyMutation.isPending ? (
+                    <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                  ) : (
+                    <Tags className="h-4 w-4 mr-1" />
+                  )}
+                  Classify
+                </Button>
+                <DriveScanButton
+                  caseId={caseId}
+                  drivePath={c.evidence_drive_path}
+                />
                 <Button
                   size="sm"
                   variant="outline"
@@ -398,6 +500,113 @@ function CaseDetailPage() {
           open={reportOpen}
           onClose={() => setReportOpen(false)}
         />
+
+        {/* AI consent dialog (Phase 5 — shown once before first ai_summarize_case) */}
+        <AiConsentDialog
+          open={consentOpen}
+          agentZeroUrl={agentZeroSettings?.url ?? "http://localhost:5099"}
+          onAcknowledge={() => {
+            setConsentOpen(false);
+            // Retry the summarize mutation after consent is recorded
+            summarizeMutation.mutate();
+          }}
+          onClose={() => setConsentOpen(false)}
+        />
+
+        {/* AI summary result dialog */}
+        <Dialog open={summaryOpen} onOpenChange={(o) => { if (!o) setSummaryOpen(false); }}>
+          <DialogContent className="max-w-2xl">
+            <DialogHeader>
+              <div className="flex items-center gap-2">
+                <Sparkles className="h-5 w-5 text-primary shrink-0" />
+                <DialogTitle>Case Summary — {caseId}</DialogTitle>
+              </div>
+            </DialogHeader>
+            {summary && (
+              <div className="space-y-4 max-h-[60vh] overflow-y-auto">
+                <div className="prose prose-sm dark:prose-invert max-w-none">
+                  <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                    {summary.executive_summary}
+                  </ReactMarkdown>
+                </div>
+                {summary.key_findings.length > 0 && (
+                  <div>
+                    <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5">
+                      Key findings
+                    </p>
+                    <ul className="space-y-1">
+                      {summary.key_findings.map((f, i) => (
+                        <li key={i} className="text-sm flex gap-2">
+                          <span className="text-muted-foreground shrink-0">•</span>
+                          {f}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                <div>
+                  <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1">
+                    Conclusion
+                  </p>
+                  <p className="text-sm">{summary.conclusion}</p>
+                </div>
+              </div>
+            )}
+            <DialogFooter>
+              <Button onClick={() => setSummaryOpen(false)}>Close</Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* AI classify result dialog */}
+        <Dialog open={classifyOpen} onOpenChange={(o) => { if (!o) setClassifyOpen(false); }}>
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <div className="flex items-center gap-2">
+                <Tags className="h-5 w-5 text-primary shrink-0" />
+                <DialogTitle>Classification Suggestions</DialogTitle>
+              </div>
+            </DialogHeader>
+            {classifyResult && (
+              <div className="space-y-3 text-sm">
+                {classifyResult.case_type && (
+                  <div>
+                    <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-0.5">Case type</p>
+                    <p>{classifyResult.case_type}</p>
+                  </div>
+                )}
+                {classifyResult.priority && (
+                  <div>
+                    <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-0.5">Suggested priority</p>
+                    <Badge variant="secondary">{classifyResult.priority}</Badge>
+                  </div>
+                )}
+                {classifyResult.tags && classifyResult.tags.length > 0 && (
+                  <div>
+                    <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1">Suggested tags</p>
+                    <div className="flex gap-1 flex-wrap">
+                      {classifyResult.tags.map((t) => (
+                        <Badge key={t} variant="secondary" className="text-xs">{t}</Badge>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {classifyResult.rationale && (
+                  <div>
+                    <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-0.5">Rationale</p>
+                    <p className="text-muted-foreground">{classifyResult.rationale}</p>
+                  </div>
+                )}
+                <p className="text-xs text-muted-foreground pt-1">
+                  These are suggestions only. Apply them manually via the Edit button.
+                </p>
+              </div>
+            )}
+            <DialogFooter>
+              <Button onClick={() => setClassifyOpen(false)}>Close</Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
 
         {/* Sub-panel tabs */}
         <Tabs defaultValue="evidence">

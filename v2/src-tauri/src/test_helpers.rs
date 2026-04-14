@@ -16,10 +16,14 @@ use std::sync::Arc;
 
 use sqlx::{sqlite::{SqliteConnectOptions, SqlitePoolOptions}, SqlitePool};
 
+use std::path::PathBuf;
+
 use crate::{
+    agent_zero::AgentZeroState,
     auth::lockout::LockoutMap,
     auth::session::SessionState,
     auth::argon,
+    config::AppConfig,
     crypto::CryptoState,
     db::AppDb,
     state::AppState,
@@ -363,6 +367,9 @@ pub async fn build_test_state() -> (Arc<AppState>, SqlitePool) {
         lockout: LockoutMap::new(),
         sessions: SessionState::new(),
         dummy_hash,
+        config: AppConfig::default(),
+        config_path: PathBuf::new(),
+        agent_zero: AgentZeroState::new(),
     });
 
     (state, auth_pool)

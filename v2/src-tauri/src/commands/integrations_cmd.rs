@@ -1,0 +1,332 @@
+/// Integration settings Tauri commands — Phase 5.
+///
+/// Manages Agent Zero and SMTP configuration via `config.rs`.
+///
+/// Security constraints:
+///   - Returned `AgentZeroSettings` NEVER includes the plaintext API key.
+///     Only `api_key_set: bool` is returned to the frontend.
+///   - Returned `SmtpSettings` NEVER includes the plaintext password.
+///     Only `password_set: bool` is returned.
+///   - Changing `agent_zero_url` triggers URL validation — invalid URLs
+///     return `AppError::AgentZeroUrlRejected`.
+///   - `shown_ai_summarize_consent` is set by `settings_acknowledge_ai_consent`
+///     (MUST-DO 8).
+use std::sync::Arc;
+
+use serde::{Deserialize, Serialize};
+use tauri::State;
+use tracing::info;
+
+use crate::agent_zero::AgentZeroClient;
+use crate::audit;
+use crate::auth::session::require_session;
+use crate::config::{self, AppConfig};
+use crate::error::AppError;
+use crate::mailer::{self, SmtpConfig};
+use crate::state::AppState;
+
+// ─── Return types (never include plaintext secrets) ───────────────────────────
+
+#[derive(Debug, Serialize)]
+pub struct AgentZeroSettings {
+    pub url: Option<String>,
+    pub api_key_set: bool,
+    pub allow_custom_url: bool,
+    pub axum_port: u16,
+    pub bind_host: String,
+    pub allow_network_bind: bool,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AgentZeroInput {
+    pub url: Option<String>,
+    /// Plaintext API key — encrypted before storage.
+    pub api_key: Option<String>,
+    pub allow_custom_url: Option<bool>,
+    pub axum_port: Option<u16>,
+    pub bind_host: Option<String>,
+    pub allow_network_bind: Option<bool>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SmtpSettings {
+    pub host: Option<String>,
+    pub port: Option<u16>,
+    pub username: Option<String>,
+    pub password_set: bool,
+    pub from: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SmtpInput {
+    pub host: Option<String>,
+    pub port: Option<u16>,
+    pub username: Option<String>,
+    /// Plaintext password — encrypted before storage.
+    pub password: Option<String>,
+    pub from: Option<String>,
+}
+
+// ─── Agent Zero settings ──────────────────────────────────────────────────────
+
+#[tauri::command]
+pub async fn settings_get_agent_zero(
+    token: String,
+    state: State<'_, Arc<AppState>>,
+) -> Result<AgentZeroSettings, AppError> {
+    require_session(&state, &token)?;
+    let cfg = &state.config;
+    Ok(AgentZeroSettings {
+        url: cfg.agent_zero_url.clone(),
+        api_key_set: cfg.agent_zero_api_key_encrypted.is_some(),
+        allow_custom_url: cfg.allow_custom_agent_zero_url,
+        axum_port: cfg.axum_port,
+        bind_host: cfg.bind_host.clone(),
+        allow_network_bind: cfg.allow_network_bind,
+    })
+}
+
+#[tauri::command]
+pub async fn settings_set_agent_zero(
+    token: String,
+    input: AgentZeroInput,
+    state: State<'_, Arc<AppState>>,
+) -> Result<(), AppError> {
+    let session = require_session(&state, &token)?;
+
+    // Clone the current config and apply mutations.
+    let mut cfg = state.config.clone();
+
+    if let Some(url) = &input.url {
+        // Validate URL before persisting — MUST-DO 6.
+        let allow_custom = input.allow_custom_url.unwrap_or(cfg.allow_custom_agent_zero_url);
+        crate::agent_zero::validate_url_public(url, allow_custom)?;
+        cfg.agent_zero_url = Some(url.clone());
+    }
+
+    if let Some(key) = input.api_key {
+        if !key.is_empty() {
+            let encrypted = state.crypto.encrypt(key.as_bytes());
+            cfg.agent_zero_api_key_encrypted = Some(encrypted);
+        }
+    }
+
+    if let Some(v) = input.allow_custom_url {
+        cfg.allow_custom_agent_zero_url = v;
+    }
+    if let Some(p) = input.axum_port {
+        cfg.axum_port = p;
+    }
+    if let Some(h) = input.bind_host {
+        if h != "127.0.0.1" && h != "0.0.0.0" {
+            return Err(AppError::ValidationError {
+                field: "bind_host".into(),
+                message: "bind_host must be '127.0.0.1' or '0.0.0.0'".into(),
+            });
+        }
+        cfg.bind_host = h;
+    }
+    if let Some(v) = input.allow_network_bind {
+        cfg.allow_network_bind = v;
+    }
+
+    // Persist config.
+    let config_path = state.config_path.clone();
+    config::save(&config_path, &cfg)?;
+
+    // Rebuild the Agent Zero client with the new settings.
+    rebuild_agent_zero_client(&state, &cfg).await?;
+
+    info!(username = %session.username, "Agent Zero settings updated");
+    audit::log_auth(
+        &format!("user:{}", session.username),
+        audit::SETTINGS_CHANGED,
+        "Agent Zero settings updated",
+    );
+
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn settings_test_agent_zero(
+    token: String,
+    state: State<'_, Arc<AppState>>,
+) -> Result<(), AppError> {
+    require_session(&state, &token)?;
+
+    let az = state.agent_zero.client.read().await;
+    let client = az.as_ref().ok_or(AppError::AgentZeroNotConfigured)?;
+
+    // Send a trivial enhance request as a connectivity test.
+    client.enhance("test").await.map(|_| ())
+}
+
+// ─── SMTP settings ────────────────────────────────────────────────────────────
+
+#[tauri::command]
+pub async fn settings_get_smtp(
+    token: String,
+    state: State<'_, Arc<AppState>>,
+) -> Result<SmtpSettings, AppError> {
+    require_session(&state, &token)?;
+    let cfg = &state.config;
+    Ok(SmtpSettings {
+        host: cfg.smtp_host.clone(),
+        port: cfg.smtp_port,
+        username: cfg.smtp_username.clone(),
+        password_set: cfg.smtp_password_encrypted.is_some(),
+        from: cfg.smtp_from.clone(),
+    })
+}
+
+#[tauri::command]
+pub async fn settings_set_smtp(
+    token: String,
+    input: SmtpInput,
+    state: State<'_, Arc<AppState>>,
+) -> Result<(), AppError> {
+    let session = require_session(&state, &token)?;
+
+    let mut cfg = state.config.clone();
+
+    if let Some(host) = input.host { cfg.smtp_host = Some(host); }
+    if let Some(port) = input.port { cfg.smtp_port = Some(port); }
+    if let Some(uname) = input.username { cfg.smtp_username = Some(uname); }
+    if let Some(pw) = input.password {
+        if !pw.is_empty() {
+            let encrypted = state.crypto.encrypt(pw.as_bytes());
+            cfg.smtp_password_encrypted = Some(encrypted);
+        }
+    }
+    if let Some(from) = input.from { cfg.smtp_from = Some(from); }
+
+    let config_path = state.config_path.clone();
+    config::save(&config_path, &cfg)?;
+
+    info!(username = %session.username, "SMTP settings updated");
+    audit::log_auth(
+        &format!("user:{}", session.username),
+        audit::SETTINGS_CHANGED,
+        "SMTP settings updated",
+    );
+
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn settings_test_smtp(
+    token: String,
+    to_address: String,
+    state: State<'_, Arc<AppState>>,
+) -> Result<(), AppError> {
+    require_session(&state, &token)?;
+
+    let smtp_cfg = build_smtp_config(&state)?;
+    mailer::send_email(
+        &smtp_cfg,
+        &to_address,
+        "DFARS SMTP Test",
+        "This is a test email from DFARS Desktop v2.",
+    )
+    .await
+}
+
+// ─── Consent (MUST-DO 8) ─────────────────────────────────────────────────────
+
+/// Acknowledge the AI summarize consent banner.
+///
+/// SEC-4 MUST-DO 8: sets `shown_ai_summarize_consent = true` in `config.json`.
+/// After this, `ai_summarize_case` will proceed without returning
+/// `AppError::AiSummarizeConsentRequired`.
+#[tauri::command]
+pub async fn settings_acknowledge_ai_consent(
+    token: String,
+    state: State<'_, Arc<AppState>>,
+) -> Result<(), AppError> {
+    let session = require_session(&state, &token)?;
+
+    let mut cfg = state.config.clone();
+    cfg.shown_ai_summarize_consent = true;
+    let config_path = state.config_path.clone();
+    config::save(&config_path, &cfg)?;
+
+    info!(username = %session.username, "AI summarize consent acknowledged");
+    audit::log_auth(
+        &format!("user:{}", session.username),
+        audit::SETTINGS_CHANGED,
+        "ai_summarize_case consent acknowledged",
+    );
+
+    Ok(())
+}
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+fn build_smtp_config(state: &AppState) -> Result<SmtpConfig, AppError> {
+    let cfg = &state.config;
+    let host = cfg.smtp_host.clone().ok_or_else(|| AppError::ValidationError {
+        field: "smtp_host".into(),
+        message: "SMTP host not configured".into(),
+    })?;
+    let port = cfg.smtp_port.unwrap_or(587);
+    let username = cfg.smtp_username.clone().unwrap_or_default();
+    let password = if let Some(enc) = &cfg.smtp_password_encrypted {
+        let bytes = state.crypto.decrypt(enc)?;
+        String::from_utf8(bytes)
+            .map_err(|_| AppError::Crypto("SMTP password is not valid UTF-8".into()))?
+    } else {
+        String::new()
+    };
+    let from = cfg.smtp_from.clone().unwrap_or_else(|| username.clone());
+    Ok(SmtpConfig { host, port, username, password, from })
+}
+
+async fn rebuild_agent_zero_client(
+    state: &AppState,
+    cfg: &AppConfig,
+) -> Result<(), AppError> {
+    let mut lock = state.agent_zero.client.write().await;
+    if let (Some(url), Some(enc_key)) = (
+        cfg.agent_zero_url.as_deref(),
+        cfg.agent_zero_api_key_encrypted.as_deref(),
+    ) {
+        match state.crypto.decrypt(enc_key) {
+            Ok(key_bytes) => match String::from_utf8(key_bytes) {
+                Ok(key) => match AgentZeroClient::new(url, key, cfg.allow_custom_agent_zero_url) {
+                    Ok(client) => {
+                        *lock = Some(client);
+                        return Ok(());
+                    }
+                    Err(e) => return Err(e),
+                },
+                Err(_) => {
+                    return Err(AppError::Crypto("API key is not valid UTF-8".into()));
+                }
+            },
+            Err(e) => return Err(e),
+        }
+    }
+    // No URL or key configured — clear the client.
+    *lock = None;
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_helpers::build_test_state;
+
+    #[tokio::test]
+    async fn settings_get_agent_zero_empty_token() {
+        let (state, _pool) = build_test_state().await;
+        let result = require_session(&state, "");
+        assert!(matches!(result, Err(AppError::Unauthorized)));
+    }
+
+    #[tokio::test]
+    async fn settings_set_agent_zero_empty_token() {
+        let (state, _pool) = build_test_state().await;
+        let result = require_session(&state, "");
+        assert!(matches!(result, Err(AppError::Unauthorized)));
+    }
+}

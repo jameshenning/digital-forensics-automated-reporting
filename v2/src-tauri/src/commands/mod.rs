@@ -39,9 +39,12 @@
 /// ║                                                                              ║
 /// ╚══════════════════════════════════════════════════════════════════════════════╝
 
+pub mod ai_cmd;
 pub mod auth_cmd;
 pub mod cases_cmd;
+pub mod drives_cmd;
 pub mod files_cmd;
+pub mod integrations_cmd;
 pub mod link_analysis_cmd;
 pub mod records_cmd;
 pub mod reports_cmd;

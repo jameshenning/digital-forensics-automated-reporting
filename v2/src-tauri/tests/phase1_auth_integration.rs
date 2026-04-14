@@ -118,6 +118,9 @@ async fn build_state() -> (Arc<AppState>, SqlitePool) {
         lockout: LockoutMap::new(),
         sessions: SessionState::new(),
         dummy_hash,
+        config: dfars_desktop_lib::config::AppConfig::default(),
+        config_path: std::path::PathBuf::new(),
+        agent_zero: dfars_desktop_lib::agent_zero::AgentZeroState::new(),
     });
     (state, auth_pool)
 }
