@@ -70,8 +70,7 @@ export function CrimeLineCanvas({ caseId, filter }: CrimeLineCanvasProps) {
       caseCrimeLine({
         token,
         case_id: caseId,
-        start: filter.start,
-        end: filter.end,
+        filter,
       }),
     enabled: !!token,
   });

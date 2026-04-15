@@ -10,16 +10,16 @@
 ///   - `purge_file`        — DELETE the DB row; caller must have already unlinked disk
 ///
 /// All queries use dynamic `sqlx::query(...)/.bind(...)` — no `query!` macros.
-use chrono::NaiveDateTime;
+// NaiveDateTime no longer needed — `uploaded_at` is a String for v1 compat.
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
-use std::path::PathBuf;
 
 use crate::error::AppError;
 
 // ─── Public data types ────────────────────────────────────────────────────────
 
 /// Full `evidence_files` row, maps 1:1 to the table schema.
+/// `uploaded_at` is a `String` for v1 compat — see `db::cases::Case`.
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct EvidenceFile {
     pub file_id: i64,
@@ -31,7 +31,7 @@ pub struct EvidenceFile {
     pub mime_type: Option<String>,
     pub metadata_json: Option<String>,
     pub is_deleted: i64,
-    pub uploaded_at: NaiveDateTime,
+    pub uploaded_at: String,
 }
 
 /// Return value for the download command.
@@ -41,8 +41,10 @@ pub struct EvidenceFile {
 /// `is_executable` is set by MIME/magic-byte sniffing (SEC-3 SHOULD-DO 2).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EvidenceFileDownload {
-    /// Absolute path to the stored file on disk.
-    pub path: PathBuf,
+    /// Absolute path to the stored file on disk (serialised as a plain string
+    /// so the frontend receives a JSON string, not the array-of-components
+    /// that serde produces from PathBuf on Windows).
+    pub path: String,
     /// True if the re-computed SHA-256 matches the DB-stored value.
     pub hash_verified: bool,
     /// True if the file's magic bytes indicate a PE/ELF/Mach-O/script.

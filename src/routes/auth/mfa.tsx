@@ -94,8 +94,12 @@ function MfaPage() {
   });
 
   const mutation = useMutation({
-    mutationFn: (code: string) =>
-      authVerifyMfa({ pending_token, code }),
+    mutationFn: (args: { code: string; useRecovery: boolean }) =>
+      authVerifyMfa({
+        pending_token,
+        code: args.code,
+        use_recovery: args.useRecovery,
+      }),
     onSuccess: (session) => {
       setToken(session.token);
       queryClient.setQueryData(queryKeys.currentUser, session);
@@ -115,12 +119,12 @@ function MfaPage() {
 
   const onTotpSubmit = totpForm.handleSubmit((values) => {
     setInvalidCode(false);
-    mutation.mutate(values.code);
+    mutation.mutate({ code: values.code, useRecovery: false });
   });
 
   const onRecoverySubmit = recoveryForm.handleSubmit((values) => {
     setInvalidCode(false);
-    mutation.mutate(values.code);
+    mutation.mutate({ code: values.code, useRecovery: true });
   });
 
   function toggleMode() {

@@ -10,7 +10,7 @@ use crate::error::AppError;
 use crate::state::AppState;
 
 /// List all drives visible to the OS.
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub async fn drives_list(
     token: String,
     state: State<'_, Arc<AppState>>,
@@ -22,7 +22,7 @@ pub async fn drives_list(
 /// Scan a directory tree and return aggregate statistics.
 ///
 /// `path` is the root to scan.  `case_id` is used for audit logging only.
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub async fn drive_scan(
     token: String,
     _case_id: String,

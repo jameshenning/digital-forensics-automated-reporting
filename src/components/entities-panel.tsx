@@ -133,6 +133,13 @@ export function EntitiesPanel({ caseId }: EntitiesPanelProps) {
       parent_entity_id: values.parent_entity_id ?? null,
       notes: values.notes?.trim() || null,
       metadata_json: values.metadata_json?.trim() || null,
+      // Person-specific fields (migration 0002) — generic EntitiesPanel
+      // does not edit these; the dedicated PersonsPanel owns that flow.
+      email: null,
+      phone: null,
+      username: null,
+      employer: null,
+      dob: null,
     };
     addMutation.mutate(input);
   }
@@ -147,6 +154,14 @@ export function EntitiesPanel({ caseId }: EntitiesPanelProps) {
       parent_entity_id: values.parent_entity_id ?? null,
       notes: values.notes?.trim() || null,
       metadata_json: values.metadata_json?.trim() || null,
+      // Preserve existing person-specific values when updating through
+      // the generic EntitiesPanel — do not clobber data entered via
+      // PersonsPanel.
+      email: editEntity.email,
+      phone: editEntity.phone,
+      username: editEntity.username,
+      employer: editEntity.employer,
+      dob: editEntity.dob,
     };
     updateMutation.mutate({ entity_id: editEntity.entity_id, input });
   }

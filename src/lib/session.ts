@@ -66,10 +66,24 @@ export function useSession(): UseSessionResult {
       if (!t) return null;
       try {
         return await authCurrentUser({ token: t });
-      } catch {
-        // Token invalid / expired — treat as unauthenticated
-        clearToken();
-        return null;
+      } catch (err) {
+        // Only treat Unauthorized as "session gone". Any other error
+        // (Db, Io, Crypto, Internal, transient IPC hiccup, etc.) must NOT
+        // silently clear the session and bounce the user to login — that
+        // masks the real bug and confuses the investigator. Re-throw so the
+        // query enters error state and the caller can decide how to handle.
+        //
+        // Previous behavior (pre-v2.0.0-rc.2): catch-all `clearToken()` on
+        // any error. Caused "click case → bounce to login" symptom because
+        // any non-auth query failure invalidated `currentUser`, refetch
+        // ran, case_get parse error here bubbled to this catch, session
+        // was cleared, and RequireAuth redirected to login.
+        const code = (err as { code?: string })?.code;
+        if (code === "Unauthorized") {
+          clearToken();
+          return null;
+        }
+        throw err;
       }
     },
     // Retry once in case of transient IPC hiccup; don't retry on auth errors

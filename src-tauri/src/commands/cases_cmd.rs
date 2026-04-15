@@ -30,29 +30,38 @@ const DEFAULT_OFFSET: i64 = 0;
 ///
 /// `limit` defaults to 100, `offset` defaults to 0.
 /// Ordered by `created_at DESC`.
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub async fn cases_list(
     token: String,
     limit: Option<i64>,
     offset: Option<i64>,
     state: State<'_, Arc<AppState>>,
 ) -> Result<Vec<CaseSummary>, AppError> {
+    info!(command = "cases_list", token_prefix = %token.chars().take(8).collect::<String>(), "cases_list entered");
     // MUST-DO 3 — session guard first
-    let _session = require_session(&state, &token)?;
+    let session = require_session(&state, &token);
+    info!(command = "cases_list", session_ok = session.is_ok(), "cases_list after require_session");
+    let _session = session?;
 
     let limit = limit.unwrap_or(DEFAULT_LIMIT);
     let offset = offset.unwrap_or(DEFAULT_OFFSET);
 
-    crate::db::cases::list_cases(&state.db.forensics, limit, offset).await
+    let result = crate::db::cases::list_cases(&state.db.forensics, limit, offset).await;
+    match &result {
+        Ok(rows) => info!(command = "cases_list", count = rows.len(), "cases_list success"),
+        Err(e) => info!(command = "cases_list", error = %e, "cases_list db error"),
+    }
+    result
 }
 
 /// Return a single case with its full metadata and sorted tag list.
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub async fn case_get(
     token: String,
     case_id: String,
     state: State<'_, Arc<AppState>>,
 ) -> Result<CaseDetail, AppError> {
+    info!(command = "case_get", case_id = %case_id, token_prefix = %token.chars().take(8).collect::<String>(), "case_get entered");
     // MUST-DO 3 — session guard first
     let _session = require_session(&state, &token)?;
 
@@ -65,7 +74,7 @@ pub async fn case_get(
 /// collision (deliberate v2 strict-insert policy).
 ///
 /// Logs `CASE_CREATED` to the case audit trail.
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub async fn case_create(
     token: String,
     input: CaseInput,
@@ -98,7 +107,7 @@ pub async fn case_create(
 ///
 /// Returns `AppError::CaseNotFound` if `case_id` doesn't exist.
 /// Logs `CASE_UPDATED` to the case audit trail.
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub async fn case_update(
     token: String,
     case_id: String,
@@ -136,7 +145,7 @@ pub async fn case_update(
 ///
 /// Logs `CASE_DELETED` to the auth audit trail (case audit file no longer
 /// exists after deletion).
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub async fn case_delete(
     token: String,
     case_id: String,

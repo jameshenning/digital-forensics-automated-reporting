@@ -17,7 +17,7 @@ use crate::{
     state::AppState,
 };
 
-/// wire: { session_token: string } -> SecurityPostureInfo
+/// wire: { token: string } -> SecurityPostureInfo
 ///
 /// SEC-1 SHOULD-DO 6: surface key-source and MFA status to the UI so the
 /// user can be warned if they're running with the less-secure file fallback.
@@ -34,15 +34,15 @@ pub struct SecurityPostureInfo {
     pub recovery_codes_remaining: u32,
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub async fn settings_get_security_posture(
-    session_token: String,
+    token: String,
     state: State<'_, Arc<AppState>>,
 ) -> Result<SecurityPostureInfo, AppError> {
     info!(command = "settings_get_security_posture");
 
     // MUST-DO 3: session guard.
-    let session = require_session(&state, &session_token)?;
+    let session = require_session(&state, &token)?;
     let username = session.username;
 
     let user = auth::get_user(&state.db.auth, &username)
@@ -63,4 +63,23 @@ pub async fn settings_get_security_posture(
         mfa_enabled: user.mfa_active(),
         recovery_codes_remaining: recovery_remaining,
     })
+}
+
+/// Frontend → Rust tracing bridge.
+///
+/// No session guard — this is purely diagnostic. The frontend forwards
+/// `window.onerror`, `unhandledrejection`, and manual debug trace points
+/// here so we can see all frontend errors in the rolling Rust log file
+/// without needing devtools access.
+#[tauri::command(rename_all = "snake_case")]
+pub async fn debug_log_frontend(
+    level: String,
+    message: String,
+) -> Result<(), AppError> {
+    match level.as_str() {
+        "error" => tracing::error!(source = "frontend", "{}", message),
+        "warn"  => tracing::warn!(source = "frontend", "{}", message),
+        _       => tracing::info!(source = "frontend", "{}", message),
+    }
+    Ok(())
 }

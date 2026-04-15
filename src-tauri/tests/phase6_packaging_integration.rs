@@ -113,6 +113,7 @@ async fn build_test_state() -> (Arc<AppState>, SqlitePool) {
         config: AppConfig::default(),
         config_path: std::path::PathBuf::new(),
         agent_zero: AgentZeroState::new(),
+        osint_consent_runtime: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
     });
     (state, auth_pool)
 }
@@ -252,7 +253,7 @@ async fn test_check_for_updates_valid_token_returns_not_configured() {
     let json = serde_json::to_string(&result)
         .expect("UpdateCheckResult must be JSON-serializable");
     assert!(json.contains("NotConfigured"), "JSON should contain 'NotConfigured': {json}");
-    assert!(json.contains("availableVersion"), "JSON should use camelCase field: {json}");
+    assert!(json.contains("available_version"), "JSON should use snake_case field: {json}");
 
     // Confirm the session guard still rejects an empty token so we know the
     // guard is exercised even if AppHandle is mocked away.

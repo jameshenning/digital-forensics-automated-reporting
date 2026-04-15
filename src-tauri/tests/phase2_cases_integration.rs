@@ -322,6 +322,7 @@ async fn build_state() -> (Arc<AppState>, SqlitePool) {
         config: dfars_desktop_lib::config::AppConfig::default(),
         config_path: std::path::PathBuf::new(),
         agent_zero: dfars_desktop_lib::agent_zero::AgentZeroState::new(),
+        osint_consent_runtime: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
     });
 
     (state, forensics_pool)

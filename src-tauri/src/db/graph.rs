@@ -71,6 +71,9 @@ pub struct GraphFilter {
 // ─── Timeline types ───────────────────────────────────────────────────────────
 
 /// A single item on the crime-line timeline.
+///
+/// Datetime fields are `String` for v1 compat — see `db::cases::Case`. Internal
+/// range filtering parses back via `parse_loose_datetime` below.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TimelineItem {
     /// Namespaced id, e.g. `"event:42"` or `"auto:evidence:EV-001"`.
@@ -79,13 +82,31 @@ pub struct TimelineItem {
     pub group: String,
     /// Display text shown in the timeline widget.
     pub content: String,
-    pub start: NaiveDateTime,
-    pub end: Option<NaiveDateTime>,
+    pub start: String,
+    pub end: Option<String>,
     pub category: Option<String>,
     /// `"investigator"` (authored) or `"auto"` (system-derived).
     pub source_type: String,
     /// The source table name.
     pub source_table: String,
+}
+
+/// Parse a datetime string tolerantly. Handles:
+///   - ISO 8601 with T separator: `"2026-04-11T12:34:56"` or with fractional seconds
+///   - v1 space-separated format: `"2026-04-11 12:34:56"` or with fractional seconds
+///   - Date-only: `"2026-04-11"` (treated as midnight)
+///
+/// Returns `None` if no format matches — caller decides what to do with unparseable values.
+pub fn parse_loose_datetime(s: &str) -> Option<NaiveDateTime> {
+    NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S%.f")
+        .or_else(|_| NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S"))
+        .or_else(|_| NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S%.f"))
+        .or_else(|_| NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S"))
+        .or_else(|_| {
+            chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d")
+                .map(|d| d.and_hms_opt(0, 0, 0).unwrap())
+        })
+        .ok()
 }
 
 /// A lane/group definition for the vis-timeline widget.
@@ -103,12 +124,19 @@ pub struct TimelinePayload {
 }
 
 /// Date-range filter for `build_crime_line`.
+///
+/// `start` and `end` are ISO datetime strings (as produced by the
+/// HTML `datetime-local` input: `"2026-04-14T14:30"` or `"2026-04-14T14:30:00"`).
+/// `None` means no bound on that side.  The strings are parsed via
+/// `parse_loose_datetime` when the filter is applied, so partial formats are
+/// accepted.  Using `String` here avoids serde breakage on HH:MM-only values
+/// that chrono's `NaiveDateTime` Deserialize impl would reject.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TimelineFilter {
     /// Inclusive lower bound. `None` → no lower bound.
-    pub start: Option<NaiveDateTime>,
+    pub start: Option<String>,
     /// Inclusive upper bound. `None` → no upper bound.
-    pub end: Option<NaiveDateTime>,
+    pub end: Option<String>,
 }
 
 // ─── Internal row types (sqlx::FromRow, not exported) ───────────────────────
@@ -270,13 +298,28 @@ pub async fn build_crime_line(
 ) -> Result<TimelinePayload, AppError> {
     let mut items: Vec<TimelineItem> = Vec::new();
 
-    let in_range = |dt: NaiveDateTime| -> bool {
-        if let Some(start) = filter.start {
+    // Pre-parse the filter bounds once (outside the closure) so we don't
+    // re-parse on every item.  Unparseable filter strings are treated as
+    // absent bounds — conservative: show everything rather than show nothing.
+    let filter_start: Option<NaiveDateTime> =
+        filter.start.as_deref().and_then(parse_loose_datetime);
+    let filter_end: Option<NaiveDateTime> =
+        filter.end.as_deref().and_then(parse_loose_datetime);
+
+    // in_range takes a String datetime (v1 compat) and parses it against the
+    // filter bounds. Values that fail to parse are EXCLUDED (conservative:
+    // we don't know where they belong, so skip).
+    let in_range = |dt_str: &str| -> bool {
+        let dt = match parse_loose_datetime(dt_str) {
+            Some(d) => d,
+            None => return false,
+        };
+        if let Some(start) = filter_start {
             if dt < start {
                 return false;
             }
         }
-        if let Some(end) = filter.end {
+        if let Some(end) = filter_end {
             if dt > end {
                 return false;
             }
@@ -290,8 +333,8 @@ pub async fn build_crime_line(
         struct EvRow {
             event_id: i64,
             title: String,
-            event_datetime: NaiveDateTime,
-            event_end_datetime: Option<NaiveDateTime>,
+            event_datetime: String,
+            event_end_datetime: Option<String>,
             category: Option<String>,
         }
 
@@ -305,7 +348,7 @@ pub async fn build_crime_line(
         .await?;
 
         for r in rows {
-            if in_range(r.event_datetime) {
+            if in_range(&r.event_datetime) {
                 items.push(TimelineItem {
                     id: format!("event:{}", r.event_id),
                     group: "events".into(),
@@ -326,7 +369,7 @@ pub async fn build_crime_line(
         struct EvRow {
             evidence_id: String,
             description: String,
-            collection_datetime: NaiveDateTime,
+            collection_datetime: String,
         }
 
         let rows: Vec<EvRow> = sqlx::query_as::<_, EvRow>(
@@ -339,7 +382,7 @@ pub async fn build_crime_line(
         .await?;
 
         for r in rows {
-            if in_range(r.collection_datetime) {
+            if in_range(&r.collection_datetime) {
                 items.push(TimelineItem {
                     id: format!("auto:evidence:{}", r.evidence_id),
                     group: "evidence".into(),
@@ -362,7 +405,7 @@ pub async fn build_crime_line(
             action: String,
             from_party: String,
             to_party: String,
-            custody_datetime: NaiveDateTime,
+            custody_datetime: String,
         }
 
         let rows: Vec<CocRow> = sqlx::query_as::<_, CocRow>(
@@ -376,7 +419,7 @@ pub async fn build_crime_line(
         .await?;
 
         for r in rows {
-            if in_range(r.custody_datetime) {
+            if in_range(&r.custody_datetime) {
                 items.push(TimelineItem {
                     id: format!("auto:custody:{}", r.custody_id),
                     group: "custody".into(),
@@ -398,7 +441,7 @@ pub async fn build_crime_line(
             hash_id: i64,
             algorithm: String,
             verified_by: String,
-            verification_datetime: NaiveDateTime,
+            verification_datetime: String,
         }
 
         let rows: Vec<HashRow> = sqlx::query_as::<_, HashRow>(
@@ -412,7 +455,7 @@ pub async fn build_crime_line(
         .await?;
 
         for r in rows {
-            if in_range(r.verification_datetime) {
+            if in_range(&r.verification_datetime) {
                 items.push(TimelineItem {
                     id: format!("auto:hash:{}", r.hash_id),
                     group: "hashes".into(),
@@ -435,7 +478,7 @@ pub async fn build_crime_line(
             tool_name: String,
             version: Option<String>,
             purpose: String,
-            execution_datetime: NaiveDateTime,
+            execution_datetime: String,
         }
 
         let rows: Vec<ToolRow> = sqlx::query_as::<_, ToolRow>(
@@ -448,7 +491,7 @@ pub async fn build_crime_line(
         .await?;
 
         for r in rows {
-            if in_range(r.execution_datetime) {
+            if in_range(&r.execution_datetime) {
                 let version_or_empty = r.version.as_deref().unwrap_or("");
                 items.push(TimelineItem {
                     id: format!("auto:tool:{}", r.tool_id),
@@ -471,7 +514,7 @@ pub async fn build_crime_line(
             note_id: i64,
             category: String,
             finding: String,
-            created_at: NaiveDateTime,
+            created_at: String,
         }
 
         let rows: Vec<NoteRow> = sqlx::query_as::<_, NoteRow>(
@@ -484,7 +527,7 @@ pub async fn build_crime_line(
         .await?;
 
         for r in rows {
-            if in_range(r.created_at) {
+            if in_range(&r.created_at) {
                 // Truncate finding to 100 chars for the content field
                 let finding_truncated: String = r.finding.chars().take(100).collect();
                 items.push(TimelineItem {
@@ -501,8 +544,18 @@ pub async fn build_crime_line(
         }
     }
 
-    // Sort all items by start ASC
-    items.sort_by_key(|item| item.start);
+    // Sort all items by start ASC. Parse both sides to handle mixed v1/v2
+    // format values consistently; items that fail to parse sort to the end.
+    items.sort_by(|a, b| {
+        let pa = parse_loose_datetime(&a.start);
+        let pb = parse_loose_datetime(&b.start);
+        match (pa, pb) {
+            (Some(x), Some(y)) => x.cmp(&y),
+            (Some(_), None) => std::cmp::Ordering::Less,
+            (None, Some(_)) => std::cmp::Ordering::Greater,
+            (None, None) => std::cmp::Ordering::Equal,
+        }
+    });
 
     // Hardcoded stable groups (order matches v1's group list)
     let groups = vec![

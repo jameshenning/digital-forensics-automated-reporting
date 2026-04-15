@@ -32,9 +32,15 @@ pub struct AgentZeroSettings {
     pub url: Option<String>,
     pub api_key_set: bool,
     pub allow_custom_url: bool,
+    /// Serialized as "port" to match the TS AgentZeroSettings interface.
+    #[serde(rename = "port")]
     pub axum_port: u16,
     pub bind_host: String,
     pub allow_network_bind: bool,
+    /// Derived field: true when both url and api_key are set.
+    pub is_configured: bool,
+    /// Mirror of config.shown_ai_summarize_consent — used by AI consent dialog.
+    pub shown_ai_summarize_consent: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -69,24 +75,28 @@ pub struct SmtpInput {
 
 // ─── Agent Zero settings ──────────────────────────────────────────────────────
 
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub async fn settings_get_agent_zero(
     token: String,
     state: State<'_, Arc<AppState>>,
 ) -> Result<AgentZeroSettings, AppError> {
     require_session(&state, &token)?;
     let cfg = &state.config;
+    let api_key_set = cfg.agent_zero_api_key_encrypted.is_some();
+    let is_configured = cfg.agent_zero_url.is_some() && api_key_set;
     Ok(AgentZeroSettings {
         url: cfg.agent_zero_url.clone(),
-        api_key_set: cfg.agent_zero_api_key_encrypted.is_some(),
+        api_key_set,
         allow_custom_url: cfg.allow_custom_agent_zero_url,
         axum_port: cfg.axum_port,
         bind_host: cfg.bind_host.clone(),
         allow_network_bind: cfg.allow_network_bind,
+        is_configured,
+        shown_ai_summarize_consent: cfg.shown_ai_summarize_consent,
     })
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub async fn settings_set_agent_zero(
     token: String,
     input: AgentZeroInput,
@@ -147,7 +157,7 @@ pub async fn settings_set_agent_zero(
     Ok(())
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub async fn settings_test_agent_zero(
     token: String,
     state: State<'_, Arc<AppState>>,
@@ -163,7 +173,7 @@ pub async fn settings_test_agent_zero(
 
 // ─── SMTP settings ────────────────────────────────────────────────────────────
 
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub async fn settings_get_smtp(
     token: String,
     state: State<'_, Arc<AppState>>,
@@ -179,7 +189,7 @@ pub async fn settings_get_smtp(
     })
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub async fn settings_set_smtp(
     token: String,
     input: SmtpInput,
@@ -213,7 +223,7 @@ pub async fn settings_set_smtp(
     Ok(())
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub async fn settings_test_smtp(
     token: String,
     to_address: String,
@@ -238,7 +248,7 @@ pub async fn settings_test_smtp(
 /// SEC-4 MUST-DO 8: sets `shown_ai_summarize_consent = true` in `config.json`.
 /// After this, `ai_summarize_case` will proceed without returning
 /// `AppError::AiSummarizeConsentRequired`.
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub async fn settings_acknowledge_ai_consent(
     token: String,
     state: State<'_, Arc<AppState>>,
@@ -255,6 +265,38 @@ pub async fn settings_acknowledge_ai_consent(
         &format!("user:{}", session.username),
         audit::SETTINGS_CHANGED,
         "ai_summarize_case consent acknowledged",
+    );
+
+    Ok(())
+}
+
+/// Acknowledge the separate OSINT consent banner.
+///
+/// Sets `shown_ai_osint_consent = true` in config.json AND flips the
+/// runtime atomic on `AppState` so subsequent `ai_osint_person` calls can
+/// proceed without restarting the app. Distinct from the AI summarize
+/// consent because OSINT sends PII to external sources and is a
+/// meaningfully different decision to make.
+#[tauri::command(rename_all = "snake_case")]
+pub async fn settings_acknowledge_osint_consent(
+    token: String,
+    state: State<'_, Arc<AppState>>,
+) -> Result<(), AppError> {
+    let session = require_session(&state, &token)?;
+
+    let mut cfg = state.config.clone();
+    cfg.shown_ai_osint_consent = true;
+    let config_path = state.config_path.clone();
+    config::save(&config_path, &cfg)?;
+
+    // Flip the runtime atomic so the current process sees the change.
+    state.set_osint_consent_granted(true);
+
+    info!(username = %session.username, "OSINT consent acknowledged");
+    audit::log_auth(
+        &format!("user:{}", session.username),
+        audit::OSINT_CONSENT_ACKNOWLEDGED,
+        "ai_osint_person consent acknowledged",
     );
 
     Ok(())

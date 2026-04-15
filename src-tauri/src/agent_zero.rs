@@ -61,6 +61,10 @@ const TIMEOUT_SUMMARIZE:       Duration = Duration::from_secs(120);
 #[allow(dead_code)]
 const TIMEOUT_ANALYZE_EVIDENCE:Duration = Duration::from_secs(180);
 const TIMEOUT_FORENSIC_ANALYZE:Duration = Duration::from_secs(300);
+/// OSINT tier — Agent Zero may run SpiderFoot, Sherlock, theHarvester, and other
+/// Kali OSINT tools, which collectively can take up to 15 minutes. This is the
+/// longest-running endpoint we accept.
+const TIMEOUT_OSINT:           Duration = Duration::from_secs(900);
 const TIMEOUT_CONNECT:         Duration = Duration::from_secs(10);
 
 const LIMIT_ENHANCE:           usize = 16 * 1024;
@@ -69,6 +73,9 @@ const LIMIT_SUMMARIZE:         usize = 64 * 1024;
 #[allow(dead_code)]
 const LIMIT_ANALYZE_EVIDENCE:  usize = 128 * 1024;
 const LIMIT_FORENSIC_ANALYZE:  usize = 256 * 1024;
+/// OSINT results can be large (per-tool summaries + dozens of runs). 512 KiB
+/// is generous but bounded.
+const LIMIT_OSINT:             usize = 512 * 1024;
 
 // ─── Allowlist hosts ─────────────────────────────────────────────────────────
 
@@ -116,6 +123,56 @@ pub struct ForensicAnalysisResult {
     pub platforms_used: Vec<String>,
     pub status: String,
     pub error_message: Option<String>,
+}
+
+// ─── OSINT (Persons feature) ─────────────────────────────────────────────────
+
+/// Known fields about a person that Agent Zero can use as OSINT input.
+/// Every field is optional — Agent Zero decides which tools to run based on
+/// which inputs are present.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OsintPersonPayload {
+    pub name: String,
+    pub email: Option<String>,
+    pub phone: Option<String>,
+    pub username: Option<String>,
+    pub employer: Option<String>,
+    pub dob: Option<String>,
+    pub notes: Option<String>,
+}
+
+/// Request body for `dfars_osint_person`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OsintPersonRequest {
+    pub case_id: String,
+    pub person: OsintPersonPayload,
+    /// Minimum tool set Agent Zero MUST run if the required inputs are present.
+    pub tools_requested: Vec<String>,
+    /// If true, Agent Zero has discretion to run additional Kali OSINT tools
+    /// beyond `tools_requested` when it judges them useful.
+    pub discretion_allowed: bool,
+}
+
+/// One row per tool Agent Zero actually executed.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OsintToolRun {
+    pub tool_name: String,
+    pub version: Option<String>,
+    pub command_executed: Option<String>,
+    pub execution_datetime: Option<String>,
+    pub findings_summary: String,
+    pub raw_output_truncated: Option<String>,
+    pub output_file_stored_at: Option<String>,
+    pub success: bool,
+    pub error_message: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OsintPersonResponse {
+    /// "success" | "partial" | "failed"
+    pub status: String,
+    pub runs: Vec<OsintToolRun>,
+    pub notes: Option<String>,
 }
 
 // ─── Client ──────────────────────────────────────────────────────────────────
@@ -232,6 +289,39 @@ impl AgentZeroClient {
         let bytes = bounded_body(resp, LIMIT_FORENSIC_ANALYZE).await?;
         serde_json::from_slice(&bytes)
             .map_err(|e| AppError::Internal(format!("forensic_analyze parse failed: {e}")))
+    }
+
+    /// `dfars_osint_person` — Agent Zero OSINT orchestration. Sends a
+    /// person payload (name + optional known fields) and a minimum tool set;
+    /// Agent Zero decides which additional Kali OSINT tools to run and
+    /// returns structured results.
+    ///
+    /// HIGH DATA SENSITIVITY — PII (name / email / phone / username /
+    /// employer) is sent to Agent Zero which may forward it to external
+    /// OSINT data sources (LinkedIn, Shodan, public DNS, Sherlock's site
+    /// list, etc.). Caller MUST have checked `config.shown_ai_osint_consent`
+    /// before invoking.
+    ///
+    /// 900s timeout tier. Response body capped at 512 KiB.
+    pub async fn osint_person(
+        &self,
+        req: &OsintPersonRequest,
+    ) -> Result<OsintPersonResponse, AppError> {
+        info!(
+            action = audit::AI_OSINT_PERSON_CALLED,
+            case_id = %req.case_id,
+            tools_requested_count = req.tools_requested.len(),
+            discretion_allowed = req.discretion_allowed,
+            fields_sent = "person(name,email,phone,username,employer,dob,notes), tools_requested, discretion_allowed"
+        );
+        let body = serde_json::to_value(req)
+            .map_err(|e| AppError::Internal(format!("osint_person serialize failed: {e}")))?;
+        let resp = self
+            .post("dfars_osint_person", &body, TIMEOUT_OSINT)
+            .await?;
+        let bytes = bounded_body(resp, LIMIT_OSINT).await?;
+        serde_json::from_slice(&bytes)
+            .map_err(|e| AppError::Internal(format!("osint_person parse failed: {e}")))
     }
 
     // ─── Internal helpers ─────────────────────────────────────────────────────

@@ -215,6 +215,18 @@ impl SessionState {
     /// If the session has been inactive for more than 30 minutes, it is
     /// dropped and `AppError::Unauthorized` is returned.
     pub fn get_and_touch(&self, token: &str) -> Result<SessionData, AppError> {
+        self.get_and_touch_at(token, Instant::now())
+    }
+
+    /// Eviction-check core used by `get_and_touch`. Tests pass an explicit
+    /// `now` to simulate the 30-minute inactivity window by projecting FORWARD
+    /// from `last_activity`, which avoids a `Instant::now().checked_sub(31min)`
+    /// underflow on Windows immediately after boot.
+    pub(crate) fn get_and_touch_at(
+        &self,
+        token: &str,
+        now: Instant,
+    ) -> Result<SessionData, AppError> {
         let mut sessions = self
             .sessions
             .write()
@@ -223,7 +235,6 @@ impl SessionState {
         match sessions.get_mut(token) {
             None => Err(AppError::Unauthorized),
             Some(data) => {
-                let now = Instant::now();
                 if now.duration_since(data.last_activity) > INACTIVITY_TIMEOUT {
                     let username = data.username.clone();
                     sessions.remove(token);
@@ -358,39 +369,33 @@ mod tests {
     /// Deliverable 8 (SEC-1): Session inactive for >30 minutes must be evicted
     /// and `require_session` must return `Unauthorized`.
     ///
-    /// We backdate `last_activity` directly via the `pub(crate) sessions` field
-    /// to avoid sleeping 30 minutes in a test.
+    /// We project a synthetic `now` 31 minutes AFTER the session's
+    /// `last_activity` via `get_and_touch_at`. This avoids the Windows trap
+    /// where `Instant::now().checked_sub(31min)` underflows on fresh boot
+    /// because the monotonic clock is younger than 31 minutes.
     #[test]
     fn expired_session_evicted_after_30_min_inactivity() {
-        use std::time::{Duration, Instant};
-
-        // Test SessionState directly (require_session only delegates to
-        // get_and_touch + status check). Building a full AppState for a
-        // pure timing test would need an async tokio runtime we don't need.
+        use std::time::Duration;
 
         let ss = make_sessions();
         let token = ss.create_verified("alice");
 
-        // Backdate last_activity to 31 minutes ago.
-        {
-            let stale = Instant::now()
-                .checked_sub(Duration::from_secs(31 * 60))
-                .expect("31min before now must not underflow on 64-bit");
+        // Read the real last_activity that create_verified just stamped, then
+        // project a future now = last_activity + 31min. Forward projection is
+        // always representable on a 64-bit Instant.
+        let future_now = {
+            let map = ss.sessions.read().expect("read lock");
+            let data = map.get(&token).expect("session must exist");
+            data.last_activity + Duration::from_secs(31 * 60)
+        };
 
-            let mut map = ss.sessions.write().expect("write lock");
-            if let Some(data) = map.get_mut(&token) {
-                data.last_activity = stale;
-            }
-        }
-
-        // get_and_touch must evict the session and return Unauthorized.
-        let result = ss.get_and_touch(&token);
+        let result = ss.get_and_touch_at(&token, future_now);
         assert!(
             matches!(result, Err(crate::error::AppError::Unauthorized)),
             "session inactive >30min must return Unauthorized, got {result:?}"
         );
 
-        // Must be evicted from the map.
+        // Must be evicted from the map — second lookup also fails (real now).
         assert!(
             ss.get_and_touch(&token).is_err(),
             "evicted session must not be retrievable"

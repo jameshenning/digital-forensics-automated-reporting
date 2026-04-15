@@ -28,7 +28,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert";
 
-export const Route = createFileRoute("/case/$caseId/edit")({
+export const Route = createFileRoute("/case/$caseId_/edit")({
   beforeLoad: requireAuthBeforeLoad,
   component: EditCasePage,
 });

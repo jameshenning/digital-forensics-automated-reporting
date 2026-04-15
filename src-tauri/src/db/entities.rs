@@ -20,7 +20,7 @@
 ///   - display_name: 1–200 chars, required
 ///   - parent_entity_id: must exist in same case, no self-loop, no cycle
 ///   - metadata_json: must be valid JSON if provided
-use chrono::NaiveDateTime;
+// NaiveDateTime no longer needed — `created_at` / `updated_at` are Strings.
 use serde::{Deserialize, Serialize};
 use sqlx::{sqlite::Sqlite, SqlitePool, Transaction};
 
@@ -46,6 +46,13 @@ const MAX_PARENT_DEPTH: usize = 50;
 // ─── Public data types ────────────────────────────────────────────────────────
 
 /// Full entity row, maps 1:1 to the `entities` table.
+/// `created_at`/`updated_at` are `String` for v1 compat — see `db::cases::Case`.
+///
+/// The `photo_path`/`email`/`phone`/`username`/`employer`/`dob` columns
+/// were added in migration 0002 and are only meaningful when
+/// `entity_type = 'person'`. All are nullable — non-person rows leave them
+/// NULL. `photo_path` holds an absolute filesystem path to a file stored
+/// under `%APPDATA%\DFARS\person_photos\<case_id>\`.
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct Entity {
     pub entity_id: i64,
@@ -58,8 +65,15 @@ pub struct Entity {
     pub notes: Option<String>,
     pub metadata_json: Option<String>,
     pub is_deleted: i64,
-    pub created_at: NaiveDateTime,
-    pub updated_at: NaiveDateTime,
+    pub created_at: String,
+    pub updated_at: String,
+    // Person-specific columns (migration 0002) — NULL for non-person rows.
+    pub photo_path: Option<String>,
+    pub email: Option<String>,
+    pub phone: Option<String>,
+    pub username: Option<String>,
+    pub employer: Option<String>,
+    pub dob: Option<String>,
 }
 
 /// Writable fields for creating or updating an entity.
@@ -72,6 +86,20 @@ pub struct EntityInput {
     pub parent_entity_id: Option<i64>,
     pub notes: Option<String>,
     pub metadata_json: Option<String>,
+    // Person-specific inputs — ignored for non-person entity_types.
+    // `photo_path` is NOT set via this input; it's updated separately by
+    // the `person_photo_upload` command so the upload path owns the file
+    // lifecycle. Included here as `None` for struct symmetry only.
+    #[serde(default)]
+    pub email: Option<String>,
+    #[serde(default)]
+    pub phone: Option<String>,
+    #[serde(default)]
+    pub username: Option<String>,
+    #[serde(default)]
+    pub employer: Option<String>,
+    #[serde(default)]
+    pub dob: Option<String>,
 }
 
 // ─── Validation helpers ───────────────────────────────────────────────────────
@@ -230,12 +258,14 @@ pub async fn add_entity(
         r#"
         INSERT INTO entities (
             case_id, entity_type, display_name, subtype, organizational_rank,
-            parent_entity_id, notes, metadata_json
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            parent_entity_id, notes, metadata_json,
+            email, phone, username, employer, dob
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         RETURNING
             entity_id, case_id, entity_type, display_name, subtype,
             organizational_rank, parent_entity_id, notes, metadata_json,
-            is_deleted, created_at, updated_at
+            is_deleted, created_at, updated_at,
+            photo_path, email, phone, username, employer, dob
         "#,
     )
     .bind(case_id)
@@ -246,6 +276,11 @@ pub async fn add_entity(
     .bind(input.parent_entity_id)
     .bind(&input.notes)
     .bind(&input.metadata_json)
+    .bind(&input.email)
+    .bind(&input.phone)
+    .bind(&input.username)
+    .bind(&input.employer)
+    .bind(&input.dob)
     .fetch_one(pool)
     .await?;
 
@@ -258,7 +293,8 @@ pub async fn get_entity(pool: &SqlitePool, entity_id: i64) -> Result<Entity, App
         r#"
         SELECT entity_id, case_id, entity_type, display_name, subtype,
                organizational_rank, parent_entity_id, notes, metadata_json,
-               is_deleted, created_at, updated_at
+               is_deleted, created_at, updated_at,
+               photo_path, email, phone, username, employer, dob
         FROM entities
         WHERE entity_id = ?
         "#,
@@ -277,7 +313,8 @@ pub async fn list_for_case(pool: &SqlitePool, case_id: &str) -> Result<Vec<Entit
         r#"
         SELECT entity_id, case_id, entity_type, display_name, subtype,
                organizational_rank, parent_entity_id, notes, metadata_json,
-               is_deleted, created_at, updated_at
+               is_deleted, created_at, updated_at,
+               photo_path, email, phone, username, employer, dob
         FROM entities
         WHERE case_id = ? AND is_deleted = 0
         ORDER BY entity_type ASC, display_name ASC
@@ -332,12 +369,18 @@ pub async fn update_entity(
             parent_entity_id = ?,
             notes = ?,
             metadata_json = ?,
+            email = ?,
+            phone = ?,
+            username = ?,
+            employer = ?,
+            dob = ?,
             updated_at = CURRENT_TIMESTAMP
         WHERE entity_id = ? AND is_deleted = 0
         RETURNING
             entity_id, case_id, entity_type, display_name, subtype,
             organizational_rank, parent_entity_id, notes, metadata_json,
-            is_deleted, created_at, updated_at
+            is_deleted, created_at, updated_at,
+            photo_path, email, phone, username, employer, dob
         "#,
     )
     .bind(&input.entity_type)
@@ -347,6 +390,11 @@ pub async fn update_entity(
     .bind(input.parent_entity_id)
     .bind(&input.notes)
     .bind(&input.metadata_json)
+    .bind(&input.email)
+    .bind(&input.phone)
+    .bind(&input.username)
+    .bind(&input.employer)
+    .bind(&input.dob)
     .bind(entity_id)
     .fetch_optional(pool)
     .await?

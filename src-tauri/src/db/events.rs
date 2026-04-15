@@ -36,19 +36,20 @@ const DESCRIPTION_MAX_LEN: usize = 5000;
 // ─── Public data types ────────────────────────────────────────────────────────
 
 /// Full case_events row, maps 1:1 to the `case_events` table.
+/// Datetime fields are `String` for v1 compat — see `db::cases::Case`.
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct CaseEvent {
     pub event_id: i64,
     pub case_id: String,
     pub title: String,
     pub description: Option<String>,
-    pub event_datetime: NaiveDateTime,
-    pub event_end_datetime: Option<NaiveDateTime>,
+    pub event_datetime: String,
+    pub event_end_datetime: Option<String>,
     pub category: Option<String>,
     pub related_entity_id: Option<i64>,
     pub related_evidence_id: Option<String>,
     pub is_deleted: i64,
-    pub created_at: NaiveDateTime,
+    pub created_at: String,
 }
 
 /// Writable fields for creating or updating a case event.

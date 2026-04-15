@@ -24,11 +24,13 @@ use crate::{
         analysis,
         cases,
         custody,
+        entities,
         evidence as evidence_db,
         hashes,
         tools,
     },
     error::AppError,
+    forensic_tools,
     state::AppState,
 };
 
@@ -116,11 +118,28 @@ struct ReportPayload {
     classification: Option<String>,
     tags: Vec<String>,
     evidence_items: Vec<EvidenceReport>,
+    persons: Vec<PersonReport>,
     all_custody: Vec<CustodyReport>,
     all_hashes: Vec<HashReport>,
     all_tools: Vec<ToolReport>,
     analysis_notes: Vec<AnalysisReport>,
     generated_at: String,
+}
+
+#[allow(dead_code)]
+struct PersonReport {
+    entity_id: i64,
+    display_name: String,
+    subtype: Option<String>,
+    organizational_rank: Option<String>,
+    email: Option<String>,
+    phone: Option<String>,
+    username: Option<String>,
+    employer: Option<String>,
+    dob: Option<String>,
+    notes: Option<String>,
+    /// Extracted from entity.metadata_json.osint_findings[].tool_name if present.
+    osint_tools_run: Vec<String>,
 }
 
 #[allow(dead_code)]
@@ -163,8 +182,11 @@ struct ToolReport {
     version: Option<String>,
     purpose: String,
     command_used: Option<String>,
+    input_file: Option<String>,
     output_file: Option<String>,
     execution_datetime: String,
+    operator: String,
+    evidence_id: Option<String>,
 }
 
 #[allow(dead_code)]
@@ -198,7 +220,7 @@ async fn gather_report_payload(
                 from_party: c.from_party.clone(),
                 to_party: c.to_party.clone(),
                 location: c.location.clone(),
-                custody_datetime: c.custody_datetime.format("%Y-%m-%d %H:%M:%S").to_string(),
+                custody_datetime: c.custody_datetime.clone(),
                 purpose: c.purpose.clone(),
                 notes: c.notes.clone(),
             });
@@ -211,9 +233,7 @@ async fn gather_report_payload(
                 algorithm: h.algorithm.clone(),
                 hash_value: h.hash_value.clone(),
                 verified_by: h.verified_by.clone(),
-                verification_datetime: h.verification_datetime
-                    .format("%Y-%m-%d %H:%M:%S")
-                    .to_string(),
+                verification_datetime: h.verification_datetime.clone(),
                 notes: h.notes.clone(),
             });
         }
@@ -227,8 +247,11 @@ async fn gather_report_payload(
             version: t.version.clone(),
             purpose: t.purpose.clone(),
             command_used: t.command_used.clone(),
+            input_file: t.input_file.clone(),
             output_file: t.output_file.clone(),
-            execution_datetime: t.execution_datetime.format("%Y-%m-%d %H:%M:%S").to_string(),
+            execution_datetime: t.execution_datetime.clone(),
+            operator: t.operator.clone(),
+            evidence_id: t.evidence_id.clone(),
         })
         .collect();
 
@@ -250,12 +273,50 @@ async fn gather_report_payload(
             evidence_id: e.evidence_id.clone(),
             description: e.description.clone(),
             collected_by: e.collected_by.clone(),
-            collection_datetime: e.collection_datetime
-                .format("%Y-%m-%d %H:%M:%S")
-                .to_string(),
+            collection_datetime: e.collection_datetime.clone(),
             location: e.location.clone(),
             status: e.status.clone(),
             evidence_type: e.evidence_type.clone(),
+        })
+        .collect();
+
+    // Persons — filter entities to entity_type = 'person'
+    let entity_list = entities::list_for_case(&state.db.forensics, case_id).await?;
+    let persons: Vec<PersonReport> = entity_list
+        .into_iter()
+        .filter(|e| e.entity_type == "person")
+        .map(|p| {
+            // Extract OSINT tool names from metadata_json.osint_findings[] if present.
+            let osint_tools_run: Vec<String> = p
+                .metadata_json
+                .as_deref()
+                .and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok())
+                .and_then(|v| v.get("osint_findings").cloned())
+                .and_then(|v| v.as_array().cloned())
+                .map(|arr| {
+                    arr.into_iter()
+                        .filter_map(|f| {
+                            f.get("tool_name")
+                                .and_then(|t| t.as_str())
+                                .map(|s| s.to_string())
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+
+            PersonReport {
+                entity_id: p.entity_id,
+                display_name: p.display_name,
+                subtype: p.subtype,
+                organizational_rank: p.organizational_rank,
+                email: p.email,
+                phone: p.phone,
+                username: p.username,
+                employer: p.employer,
+                dob: p.dob,
+                notes: p.notes,
+                osint_tools_run,
+            }
         })
         .collect();
 
@@ -265,13 +326,18 @@ async fn gather_report_payload(
         description: case.description.clone(),
         investigator: case.investigator.clone(),
         agency: case.agency.clone(),
-        start_date: case.start_date.format("%Y-%m-%d").to_string(),
-        end_date: case.end_date.map(|d| d.format("%Y-%m-%d").to_string()),
+        // start_date / end_date are now Strings from the DB (v1-compat).
+        // Pass them through verbatim — the report is a text document and the
+        // frontend display code already handles both `YYYY-MM-DD` and the
+        // v1 space-separated datetime format for rendering.
+        start_date: case.start_date.clone(),
+        end_date: case.end_date.clone(),
         status: case.status.clone(),
         priority: case.priority.clone(),
         classification: case.classification.clone(),
         tags: case_detail.tags.clone(),
         evidence_items,
+        persons,
         all_custody,
         all_hashes,
         all_tools,
@@ -347,6 +413,9 @@ fn render_markdown(p: &ReportPayload) -> Result<String, AppError> {
     out.push_str("## Table of Contents\n");
     out.push_str("- [Case Overview](#case-overview)\n");
     out.push_str("- [Evidence Log](#evidence-log)\n");
+    if !p.persons.is_empty() {
+        out.push_str("- [Persons](#persons)\n");
+    }
     out.push_str("- [Analysis Findings](#analysis-findings)\n");
     out.push_str("- [Chain of Custody](#chain-of-custody)\n");
     out.push_str("- [Hash Verification](#hash-verification)\n");
@@ -371,6 +440,73 @@ fn render_markdown(p: &ReportPayload) -> Result<String, AppError> {
         ));
     }
     out.push('\n');
+
+    // ── Persons ───────────────────────────────────────────────────────────────
+    //
+    // Listed individually with their known profile fields and an OSINT run
+    // count. OSINT tool narratives themselves appear in the Tool Usage section
+    // below — each `ai_osint_person` run inserts one `tool_usage` row.
+    if !p.persons.is_empty() {
+        out.push_str("## Persons\n\n");
+        out.push_str(
+            "The following persons are identified in this case (suspects, \
+             victims, witnesses, investigators, and persons of interest). Their \
+             OSINT investigation runs, if any, appear in the Tool Usage section \
+             below with full per-tool narratives.\n\n",
+        );
+
+        for (i, person) in p.persons.iter().enumerate() {
+            let role = match person.subtype.as_deref() {
+                Some(s) => format!(" — {}", s),
+                None => String::new(),
+            };
+            out.push_str(&format!(
+                "### {}. {}{}\n\n",
+                i + 1,
+                esc_md(&person.display_name),
+                esc_md(&role)
+            ));
+
+            if let Some(title) = &person.organizational_rank {
+                out.push_str(&format!("- **Title / rank**: {}\n", esc_md(title)));
+            }
+            if let Some(employer) = &person.employer {
+                out.push_str(&format!("- **Employer**: {}\n", esc_md(employer)));
+            }
+            if let Some(email) = &person.email {
+                out.push_str(&format!("- **Email**: {}\n", esc_md(email)));
+            }
+            if let Some(phone) = &person.phone {
+                out.push_str(&format!("- **Phone**: {}\n", esc_md(phone)));
+            }
+            if let Some(username) = &person.username {
+                out.push_str(&format!(
+                    "- **Handle / username**: `{}`\n",
+                    esc_md(username)
+                ));
+            }
+            if let Some(dob) = &person.dob {
+                out.push_str(&format!("- **Date of birth**: {}\n", esc_md(dob)));
+            }
+
+            if !person.osint_tools_run.is_empty() {
+                out.push_str(&format!(
+                    "- **OSINT runs executed**: {} — {} (see **Tool Usage** for full narrative)\n",
+                    person.osint_tools_run.len(),
+                    esc_md(&person.osint_tools_run.join(", "))
+                ));
+            } else {
+                out.push_str("- **OSINT runs executed**: none\n");
+            }
+
+            if let Some(notes) = &person.notes {
+                if !notes.trim().is_empty() {
+                    out.push_str(&format!("\n**Notes**:\n\n{}\n", esc_md(notes)));
+                }
+            }
+            out.push_str("\n---\n\n");
+        }
+    }
 
     // ── Analysis Findings ─────────────────────────────────────────────────────
     out.push_str("## Analysis Findings\n\n");
@@ -436,19 +572,167 @@ fn render_markdown(p: &ReportPayload) -> Result<String, AppError> {
 
     // ── Tool Usage ────────────────────────────────────────────────────────────
     out.push_str("## Tool Usage\n\n");
-    out.push_str("| Tool | Version | Purpose | Command/Usage | Output File |\n");
-    out.push_str("|------|---------|---------|---------------|-------------|\n");
-    for t in &p.all_tools {
+    out.push_str(
+        "The following forensic tools were used during the examination. \
+         For each tool, this section documents what the tool is, the \
+         case-specific purpose and command, the types of findings the tool \
+         typically produces, its forensic significance, and its relationship \
+         to other tools in this case's investigation chain. This is intended \
+         to make the tool selection and results intelligible to attorneys, \
+         judges, and opposing experts without requiring separate forensic \
+         expertise.\n\n",
+    );
+
+    // Summary table first — for at-a-glance review
+    out.push_str("### Summary table\n\n");
+    out.push_str("| # | Tool | Category | Version | Operator | Date/time | Scope |\n");
+    out.push_str("|---|------|----------|---------|----------|-----------|-------|\n");
+    for (i, t) in p.all_tools.iter().enumerate() {
+        let kb = forensic_tools::lookup(&t.tool_name);
+        let name = kb.map(|k| k.name).unwrap_or(&t.tool_name);
+        let category = kb.map(|k| k.category.label()).unwrap_or("(not in KB)");
+        let scope = t
+            .evidence_id
+            .as_deref()
+            .map(|e| format!("Evidence {e}"))
+            .unwrap_or_else(|| "Case-wide".to_string());
         out.push_str(&format!(
-            "| {} | {} | {} | {} | {} |\n",
-            esc_md(&t.tool_name),
+            "| {} | {} | {} | {} | {} | {} | {} |\n",
+            i + 1,
+            esc_md(name),
+            esc_md(category),
             esc_md(t.version.as_deref().unwrap_or("")),
-            esc_md(&t.purpose),
-            esc_md(t.command_used.as_deref().unwrap_or("")),
-            esc_md(t.output_file.as_deref().unwrap_or("")),
+            esc_md(&t.operator),
+            esc_md(&t.execution_datetime),
+            esc_md(&scope),
         ));
     }
     out.push('\n');
+
+    // Collect case tool names for dependency chaining
+    let case_tool_names: Vec<String> =
+        p.all_tools.iter().map(|t| t.tool_name.clone()).collect();
+
+    // Per-tool narrative sections
+    for (i, t) in p.all_tools.iter().enumerate() {
+        let kb = forensic_tools::lookup(&t.tool_name);
+        let display_name = kb.map(|k| k.name).unwrap_or(&t.tool_name);
+
+        out.push_str(&format!(
+            "### {}. {}\n\n",
+            i + 1,
+            esc_md(display_name)
+        ));
+
+        // Header facts
+        if let Some(k) = kb {
+            out.push_str(&format!("- **Category**: {}\n", k.category.label()));
+        } else {
+            out.push_str("- **Category**: Not in curated knowledge base\n");
+        }
+        if let Some(v) = &t.version {
+            out.push_str(&format!("- **Version used**: {}\n", esc_md(v)));
+        }
+        out.push_str(&format!("- **Operator**: {}\n", esc_md(&t.operator)));
+        out.push_str(&format!(
+            "- **Date/time executed**: {}\n",
+            esc_md(&t.execution_datetime)
+        ));
+        out.push_str(&format!(
+            "- **Evidence scope**: {}\n",
+            match &t.evidence_id {
+                Some(e) => format!("Evidence `{}`", esc_md(e)),
+                None => "Case-wide (not bound to a single evidence item)".to_string(),
+            }
+        ));
+        if let Some(k) = kb {
+            if let Some(r) = k.reference {
+                out.push_str(&format!("- **Reference**: {}\n", r));
+            }
+        }
+        out.push('\n');
+
+        // About the tool
+        out.push_str("**About the tool**\n\n");
+        if let Some(k) = kb {
+            out.push_str(k.description);
+            out.push_str("\n\n");
+        } else {
+            out.push_str(&format!(
+                "{} is not in the curated forensic-tools knowledge base. \
+                 See the operator-recorded purpose and command below for the \
+                 case-specific context of its use.\n\n",
+                esc_md(&t.tool_name)
+            ));
+        }
+
+        // What it was used for in this case
+        out.push_str("**What it was used for in this case**\n\n");
+        out.push_str(&t.purpose);
+        out.push_str("\n\n");
+        if let Some(cmd) = &t.command_used {
+            out.push_str("**Command executed**\n\n");
+            out.push_str("```\n");
+            out.push_str(cmd);
+            out.push_str("\n```\n\n");
+        }
+        if t.input_file.is_some() || t.output_file.is_some() {
+            if let Some(input) = &t.input_file {
+                out.push_str(&format!("- **Input file**: `{}`\n", esc_md(input)));
+            }
+            if let Some(output) = &t.output_file {
+                out.push_str(&format!("- **Output file**: `{}`\n", esc_md(output)));
+            }
+            out.push('\n');
+        }
+
+        // Typical findings (KB)
+        if let Some(k) = kb {
+            if !k.typical_findings.is_empty() {
+                out.push_str("**What this tool typically finds**\n\n");
+                for f in k.typical_findings {
+                    out.push_str(&format!("- {}\n", f));
+                }
+                out.push('\n');
+            }
+
+            // Why it matters (KB)
+            out.push_str("**Why it matters**\n\n");
+            out.push_str(k.why_it_matters);
+            out.push_str("\n\n");
+
+            // Investigation chain resolved to case tools
+            let prereqs = forensic_tools::prerequisites_in_case(k, &case_tool_names);
+            let deps = forensic_tools::dependents_in_case(k, &case_tool_names);
+            if !prereqs.is_empty() || !deps.is_empty() {
+                out.push_str("**Investigation chain in this case**\n\n");
+                if !prereqs.is_empty() {
+                    let names: Vec<String> = prereqs
+                        .iter()
+                        .map(|(raw, kb)| {
+                            kb.map(|k| k.name.to_string()).unwrap_or_else(|| raw.clone())
+                        })
+                        .collect();
+                    out.push_str(&format!(
+                        "- **Consumes output from**: {}\n",
+                        names.join(", ")
+                    ));
+                }
+                if !deps.is_empty() {
+                    let names: Vec<String> = deps
+                        .iter()
+                        .map(|(raw, kb)| {
+                            kb.map(|k| k.name.to_string()).unwrap_or_else(|| raw.clone())
+                        })
+                        .collect();
+                    out.push_str(&format!("- **Feeds into**: {}\n", names.join(", ")));
+                }
+                out.push('\n');
+            }
+        }
+
+        out.push_str("---\n\n");
+    }
 
     // ── Conclusion ────────────────────────────────────────────────────────────
     out.push_str("## Conclusion\n\n");
@@ -469,6 +753,7 @@ fn render_markdown(p: &ReportPayload) -> Result<String, AppError> {
         "- **Total Evidence Items**: {}\n",
         p.evidence_items.len()
     ));
+    out.push_str(&format!("- **Total Persons**: {}\n", p.persons.len()));
     out.push_str(&format!(
         "- **Total Custody Events**: {}\n",
         p.all_custody.len()

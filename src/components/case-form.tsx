@@ -83,53 +83,62 @@ export function CaseForm({
         className="space-y-6"
         noValidate
       >
-        {/* Row 1: case_id + case_name */}
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-          <FormField
-            control={form.control}
-            name="case_id"
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel>
-                  Case ID <span aria-hidden="true">*</span>
-                </FormLabel>
-                <FormControl>
-                  <Input
-                    placeholder="e.g. CASE-2026-0042"
-                    {...field}
-                    readOnly={readonlyCaseId}
-                    disabled={readonlyCaseId}
-                    className={
-                      readonlyCaseId ? "bg-muted font-mono" : "font-mono"
-                    }
-                  />
-                </FormControl>
-                {readonlyCaseId && (
-                  <FormDescription>Immutable — cannot be changed.</FormDescription>
-                )}
-                <FormMessage />
-              </FormItem>
-            )}
-          />
-
-          <div className="sm:col-span-2">
-            <FormField
-              control={form.control}
-              name="case_name"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>
-                    Case Name <span aria-hidden="true">*</span>
-                  </FormLabel>
-                  <FormControl>
-                    <Input placeholder="Short descriptive name" {...field} />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
+        {/* Row 1: case_id alone — readonly in edit mode, clearly isolated */}
+        <FormField
+          control={form.control}
+          name="case_id"
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>
+                Case ID <span aria-hidden="true">*</span>
+              </FormLabel>
+              <FormControl>
+                <Input
+                  placeholder="e.g. CASE-2026-0042"
+                  {...field}
+                  readOnly={readonlyCaseId}
+                  disabled={readonlyCaseId}
+                  className={
+                    readonlyCaseId ? "bg-muted font-mono" : "font-mono"
+                  }
+                />
+              </FormControl>
+              {readonlyCaseId && (
+                <FormDescription>
+                  Immutable primary key — cannot be changed after a case is
+                  created. Chain-of-custody integrity.
+                </FormDescription>
               )}
-            />
-          </div>
-        </div>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+
+        {/* Row 2: case_name alone — always editable, clearly editable */}
+        <FormField
+          control={form.control}
+          name="case_name"
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>
+                Case Name <span aria-hidden="true">*</span>
+              </FormLabel>
+              <FormControl>
+                <Input
+                  placeholder="Short descriptive name"
+                  autoFocus={readonlyCaseId}
+                  {...field}
+                />
+              </FormControl>
+              {readonlyCaseId && (
+                <FormDescription>
+                  You can rename the case here. Case ID stays the same.
+                </FormDescription>
+              )}
+              <FormMessage />
+            </FormItem>
+          )}
+        />
 
         {/* Row 2: investigator + agency */}
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">

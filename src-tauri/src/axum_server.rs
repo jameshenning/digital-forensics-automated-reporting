@@ -441,6 +441,25 @@ async fn whoami(
 
 // ── Cases ──────────────────────────────────────────────────────────────────────
 
+/// HTTP-flat wrapper around `cases::CaseDetail`.
+///
+/// `cases::CaseDetail` serializes as `{"case": {...}, "tags": [...]}` (nested)
+/// for the Tauri IPC frontend. The external REST API consumers (Agent Zero,
+/// v1-compat clients) expect all Case fields at the top level alongside
+/// `tags`, so we flatten here just for HTTP responses.
+#[derive(Serialize)]
+struct FlatCaseDetail {
+    #[serde(flatten)]
+    case: cases::Case,
+    tags: Vec<String>,
+}
+
+impl From<cases::CaseDetail> for FlatCaseDetail {
+    fn from(d: cases::CaseDetail) -> Self {
+        Self { case: d.case, tags: d.tags }
+    }
+}
+
 async fn list_cases(
     State(state): State<Arc<AppState>>,
     Extension(_token): Extension<VerifiedToken>,
@@ -456,25 +475,25 @@ async fn create_case(
     State(state): State<Arc<AppState>>,
     Extension(token): Extension<VerifiedToken>,
     BoundedJson(input): BoundedJson<cases::CaseInput>,
-) -> Result<(StatusCode, Json<cases::CaseDetail>), ApiError> {
+) -> Result<(StatusCode, Json<FlatCaseDetail>), ApiError> {
     let actor = format!("api_token:{}", token.name); // MUST-DO 8
     let detail = cases::create_case(&state.db.forensics, &input)
         .await
         .map_err(ApiError::from)?;
 
     audit::log_case(&detail.case.case_id, &actor, audit::CASE_CREATED, "via axum API");
-    Ok((StatusCode::CREATED, Json(detail)))
+    Ok((StatusCode::CREATED, Json(FlatCaseDetail::from(detail))))
 }
 
 async fn get_case(
     State(state): State<Arc<AppState>>,
     Extension(_token): Extension<VerifiedToken>,
     Path(case_id): Path<String>,
-) -> ApiResult<cases::CaseDetail> {
+) -> ApiResult<FlatCaseDetail> {
     let detail = cases::get_case(&state.db.forensics, &case_id)
         .await
         .map_err(ApiError::from)?;
-    Ok(Json(detail))
+    Ok(Json(FlatCaseDetail::from(detail)))
 }
 
 #[derive(Debug, Deserialize)]
@@ -492,7 +511,7 @@ async fn patch_case(
     Extension(token): Extension<VerifiedToken>,
     Path(case_id): Path<String>,
     BoundedJson(patch): BoundedJson<CasePatch>,
-) -> ApiResult<cases::CaseDetail> {
+) -> ApiResult<FlatCaseDetail> {
     // Load existing, apply patch fields.
     let existing = cases::get_case(&state.db.forensics, &case_id)
         .await
@@ -504,8 +523,26 @@ async fn patch_case(
         description: patch.description.or(existing.case.description.clone()),
         investigator: existing.case.investigator.clone(),
         agency: patch.agency.or(existing.case.agency.clone()),
-        start_date: existing.case.start_date,
-        end_date: existing.case.end_date,
+        // Case.start_date / end_date are now Strings (v1-compat); parse back to
+        // NaiveDate for CaseInput. Existing values came from v2's own writes via
+        // an ISO-formatted string, so these should always parse. v1-legacy rows
+        // may have space-separated datetimes — try both formats.
+        start_date: chrono::NaiveDate::parse_from_str(&existing.case.start_date, "%Y-%m-%d")
+            .or_else(|_| {
+                chrono::NaiveDateTime::parse_from_str(&existing.case.start_date, "%Y-%m-%d %H:%M:%S")
+                    .map(|dt| dt.date())
+            })
+            .or_else(|_| {
+                chrono::NaiveDateTime::parse_from_str(&existing.case.start_date, "%Y-%m-%d %H:%M:%S%.f")
+                    .map(|dt| dt.date())
+            })
+            .map_err(|e| ApiError::from(AppError::Db(format!("invalid start_date: {e}"))))?,
+        end_date: existing.case.end_date.as_ref().map(|s| {
+            chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d")
+                .or_else(|_| chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S").map(|dt| dt.date()))
+                .or_else(|_| chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S%.f").map(|dt| dt.date()))
+                .unwrap_or_else(|_| chrono::Local::now().date_naive())
+        }),
         status: patch.status.or(Some(existing.case.status.clone())),
         priority: patch.priority.or(Some(existing.case.priority.clone())),
         classification: patch.classification.or(existing.case.classification.clone()),
@@ -521,7 +558,7 @@ async fn patch_case(
         .map_err(ApiError::from)?;
 
     audit::log_case(&case_id, &actor, audit::CASE_UPDATED, "via axum API");
-    Ok(Json(detail))
+    Ok(Json(FlatCaseDetail::from(detail)))
 }
 
 // ── Evidence ───────────────────────────────────────────────────────────────────

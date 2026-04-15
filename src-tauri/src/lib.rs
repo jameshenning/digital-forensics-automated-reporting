@@ -8,6 +8,7 @@ pub mod crypto;
 pub mod db;
 pub mod drives;
 pub mod error;
+pub mod forensic_tools;
 pub mod mailer;
 pub mod reports;
 pub mod state;
@@ -28,7 +29,7 @@ use tracing_appender::rolling::{RollingFileAppender, Rotation};
 use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
 use commands::{
-    ai_cmd::{ai_classify, ai_enhance, ai_summarize_case, evidence_forensic_analyze},
+    ai_cmd::{ai_classify, ai_enhance, ai_osint_person, ai_summarize_case, evidence_forensic_analyze},
     auth_cmd::{
         auth_change_password, auth_current_user, auth_login, auth_logout,
         auth_mfa_disable, auth_mfa_enroll_confirm, auth_mfa_enroll_start,
@@ -40,10 +41,13 @@ use commands::{
     files_cmd::{
         evidence_files_download, evidence_files_list, evidence_files_purge,
         evidence_files_soft_delete, evidence_files_upload,
+        file_compute_sha256,
+        person_photo_delete, person_photo_upload,
         settings_acknowledge_onedrive_risk,
     },
     integrations_cmd::{
-        settings_acknowledge_ai_consent, settings_get_agent_zero, settings_get_smtp,
+        settings_acknowledge_ai_consent, settings_acknowledge_osint_consent,
+        settings_get_agent_zero, settings_get_smtp,
         settings_set_agent_zero, settings_set_smtp, settings_test_agent_zero,
         settings_test_smtp,
     },
@@ -61,7 +65,7 @@ use commands::{
         tool_add, tool_list_for_case, tool_list_for_evidence,
     },
     reports_cmd::{case_report_generate, case_report_preview},
-    system_cmd::settings_get_security_posture,
+    system_cmd::{debug_log_frontend, settings_get_security_posture},
     updates_cmd::settings_check_for_updates,
 };
 
@@ -174,6 +178,7 @@ pub fn run() {
     // ── Tauri builder ─────────────────────────────────────────────────────────
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         // Note: tauri-plugin-updater was wired here in Phase 6 as an inert
         // placeholder. Removed per SEC-9 before v2.0.0 release — shipping a
         // placeholder pubkey + unreachable endpoint is worse than no updater
@@ -188,10 +193,17 @@ pub fn run() {
             app.manage(log_guard);
 
             // ── Paths ─────────────────────────────────────────────────────────
-            let app_data = app
-                .path()
-                .app_data_dir()
-                .expect("failed to resolve AppData dir");
+            // Use the `directories` crate so the data root matches v1's
+            // `%APPDATA%\DFARS\` exactly. Tauri's `app.path().app_data_dir()`
+            // resolves to `%APPDATA%\<identifier>\` on Windows (i.e.
+            // `%APPDATA%\com.dfars.desktop\`), which is NOT v1's path and
+            // would silently orphan all v1 data. Every other module (audit,
+            // crypto, reports, uploads) already uses the `directories` crate
+            // pattern below — this was the one outlier that slipped past
+            // SEC-1/3/8/9 review.
+            let app_data = directories::BaseDirs::new()
+                .map(|b| b.data_dir().join("DFARS"))
+                .expect("failed to resolve %APPDATA%\\DFARS");
             std::fs::create_dir_all(&app_data)?;
 
             let forensics_path = app_data.join("forensics.db");
@@ -321,6 +333,11 @@ pub fn run() {
             evidence_files_soft_delete,
             evidence_files_purge,
             settings_acknowledge_onedrive_risk,
+            // Person photo commands (migration 0002 — Persons feature)
+            person_photo_upload,
+            person_photo_delete,
+            // SHA-256 utility (Reproducibility feature)
+            file_compute_sha256,
             // Report commands (Phase 3b)
             case_report_preview,
             case_report_generate,
@@ -344,11 +361,14 @@ pub fn run() {
             case_crime_line,
             // System commands
             settings_get_security_posture,
+            debug_log_frontend,
             // AI commands (Phase 5)
             ai_enhance,
             ai_classify,
             ai_summarize_case,
             evidence_forensic_analyze,
+            // OSINT commands (Persons feature)
+            ai_osint_person,
             // Drive commands (Phase 5)
             drives_list,
             drive_scan,
@@ -360,6 +380,7 @@ pub fn run() {
             settings_set_smtp,
             settings_test_smtp,
             settings_acknowledge_ai_consent,
+            settings_acknowledge_osint_consent,
             // Update commands (Phase 6)
             settings_check_for_updates,
         ])

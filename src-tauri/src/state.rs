@@ -10,6 +10,7 @@
 ///   - `config_path` — path to `config.json` for persistence (Phase 5)
 ///   - `agent_zero`  — Agent Zero outbound client state (Phase 5)
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use crate::{
@@ -45,6 +46,14 @@ pub struct AppState {
 
     /// Lazily-initialized Agent Zero outbound client.
     pub agent_zero: AgentZeroState,
+
+    /// Runtime-mutable OSINT consent flag. Initialized from
+    /// `config.shown_ai_osint_consent` at startup; flipped to true in-memory
+    /// when `settings_acknowledge_osint_consent` succeeds. This avoids the
+    /// known in-memory-config staleness issue where config mutations don't
+    /// take effect until the next app launch. Readers should prefer this
+    /// atomic over `state.config.shown_ai_osint_consent`.
+    pub osint_consent_runtime: Arc<AtomicBool>,
 }
 
 impl AppState {
@@ -60,6 +69,7 @@ impl AppState {
             config: AppConfig::default(),
             config_path: PathBuf::new(),
             agent_zero: AgentZeroState::new(),
+            osint_consent_runtime: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -72,6 +82,7 @@ impl AppState {
         agent_zero: AgentZeroState,
     ) -> Self {
         let dummy_hash = argon::make_dummy_hash();
+        let osint_consent_runtime = Arc::new(AtomicBool::new(config.shown_ai_osint_consent));
         Self {
             db,
             crypto,
@@ -81,7 +92,21 @@ impl AppState {
             config,
             config_path,
             agent_zero,
+            osint_consent_runtime,
         }
+    }
+
+    /// Check the runtime OSINT consent flag. Prefer this over reading
+    /// `config.shown_ai_osint_consent` directly — the atomic reflects
+    /// in-session acknowledgments without requiring an app restart.
+    pub fn osint_consent_granted(&self) -> bool {
+        self.osint_consent_runtime.load(Ordering::Relaxed)
+    }
+
+    /// Set the runtime OSINT consent flag. Call this AFTER persisting
+    /// `config.shown_ai_osint_consent = true` to disk.
+    pub fn set_osint_consent_granted(&self, v: bool) {
+        self.osint_consent_runtime.store(v, Ordering::Relaxed);
     }
 }
 

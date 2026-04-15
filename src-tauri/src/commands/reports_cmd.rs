@@ -24,7 +24,7 @@ use crate::{
 ///
 /// Returns the full markdown as a `String` without writing to disk.
 /// The React frontend can render this in a preview pane.
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub async fn case_report_preview(
     token: String,
     case_id: String,
@@ -43,7 +43,7 @@ pub async fn case_report_preview(
 /// the value is unrecognized.
 ///
 /// Returns the absolute path to the generated file as a `String`.
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub async fn case_report_generate(
     token: String,
     case_id: String,

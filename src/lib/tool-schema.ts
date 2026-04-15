@@ -8,6 +8,8 @@
  *   - evidence_id: optional (null = case-wide, no specific evidence)
  *   - version/command_used/input_file/output_file: optional
  *   - execution_datetime: optional (null → backend uses now())
+ *   - input_sha256/output_sha256/environment_notes/reproduction_notes:
+ *     optional reproduction-tracking fields (migration 0003)
  *
  * Use z.input<> (not z.infer<>) for the FormValues type alias.
  */
@@ -33,6 +35,31 @@ export const toolFormSchema = z.object({
     .string()
     .min(1, "Operator is required")
     .max(100, "Operator must be at most 100 characters"),
+  // Reproduction-tracking fields (migration 0003)
+  input_sha256: z
+    .string()
+    .max(128, "SHA-256 must be at most 128 characters")
+    .refine(
+      (val) => val === "" || /^[a-f0-9]{64}$/i.test(val),
+      "Must be a 64-character hex string (or blank)",
+    )
+    .default(""),
+  output_sha256: z
+    .string()
+    .max(128, "SHA-256 must be at most 128 characters")
+    .refine(
+      (val) => val === "" || /^[a-f0-9]{64}$/i.test(val),
+      "Must be a 64-character hex string (or blank)",
+    )
+    .default(""),
+  environment_notes: z
+    .string()
+    .max(2000, "Environment notes must be at most 2000 characters")
+    .default(""),
+  reproduction_notes: z
+    .string()
+    .max(4000, "Reproduction notes must be at most 4000 characters")
+    .default(""),
 });
 
 export type ToolFormValues = z.input<typeof toolFormSchema>;

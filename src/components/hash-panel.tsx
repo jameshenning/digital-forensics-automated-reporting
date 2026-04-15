@@ -69,11 +69,18 @@ function fmtDatetime(iso: string | null): string {
 // ---------------------------------------------------------------------------
 
 function formValuesToInput(values: HashFormValues): HashInput {
+  // Rust HashInput.verification_datetime is NaiveDateTime; serde requires
+  // "YYYY-MM-DDTHH:MM:SS". The form emits "YYYY-MM-DDTHH:MM" (no seconds),
+  // so we append ":00" if seconds are absent.
+  const dtRaw = values.verification_datetime;
+  const verification_datetime =
+    /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(dtRaw) ? dtRaw + ":00" : dtRaw;
+
   return {
     algorithm: values.algorithm,
     hash_value: values.hash_value.toLowerCase(),
     verified_by: values.verified_by,
-    verification_datetime: values.verification_datetime,
+    verification_datetime,
     notes: values.notes || null,
   };
 }

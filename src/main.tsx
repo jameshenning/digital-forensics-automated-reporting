@@ -5,7 +5,42 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ReactQueryDevtools } from "@tanstack/react-query-devtools";
 
 import { routeTree } from "./routeTree.gen";
+import { debugLogFrontend } from "./lib/bindings";
 import "./styles/globals.css";
+
+// Global error bridge → Rust tracing log. Captures any frontend error/rejection
+// so we can diagnose "blank screen" or "nothing happens" bugs without devtools.
+// Fire-and-forget — don't await, don't re-throw on failure.
+function forwardToRustLog(level: "error" | "warn" | "info", message: string): void {
+  try {
+    void debugLogFrontend({ level, message }).catch(() => {});
+  } catch {
+    // swallow — diagnostics must never crash the app
+  }
+}
+
+window.addEventListener("error", (ev) => {
+  const msg = `window.onerror: ${ev.message} @ ${ev.filename}:${ev.lineno}:${ev.colno} | ${ev.error?.stack ?? "(no stack)"}`;
+  forwardToRustLog("error", msg);
+});
+
+window.addEventListener("unhandledrejection", (ev) => {
+  const reason = ev.reason;
+  let msg = "unhandledrejection: ";
+  if (reason instanceof Error) {
+    msg += `${reason.name}: ${reason.message}\n${reason.stack ?? "(no stack)"}`;
+  } else {
+    try {
+      msg += JSON.stringify(reason);
+    } catch {
+      msg += String(reason);
+    }
+  }
+  forwardToRustLog("error", msg);
+});
+
+// Startup breadcrumb so we can confirm the bridge is wired.
+forwardToRustLog("info", "frontend bridge wired");
 
 // TanStack Router instance
 const router = createRouter({ routeTree });

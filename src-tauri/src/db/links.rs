@@ -17,7 +17,7 @@
 ///   - directional: 0 or 1  (default 1)
 ///   - weight: 0.0 < weight ≤ 1000.0  (default 1.0)
 ///   - link_label: max 100 chars
-use chrono::NaiveDateTime;
+// NaiveDateTime no longer needed — `created_at` is a String for v1 compat.
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 
@@ -32,6 +32,7 @@ const WEIGHT_MAX: f64 = 1000.0;
 // ─── Public data types ────────────────────────────────────────────────────────
 
 /// Full entity_links row, maps 1:1 to the `entity_links` table.
+/// `created_at` is a `String` for v1 compat — see `db::cases::Case`.
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct Link {
     pub link_id: i64,
@@ -45,7 +46,7 @@ pub struct Link {
     pub weight: f64,
     pub notes: Option<String>,
     pub is_deleted: i64,
-    pub created_at: NaiveDateTime,
+    pub created_at: String,
 }
 
 /// Writable fields for creating a new link.

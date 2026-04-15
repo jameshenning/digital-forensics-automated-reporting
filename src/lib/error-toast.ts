@@ -59,6 +59,15 @@ const ERROR_MESSAGES: Record<AppErrorCode, string> = {
   HashMismatchOnDownload:
     "INTEGRITY FAILURE: This file does not match its original SHA-256 hash. " +
     "Do not rely on it as evidence until a source reacquisition is performed.",
+  // Persons — photo upload (migration 0002)
+  PersonPhotoTooLarge:
+    "Photo exceeds the 10 MiB limit. Please pick a smaller image.",
+  PersonPhotoNotAnImage:
+    "The selected file is not a recognized image (JPEG, PNG, GIF, WebP, BMP, or TIFF). Pick a different file.",
+  EntityNotAPerson:
+    "This entity is not a person, so a photo cannot be attached. Photos are only supported on person entities.",
+  AiOsintConsentRequired:
+    "See dialog.", // The AiConsentDialog with scope='osint' handles this — toast is supplemental only
   ReportGenerationFailed:
     "Report generation failed. Check that all required case data is present and try again.",
   // Phase 4 — link analysis error codes

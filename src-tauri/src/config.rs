@@ -47,6 +47,14 @@ pub struct AppConfig {
     #[serde(default)]
     pub shown_ai_summarize_consent: bool,
 
+    /// Whether the investigator has acknowledged the one-time OSINT consent
+    /// banner. OSINT is separately acknowledged from case-summary consent
+    /// because it's more invasive — person PII (name, email, username,
+    /// employer) is sent to Agent Zero and onward to external OSINT sources
+    /// (LinkedIn, Shodan, Sherlock's site list, etc.).
+    #[serde(default)]
+    pub shown_ai_osint_consent: bool,
+
     // ─── SMTP ─────────────────────────────────────────────────────────────────
     pub smtp_host: Option<String>,
     pub smtp_port: Option<u16>,
@@ -80,6 +88,7 @@ impl Default for AppConfig {
             agent_zero_api_key_encrypted: None,
             allow_custom_agent_zero_url: false,
             shown_ai_summarize_consent: false,
+            shown_ai_osint_consent: false,
             smtp_host: None,
             smtp_port: None,
             smtp_username: None,

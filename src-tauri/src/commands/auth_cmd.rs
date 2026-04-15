@@ -30,8 +30,16 @@ use crate::{
 /// `AccountLocked` is not returned as a variant here — callers receive
 /// `Err(AppError::AccountLocked)` directly, which the frontend discriminates
 /// on the error `code` field.
+// NO rename_all — the frontend's LoginStatus TS type is PascalCase
+// ('Success' | 'MfaRequired' | 'AccountLocked'), so serde's default
+// PascalCase serialization is what we want. An earlier draft of this
+// file had `#[serde(rename_all = "snake_case")]` here which produced
+// lowercase "success" / "mfa_required" on the wire — the frontend
+// login.tsx onSuccess handler silently dropped every response because
+// `"success" !== "Success"`. Login appeared to do nothing despite the
+// Rust side succeeding every time. Don't add rename_all back without
+// also updating every frontend consumer of LoginStatus.
 #[derive(Debug, Serialize)]
-#[serde(rename_all = "snake_case")]
 pub enum LoginStatus {
     Success,
     MfaRequired,
@@ -97,7 +105,7 @@ pub struct NewTokenResult {
 /// Creates the single application user. Only succeeds if no user exists.
 /// Returns a fully-verified `SessionInfo` — first setup logs in immediately
 /// without MFA (MFA enrollment is a separate later call).
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub async fn auth_setup_first_run(
     username: String,
     password: String,
@@ -129,29 +137,34 @@ pub async fn auth_setup_first_run(
 ///   The pending session token is used for `auth_verify_mfa`.
 /// - If no MFA: returns `LoginResult { status: Success, session: Some(verified_session) }`.
 /// - On locked account: returns `Err(AppError::AccountLocked)`.
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub async fn auth_login(
     username: String,
     password: String,
     state: State<'_, Arc<AppState>>,
 ) -> Result<LoginResult, AppError> {
-    info!(command = "auth_login");
+    // DIAG: expanded tracing to root-cause a frontend-side issue where the
+    // login button appears to do nothing. Log every branch + the exact payload
+    // being returned so the issue can be triaged from the log file alone.
+    info!(command = "auth_login", username = %username, password_len = password.len(), "diag: auth_login entered");
 
-    match auth::verify_credentials(
+    let vc = auth::verify_credentials(
         &state.db.auth,
         &state.lockout,
         &state.dummy_hash,
         &username,
         &password,
     )
-    .await
-    {
+    .await;
+
+    match vc {
         Ok(user) => {
+            info!(username = %user.username, mfa_enabled = user.mfa_enabled, "diag: verify_credentials Ok");
             let mfa_active = user.mfa_active();
             let username = user.username.clone();
             if mfa_active {
-                // Create a pending session — MFA step required.
                 let token = state.sessions.create_pending(&username, None);
+                info!(username = %username, token_prefix = %token.chars().take(8).collect::<String>(), "diag: created PENDING session, returning MfaRequired");
                 audit::log_auth(&username, audit::LOGIN_SUCCESS, "Password OK, MFA pending");
                 Ok(LoginResult {
                     status: LoginStatus::MfaRequired,
@@ -163,18 +176,22 @@ pub async fn auth_login(
                 })
             } else {
                 let token = state.sessions.create_verified(&username);
+                info!(username = %username, token_prefix = %token.chars().take(8).collect::<String>(), "diag: created VERIFIED session, returning Success");
                 audit::log_auth(&username, audit::LOGIN_SUCCESS, "Login complete (no MFA)");
-                Ok(LoginResult {
+                let result = LoginResult {
                     status: LoginStatus::Success,
                     session: Some(SessionInfo {
                         token,
-                        username,
+                        username: username.clone(),
                         mfa_enabled: false,
                     }),
-                })
+                };
+                info!("diag: returning Ok(LoginResult Success)");
+                Ok(result)
             }
         }
         Err(AppError::AccountLocked { seconds_remaining }) => {
+            info!(username = %username, seconds_remaining, "diag: account locked");
             audit::log_auth(
                 &username,
                 audit::LOGIN_FAILED,
@@ -183,16 +200,21 @@ pub async fn auth_login(
             Err(AppError::AccountLocked { seconds_remaining })
         }
         Err(AppError::InvalidCredentials) => {
+            info!(username = %username, "diag: invalid credentials");
             audit::log_auth(&username, audit::LOGIN_FAILED, "Bad credentials");
             Err(AppError::InvalidCredentials)
         }
-        Err(e) => Err(e),
+        Err(e) => {
+            // DIAG: log any other error variant we didn't anticipate.
+            tracing::error!(error = %e, "diag: auth_login unexpected error variant");
+            Err(e)
+        }
     }
 }
 
 // ─── Login (step 2: MFA verify) ──────────────────────────────────────────────
 
-/// wire: { session_token: string, code: string, use_recovery: bool } -> SessionInfo
+/// wire: { token: string, code: string, use_recovery: bool } -> SessionInfo
 ///
 /// Completes the MFA step for a pending session.
 /// - `code` can be a TOTP code (6 digits) or a recovery code.
@@ -200,16 +222,16 @@ pub async fn auth_login(
 /// - On success, the pending session is promoted to verified.
 /// - After `MAX_MFA_FAILURES` consecutive failures, the pending session is
 ///   cleared and the user must restart from the password step.
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub async fn auth_verify_mfa(
-    session_token: String,
+    pending_token: String,
     code: String,
     use_recovery: bool,
     state: State<'_, Arc<AppState>>,
 ) -> Result<SessionInfo, AppError> {
     info!(command = "auth_verify_mfa");
 
-    let session_data = require_pending_session(&state, &session_token)?;
+    let session_data = require_pending_session(&state, &pending_token)?;
     let username = session_data.username.clone();
 
     if use_recovery {
@@ -220,7 +242,7 @@ pub async fn auth_verify_mfa(
 
         match recovery::verify_and_consume(&state.db.auth, user.id, &code).await {
             Ok(true) => {
-                state.sessions.promote_to_verified(&session_token)?;
+                state.sessions.promote_to_verified(&pending_token)?;
                 let remaining = recovery::remaining(&state.db.auth, user.id).await?;
                 audit::log_auth(
                     &username,
@@ -228,7 +250,7 @@ pub async fn auth_verify_mfa(
                     &format!("{remaining} codes remaining"),
                 );
                 return Ok(SessionInfo {
-                    token: session_token,
+                    token: pending_token,
                     username,
                     mfa_enabled: true,
                 });
@@ -236,7 +258,7 @@ pub async fn auth_verify_mfa(
             Ok(false) => {
                 // Record MFA failure.
                 audit::log_auth(&username, audit::LOGIN_FAILED, "Invalid recovery code");
-                match state.sessions.record_mfa_failure(&session_token) {
+                match state.sessions.record_mfa_failure(&pending_token) {
                     Ok(()) => return Err(AppError::InvalidMfaCode),
                     Err(_) => {
                         warn!(username = %username, "session invalidated after MFA failure limit");
@@ -256,16 +278,16 @@ pub async fn auth_verify_mfa(
             .ok_or(AppError::InvalidMfaCode)?;
 
         if totp::verify_code(&totp_secret, &code) {
-            state.sessions.promote_to_verified(&session_token)?;
+            state.sessions.promote_to_verified(&pending_token)?;
             audit::log_auth(&username, audit::MFA_VERIFIED, "TOTP verified, login complete");
             Ok(SessionInfo {
-                token: session_token,
+                token: pending_token,
                 username,
                 mfa_enabled: true,
             })
         } else {
             audit::log_auth(&username, audit::LOGIN_FAILED, "Invalid TOTP code");
-            match state.sessions.record_mfa_failure(&session_token) {
+            match state.sessions.record_mfa_failure(&pending_token) {
                 Ok(()) => Err(AppError::InvalidMfaCode),
                 Err(_) => {
                     warn!(username = %username, "session invalidated after MFA failure limit");
@@ -278,10 +300,10 @@ pub async fn auth_verify_mfa(
 
 // ─── Logout ───────────────────────────────────────────────────────────────────
 
-/// wire: { session_token: string } -> ()
-#[tauri::command]
+/// wire: { token: string } -> ()
+#[tauri::command(rename_all = "snake_case")]
 pub async fn auth_logout(
-    session_token: String,
+    token: String,
     state: State<'_, Arc<AppState>>,
 ) -> Result<(), AppError> {
     info!(command = "auth_logout");
@@ -289,29 +311,29 @@ pub async fn auth_logout(
     // Best-effort: read the username before invalidating so we can audit-log it.
     let username = state
         .sessions
-        .get_and_touch(&session_token)
+        .get_and_touch(&token)
         .map(|d| d.username)
         .unwrap_or_else(|_| "unknown".to_owned());
 
-    state.sessions.invalidate(&session_token);
+    state.sessions.invalidate(&token);
     audit::log_auth(&username, audit::LOGOUT, "User logged out");
     Ok(())
 }
 
 // ─── Change password ──────────────────────────────────────────────────────────
 
-/// wire: { session_token: string, current_password: string, new_password: string } -> ()
-#[tauri::command]
+/// wire: { token: string, old_password: string, new_password: string } -> ()
+#[tauri::command(rename_all = "snake_case")]
 pub async fn auth_change_password(
-    session_token: String,
-    current_password: String,
+    token: String,
+    old_password: String,
     new_password: String,
     state: State<'_, Arc<AppState>>,
 ) -> Result<(), AppError> {
     info!(command = "auth_change_password");
 
     // MUST-DO 3: session guard.
-    let session = require_session(&state, &session_token)?;
+    let session = require_session(&state, &token)?;
     let username = session.username;
 
     auth::update_password(
@@ -319,7 +341,7 @@ pub async fn auth_change_password(
         &state.lockout,
         &state.dummy_hash,
         &username,
-        &current_password,
+        &old_password,
         &new_password,
     )
     .await?;
@@ -330,15 +352,15 @@ pub async fn auth_change_password(
 
 // ─── Current user ─────────────────────────────────────────────────────────────
 
-/// wire: { session_token: string } -> CurrentUserInfo | null
-#[tauri::command]
+/// wire: { token: string } -> CurrentUserInfo | null
+#[tauri::command(rename_all = "snake_case")]
 pub async fn auth_current_user(
-    session_token: String,
+    token: String,
     state: State<'_, Arc<AppState>>,
 ) -> Result<Option<CurrentUserInfo>, AppError> {
     info!(command = "auth_current_user");
 
-    match require_session(&state, &session_token) {
+    match require_session(&state, &token) {
         Ok(session) => {
             let username = session.username;
             let user = auth::get_user(&state.db.auth, &username)
@@ -361,20 +383,20 @@ pub async fn auth_current_user(
 
 // ─── MFA enrollment ───────────────────────────────────────────────────────────
 
-/// wire: { session_token: string } -> MfaEnrollment
+/// wire: { token: string } -> MfaEnrollment
 ///
 /// Starts MFA enrollment: generates a fresh TOTP secret, stores it in the
 /// session (NOT in the DB yet), and returns the Base32 secret + QR URI.
 /// The secret lives in memory until `auth_mfa_enroll_confirm` is called.
 /// SEC-1: pending_totp_secret is stored in session state, not re-fetched from DB.
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub async fn auth_mfa_enroll_start(
-    session_token: String,
+    token: String,
     state: State<'_, Arc<AppState>>,
 ) -> Result<MfaEnrollment, AppError> {
     info!(command = "auth_mfa_enroll_start");
 
-    let session = require_session(&state, &session_token)?;
+    let session = require_session(&state, &token)?;
     let username = session.username;
 
     // Check not already enrolled.
@@ -393,7 +415,7 @@ pub async fn auth_mfa_enroll_start(
     // Store the pending secret in the session to prevent substitution attacks.
     state
         .sessions
-        .set_pending_totp_secret(&session_token, Some(secret_b32.clone()))?;
+        .set_pending_totp_secret(&token, Some(secret_b32.clone()))?;
 
     Ok(MfaEnrollment {
         secret_b32,
@@ -401,24 +423,24 @@ pub async fn auth_mfa_enroll_start(
     })
 }
 
-/// wire: { session_token: string, code: string } -> MfaConfirmResult
+/// wire: { token: string, code: string } -> MfaConfirmResult
 ///
 /// Confirms MFA enrollment: verifies the code against the in-session pending
 /// secret (NOT fetched from DB), then persists the encrypted secret and
 /// generates recovery codes.
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub async fn auth_mfa_enroll_confirm(
-    session_token: String,
+    token: String,
     code: String,
     state: State<'_, Arc<AppState>>,
 ) -> Result<MfaConfirmResult, AppError> {
     info!(command = "auth_mfa_enroll_confirm");
 
-    let session = require_session(&state, &session_token)?;
+    let session = require_session(&state, &token)?;
     let username = session.username;
 
     // Read the pending secret from session state — never re-fetch from DB.
-    let pending_secret = state.sessions.get_pending_totp_secret(&session_token)?;
+    let pending_secret = state.sessions.get_pending_totp_secret(&token)?;
 
     let secret_b32 = pending_secret
         .ok_or_else(|| AppError::Internal("No pending TOTP secret in session".into()))?;
@@ -437,7 +459,7 @@ pub async fn auth_mfa_enroll_confirm(
     let codes = recovery::generate_and_store(&state.db.auth, user.id).await?;
 
     // Clear the pending secret from session.
-    let _ = state.sessions.set_pending_totp_secret(&session_token, None);
+    let _ = state.sessions.set_pending_totp_secret(&token, None);
 
     audit::log_auth(
         &username,
@@ -452,20 +474,20 @@ pub async fn auth_mfa_enroll_confirm(
 
 // ─── MFA disable ─────────────────────────────────────────────────────────────
 
-/// wire: { session_token: string, password: string } -> ()
+/// wire: { token: string, password: string } -> ()
 ///
 /// Disables MFA. Requires password re-entry as defense against session hijack.
 /// Also revokes all outstanding recovery codes.
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub async fn auth_mfa_disable(
-    session_token: String,
+    token: String,
     password: String,
     state: State<'_, Arc<AppState>>,
 ) -> Result<(), AppError> {
     info!(command = "auth_mfa_disable");
 
     // MUST-DO 3: session guard.
-    let session = require_session(&state, &session_token)?;
+    let session = require_session(&state, &token)?;
     let username = session.username;
 
     auth::disable_mfa(
@@ -484,16 +506,16 @@ pub async fn auth_mfa_disable(
 
 // ─── API token management ─────────────────────────────────────────────────────
 
-/// wire: { session_token: string } -> Vec<ApiTokenListItem>
-#[tauri::command]
+/// wire: { token: string } -> Vec<ApiTokenListItem>
+#[tauri::command(rename_all = "snake_case")]
 pub async fn auth_tokens_list(
-    session_token: String,
+    token: String,
     state: State<'_, Arc<AppState>>,
 ) -> Result<Vec<tokens::ApiTokenListItem>, AppError> {
     info!(command = "auth_tokens_list");
 
     // MUST-DO 3: session guard.
-    let session = require_session(&state, &session_token)?;
+    let session = require_session(&state, &token)?;
     let username = session.username;
 
     let user = auth::get_user(&state.db.auth, &username)
@@ -503,20 +525,20 @@ pub async fn auth_tokens_list(
     tokens::list_for_user(&state.db.auth, user.id).await
 }
 
-/// wire: { session_token: string, name: string } -> NewTokenResult
+/// wire: { token: string, name: string } -> NewTokenResult
 ///
 /// Creates an API token. The plaintext is shown exactly once — caller must
 /// display it to the user immediately.
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub async fn auth_tokens_create(
-    session_token: String,
+    token: String,
     name: String,
     state: State<'_, Arc<AppState>>,
 ) -> Result<NewTokenResult, AppError> {
     info!(command = "auth_tokens_create");
 
     // MUST-DO 3: session guard.
-    let session = require_session(&state, &session_token)?;
+    let session = require_session(&state, &token)?;
     let username = session.username;
 
     let user = auth::get_user(&state.db.auth, &username)
@@ -541,28 +563,28 @@ pub async fn auth_tokens_create(
     })
 }
 
-/// wire: { session_token: string, token_id: number } -> ()
-#[tauri::command]
+/// wire: { token: string, id: number } -> ()
+#[tauri::command(rename_all = "snake_case")]
 pub async fn auth_tokens_revoke(
-    session_token: String,
-    token_id: i64,
+    token: String,
+    id: i64,
     state: State<'_, Arc<AppState>>,
 ) -> Result<(), AppError> {
     info!(command = "auth_tokens_revoke");
 
     // MUST-DO 3: session guard.
-    let session = require_session(&state, &session_token)?;
+    let session = require_session(&state, &token)?;
     let username = session.username;
 
     let user = auth::get_user(&state.db.auth, &username)
         .await?
         .ok_or(AppError::UserNotFound)?;
 
-    if tokens::revoke(&state.db.auth, token_id, user.id).await? {
+    if tokens::revoke(&state.db.auth, id, user.id).await? {
         audit::log_auth(
             &username,
             audit::API_TOKEN_REVOKED,
-            &format!("Token id={token_id}"),
+            &format!("Token id={id}"),
         );
         Ok(())
     } else {

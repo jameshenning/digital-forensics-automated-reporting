@@ -21,6 +21,7 @@ import {
   Paperclip,
   Sparkles,
   FlaskConical,
+  Wrench,
 } from "lucide-react";
 
 import {
@@ -63,6 +64,7 @@ import { EvidenceForm } from "@/components/evidence-form";
 import { CustodyPanel } from "@/components/custody-panel";
 import { HashPanel } from "@/components/hash-panel";
 import { EvidenceFilesPanel } from "@/components/evidence-files-panel";
+import { EvidenceToolsPanel } from "@/components/evidence-tools-panel";
 import { ForensicAnalyzeDialog } from "@/components/forensic-analyze-dialog";
 
 // ---------------------------------------------------------------------------
@@ -140,6 +142,7 @@ function EvidenceCard({
   const [custodyOpen, setCustodyOpen] = React.useState(false);
   const [hashOpen, setHashOpen] = React.useState(false);
   const [filesOpen, setFilesOpen] = React.useState(false);
+  const [toolsOpen, setToolsOpen] = React.useState(false);
   const [forensicOpen, setForensicOpen] = React.useState(false);
 
   // Polish description with AI
@@ -278,6 +281,8 @@ function EvidenceCard({
           onClick={() => {
             setCustodyOpen(!custodyOpen);
             if (hashOpen) setHashOpen(false);
+            if (filesOpen) setFilesOpen(false);
+            if (toolsOpen) setToolsOpen(false);
           }}
         >
           {custodyOpen ? (
@@ -296,6 +301,7 @@ function EvidenceCard({
             setHashOpen(!hashOpen);
             if (custodyOpen) setCustodyOpen(false);
             if (filesOpen) setFilesOpen(false);
+            if (toolsOpen) setToolsOpen(false);
           }}
         >
           {hashOpen ? (
@@ -314,6 +320,7 @@ function EvidenceCard({
             setFilesOpen(!filesOpen);
             if (custodyOpen) setCustodyOpen(false);
             if (hashOpen) setHashOpen(false);
+            if (toolsOpen) setToolsOpen(false);
           }}
         >
           {filesOpen ? (
@@ -323,6 +330,25 @@ function EvidenceCard({
           )}
           <Paperclip className="h-3 w-3 mr-1" />
           Files
+        </Button>
+        <Button
+          size="sm"
+          variant="ghost"
+          className="h-6 px-2 text-xs"
+          onClick={() => {
+            setToolsOpen(!toolsOpen);
+            if (custodyOpen) setCustodyOpen(false);
+            if (hashOpen) setHashOpen(false);
+            if (filesOpen) setFilesOpen(false);
+          }}
+        >
+          {toolsOpen ? (
+            <ChevronDown className="h-3 w-3 mr-1" />
+          ) : (
+            <ChevronRight className="h-3 w-3 mr-1" />
+          )}
+          <Wrench className="h-3 w-3 mr-1" />
+          Tools Used
         </Button>
       </div>
 
@@ -351,6 +377,19 @@ function EvidenceCard({
             evidenceId={ev.evidence_id}
             caseId={caseId}
             onNavigateToCaseEdit={onNavigateToCaseEdit}
+          />
+        </div>
+      )}
+
+      {/* Inline tools disclosure — tools used to examine THIS evidence item.
+          The full narrative (About / Purpose / Findings / Why / Investigation
+          chain) renders here so the operator sees tools next to the evidence
+          they examined, not in a standalone tab. */}
+      {toolsOpen && (
+        <div className="mt-1 pl-3 border-l-2 border-muted">
+          <EvidenceToolsPanel
+            evidenceId={ev.evidence_id}
+            caseId={caseId}
           />
         </div>
       )}

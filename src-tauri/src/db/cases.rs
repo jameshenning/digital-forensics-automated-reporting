@@ -13,7 +13,7 @@
 ///
 /// Validation lives here (case_id format, status/priority allowlists, tag
 /// normalization) so the command layer only does session checks.
-use chrono::{NaiveDate, NaiveDateTime};
+use chrono::NaiveDate;
 use serde::{Deserialize, Serialize};
 use sqlx::{sqlite::Sqlite, SqlitePool, Transaction};
 
@@ -28,6 +28,14 @@ const CASE_ID_MAX_LEN: usize = 64;
 // ─── Public data types ────────────────────────────────────────────────────────
 
 /// Full case row, maps 1:1 to the `cases` table.
+///
+/// NOTE: date/datetime columns are read as `String` (not chrono types) because
+/// v1 stored `start_date` as datetime strings like `"2026-04-11 00:00:00"` even
+/// though the column type is DATE, and `created_at` / `updated_at` as
+/// space-separated (not ISO-T) datetimes. sqlx's chrono integration can't
+/// parse those into `NaiveDate`/`NaiveDateTime` without brittle format guesses.
+/// The frontend already treats these as strings (see `src/lib/bindings.ts`
+/// `Case` type) so passing them through verbatim is simpler and compat-safe.
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct Case {
     pub case_id: String,
@@ -35,33 +43,38 @@ pub struct Case {
     pub description: Option<String>,
     pub investigator: String,
     pub agency: Option<String>,
-    pub start_date: NaiveDate,
-    pub end_date: Option<NaiveDate>,
+    pub start_date: String,
+    pub end_date: Option<String>,
     pub status: String,
     pub priority: String,
     pub classification: Option<String>,
     pub evidence_drive_path: Option<String>,
-    pub created_at: NaiveDateTime,
-    pub updated_at: NaiveDateTime,
+    pub created_at: String,
+    pub updated_at: String,
 }
 
 /// Lighter summary row for the case list view; includes aggregated evidence count.
+/// Same date-as-string rationale as `Case` above.
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct CaseSummary {
     pub case_id: String,
     pub case_name: String,
     pub investigator: String,
-    pub start_date: NaiveDate,
+    pub start_date: String,
     pub status: String,
     pub priority: String,
     pub evidence_count: i64,
-    pub created_at: NaiveDateTime,
+    pub created_at: String,
 }
 
 /// Full case detail returned by `get_case` and mutation commands.
+///
+/// Serializes to `{ "case": { ... }, "tags": [...] }` — the frontend
+/// `CaseDetail` TS type (src/lib/bindings.ts) expects a nested `case`
+/// field. Do NOT re-add `#[serde(flatten)]` — it was the cause of the
+/// v2 "click case → blank / Failed to load case" bug.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CaseDetail {
-    #[serde(flatten)]
     pub case: Case,
     pub tags: Vec<String>,
 }

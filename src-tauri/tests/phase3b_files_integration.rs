@@ -132,6 +132,10 @@ CREATE TABLE IF NOT EXISTS tool_usage (
     output_file TEXT,
     execution_datetime TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     operator TEXT NOT NULL,
+    input_sha256 TEXT,
+    output_sha256 TEXT,
+    environment_notes TEXT,
+    reproduction_notes TEXT,
     FOREIGN KEY (case_id) REFERENCES cases (case_id) ON DELETE RESTRICT
 );
 
@@ -178,6 +182,12 @@ CREATE TABLE IF NOT EXISTS entities (
     is_deleted INTEGER DEFAULT 0,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    photo_path TEXT,
+    email TEXT,
+    phone TEXT,
+    username TEXT,
+    employer TEXT,
+    dob TEXT,
     FOREIGN KEY (case_id) REFERENCES cases (case_id) ON DELETE RESTRICT,
     FOREIGN KEY (parent_entity_id) REFERENCES entities (entity_id) ON DELETE SET NULL
 );
@@ -331,6 +341,7 @@ async fn build_state() -> (Arc<AppState>, SqlitePool) {
         config: dfars_desktop_lib::config::AppConfig::default(),
         config_path: std::path::PathBuf::new(),
         agent_zero: dfars_desktop_lib::agent_zero::AgentZeroState::new(),
+        osint_consent_runtime: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
     });
     (state, forensics_pool)
 }

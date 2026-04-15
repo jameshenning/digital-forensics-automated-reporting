@@ -15,7 +15,7 @@
 ///   - confidence_level: Low | Medium | High  (default: Medium)
 ///   - finding: required, non-empty, max 500 chars
 ///   - description: optional, max 5000 chars
-use chrono::NaiveDateTime;
+// NaiveDateTime no longer needed — `created_at` is a String for v1 compat.
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 
@@ -41,6 +41,7 @@ const DESCRIPTION_MAX_LEN: usize = 5000;
 // ─── Public data types ────────────────────────────────────────────────────────
 
 /// Full analysis note row, maps 1:1 to the `analysis_notes` table.
+/// `created_at` is a `String` for v1 compat — see `db::cases::Case`.
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct AnalysisNote {
     pub note_id: i64,
@@ -50,7 +51,7 @@ pub struct AnalysisNote {
     pub finding: String,
     pub description: Option<String>,
     pub confidence_level: String,
-    pub created_at: NaiveDateTime,
+    pub created_at: String,
 }
 
 /// Writable fields for adding a new analysis note.

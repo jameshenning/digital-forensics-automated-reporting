@@ -31,8 +31,10 @@ use crate::state::AppState;
 
 // ─── Result types ─────────────────────────────────────────────────────────────
 
+// NO rename_all — frontend TS `UpdateCheckResult.available_version` uses
+// snake_case. An earlier `camelCase` directive here serialized the field as
+// `availableVersion` and broke silently. Same class of bug as LoginStatus.
 #[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
 pub struct UpdateCheckResult {
     pub status: UpdateStatus,
     pub message: String,
@@ -58,7 +60,7 @@ pub enum UpdateStatus {
 ///
 /// Requires a valid session token. The frontend surfaces a friendly message
 /// pointing at GitHub Releases for manual downloads.
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub async fn settings_check_for_updates(
     token: String,
     state: State<'_, Arc<AppState>>,

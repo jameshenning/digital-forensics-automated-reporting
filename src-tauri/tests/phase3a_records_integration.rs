@@ -128,6 +128,10 @@ CREATE TABLE IF NOT EXISTS tool_usage (
     output_file TEXT,
     execution_datetime TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     operator TEXT NOT NULL,
+    input_sha256 TEXT,
+    output_sha256 TEXT,
+    environment_notes TEXT,
+    reproduction_notes TEXT,
     FOREIGN KEY (case_id) REFERENCES cases (case_id) ON DELETE RESTRICT
 );
 
@@ -335,6 +339,7 @@ async fn build_state() -> (Arc<AppState>, SqlitePool) {
         config: dfars_desktop_lib::config::AppConfig::default(),
         config_path: std::path::PathBuf::new(),
         agent_zero: dfars_desktop_lib::agent_zero::AgentZeroState::new(),
+        osint_consent_runtime: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
     });
 
     (state, forensics_pool)
@@ -838,6 +843,10 @@ async fn test_12_tool_add_with_and_without_evidence_id() {
             output_file: None,
             execution_datetime: None,
             operator: "examiner".to_string(),
+        input_sha256: None,
+        output_sha256: None,
+        environment_notes: None,
+        reproduction_notes: None,
         },
     )
     .await
@@ -858,6 +867,10 @@ async fn test_12_tool_add_with_and_without_evidence_id() {
             output_file: None,
             execution_datetime: None,
             operator: "examiner".to_string(),
+        input_sha256: None,
+        output_sha256: None,
+        environment_notes: None,
+        reproduction_notes: None,
         },
     )
     .await
@@ -896,15 +909,29 @@ async fn test_13_tool_execution_datetime_defaults_to_now() {
             output_file: None,
             execution_datetime: None, // deliberately absent
             operator: "examiner".to_string(),
+        input_sha256: None,
+        output_sha256: None,
+        environment_notes: None,
+        reproduction_notes: None,
         },
     )
     .await
     .expect("tool add must succeed");
 
     let after = chrono::Utc::now().naive_utc();
+    // execution_datetime is stored as a String (v1-compat post-fix).
+    // Parse it back for the time-range assertion.
+    let parsed = chrono::NaiveDateTime::parse_from_str(
+        &record.execution_datetime,
+        "%Y-%m-%dT%H:%M:%S%.f",
+    )
+    .or_else(|_| chrono::NaiveDateTime::parse_from_str(&record.execution_datetime, "%Y-%m-%dT%H:%M:%S"))
+    .or_else(|_| chrono::NaiveDateTime::parse_from_str(&record.execution_datetime, "%Y-%m-%d %H:%M:%S%.f"))
+    .or_else(|_| chrono::NaiveDateTime::parse_from_str(&record.execution_datetime, "%Y-%m-%d %H:%M:%S"))
+    .expect("execution_datetime should parse as one of the known formats");
 
     assert!(
-        record.execution_datetime >= before && record.execution_datetime <= after,
+        parsed >= before && parsed <= after,
         "execution_datetime must be approximately now(): got {:?}",
         record.execution_datetime
     );

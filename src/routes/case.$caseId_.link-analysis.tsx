@@ -84,7 +84,7 @@ function CrimeLineCanvasSkeleton() {
   );
 }
 
-export const Route = createFileRoute("/case/$caseId/link-analysis")({
+export const Route = createFileRoute("/case/$caseId_/link-analysis")({
   beforeLoad: requireAuthBeforeLoad,
   component: LinkAnalysisPage,
 });

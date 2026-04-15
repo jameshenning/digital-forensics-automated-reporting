@@ -37,6 +37,8 @@ const VALID_ACTIONS: &[&str] = &[
 // ─── Public data types ────────────────────────────────────────────────────────
 
 /// Full chain-of-custody row, maps 1:1 to the `chain_of_custody` table.
+/// `custody_datetime` read as `String` for v1 compat — same rationale
+/// as `db::cases::Case`.
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct CustodyEvent {
     pub custody_id: i64,
@@ -46,7 +48,7 @@ pub struct CustodyEvent {
     pub from_party: String,
     pub to_party: String,
     pub location: Option<String>,
-    pub custody_datetime: NaiveDateTime,
+    pub custody_datetime: String,
     pub purpose: Option<String>,
     pub notes: Option<String>,
 }

@@ -23,6 +23,13 @@ use crate::error::AppError;
 // ─── Public data types ────────────────────────────────────────────────────────
 
 /// Full tool usage row, maps 1:1 to the `tool_usage` table.
+/// `execution_datetime` is a `String` for v1 compat — see `db::cases::Case`.
+///
+/// The four reproduction fields (`input_sha256` / `output_sha256` /
+/// `environment_notes` / `reproduction_notes`) were added in migration 0003
+/// and are all nullable. Case-wide runs that have no single input file
+/// can omit them. See `forensic_tools.rs` for the curated KB steps that
+/// these per-row fields combine with at render time.
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct ToolUsage {
     pub tool_id: i64,
@@ -34,8 +41,13 @@ pub struct ToolUsage {
     pub command_used: Option<String>,
     pub input_file: Option<String>,
     pub output_file: Option<String>,
-    pub execution_datetime: NaiveDateTime,
+    pub execution_datetime: String,
     pub operator: String,
+    // Reproduction fields (migration 0003)
+    pub input_sha256: Option<String>,
+    pub output_sha256: Option<String>,
+    pub environment_notes: Option<String>,
+    pub reproduction_notes: Option<String>,
 }
 
 /// Writable fields for recording a new tool usage event.
@@ -52,6 +64,15 @@ pub struct ToolInput {
     /// `None` → current UTC time.
     pub execution_datetime: Option<NaiveDateTime>,
     pub operator: String,
+    // Reproduction fields (migration 0003) — operator-supplied, all optional
+    #[serde(default)]
+    pub input_sha256: Option<String>,
+    #[serde(default)]
+    pub output_sha256: Option<String>,
+    #[serde(default)]
+    pub environment_notes: Option<String>,
+    #[serde(default)]
+    pub reproduction_notes: Option<String>,
 }
 
 // ─── Validation helpers ───────────────────────────────────────────────────────
@@ -99,8 +120,9 @@ pub async fn add_tool(
         r#"
         INSERT INTO tool_usage (
             case_id, evidence_id, tool_name, version, purpose,
-            command_used, input_file, output_file, execution_datetime, operator
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            command_used, input_file, output_file, execution_datetime, operator,
+            input_sha256, output_sha256, environment_notes, reproduction_notes
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         "#,
     )
     .bind(case_id)
@@ -113,6 +135,10 @@ pub async fn add_tool(
     .bind(&input.output_file)
     .bind(execution_dt)
     .bind(&input.operator)
+    .bind(&input.input_sha256)
+    .bind(&input.output_sha256)
+    .bind(&input.environment_notes)
+    .bind(&input.reproduction_notes)
     .execute(pool)
     .await?
     .last_insert_rowid();
@@ -121,7 +147,8 @@ pub async fn add_tool(
         r#"
         SELECT
             tool_id, case_id, evidence_id, tool_name, version, purpose,
-            command_used, input_file, output_file, execution_datetime, operator
+            command_used, input_file, output_file, execution_datetime, operator,
+            input_sha256, output_sha256, environment_notes, reproduction_notes
         FROM tool_usage
         WHERE tool_id = ?
         "#,
@@ -139,7 +166,8 @@ pub async fn list_for_case(pool: &SqlitePool, case_id: &str) -> Result<Vec<ToolU
         r#"
         SELECT
             tool_id, case_id, evidence_id, tool_name, version, purpose,
-            command_used, input_file, output_file, execution_datetime, operator
+            command_used, input_file, output_file, execution_datetime, operator,
+            input_sha256, output_sha256, environment_notes, reproduction_notes
         FROM tool_usage
         WHERE case_id = ?
         ORDER BY execution_datetime DESC
@@ -162,7 +190,8 @@ pub async fn list_for_evidence(
         r#"
         SELECT
             tool_id, case_id, evidence_id, tool_name, version, purpose,
-            command_used, input_file, output_file, execution_datetime, operator
+            command_used, input_file, output_file, execution_datetime, operator,
+            input_sha256, output_sha256, environment_notes, reproduction_notes
         FROM tool_usage
         WHERE evidence_id = ?
         ORDER BY execution_datetime DESC
@@ -192,6 +221,10 @@ mod tests {
             output_file: None,
             execution_datetime: None,
             operator: "examiner".to_string(),
+        input_sha256: None,
+        output_sha256: None,
+        environment_notes: None,
+        reproduction_notes: None,
         }
     }
 

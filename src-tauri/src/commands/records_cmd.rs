@@ -51,7 +51,7 @@ const ANALYSIS_ADDED: &str = "ANALYSIS_ADDED";
 /// Validates evidence_id format, collection_datetime not in future,
 /// and case_id existence.
 /// Logs `EVIDENCE_ADDED` to the case audit trail.
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub async fn evidence_add(
     token: String,
     case_id: String,
@@ -83,7 +83,7 @@ pub async fn evidence_add(
 }
 
 /// Fetch a single evidence item by evidence_id.
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub async fn evidence_get(
     token: String,
     evidence_id: String,
@@ -96,7 +96,7 @@ pub async fn evidence_get(
 }
 
 /// List all evidence items for a case.
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub async fn evidence_list_for_case(
     token: String,
     case_id: String,
@@ -114,7 +114,7 @@ pub async fn evidence_list_for_case(
 /// for this evidence (ON DELETE RESTRICT). Returns EvidenceHasDependents
 /// if blocked.
 /// Logs `EVIDENCE_DELETED` to the case audit trail (fetches case_id first).
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub async fn evidence_delete(
     token: String,
     evidence_id: String,
@@ -152,7 +152,7 @@ pub async fn evidence_delete(
 /// Validates `action` against the allowlist.
 /// Sequence number is auto-assigned (per-evidence, starts at 1).
 /// Logs `CUSTODY_ADDED` to the case audit trail.
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub async fn custody_add(
     token: String,
     evidence_id: String,
@@ -188,7 +188,7 @@ pub async fn custody_add(
 }
 
 /// List custody events for a specific evidence item (ordered by sequence).
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub async fn custody_list_for_evidence(
     token: String,
     evidence_id: String,
@@ -201,7 +201,7 @@ pub async fn custody_list_for_evidence(
 }
 
 /// List all custody events for a case (across all evidence items).
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub async fn custody_list_for_case(
     token: String,
     case_id: String,
@@ -217,7 +217,7 @@ pub async fn custody_list_for_case(
 ///
 /// Does NOT change custody_sequence or evidence_id.
 /// Logs `CUSTODY_UPDATED` to the audit trail.
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub async fn custody_update(
     token: String,
     custody_id: i64,
@@ -258,7 +258,7 @@ pub async fn custody_update(
 /// Delete a custody event by custody_id.
 ///
 /// Logs `CUSTODY_DELETED` to the audit trail.
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub async fn custody_delete(
     token: String,
     custody_id: i64,
@@ -297,7 +297,7 @@ pub async fn custody_delete(
 /// No delete — hash records are append-only evidentiary data.
 /// `hash_value` is lowercased server-side.
 /// Logs `HASH_ADDED` to the case audit trail.
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub async fn hash_add(
     token: String,
     evidence_id: String,
@@ -333,7 +333,7 @@ pub async fn hash_add(
 }
 
 /// List hash records for a specific evidence item.
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub async fn hash_list_for_evidence(
     token: String,
     evidence_id: String,
@@ -346,7 +346,7 @@ pub async fn hash_list_for_evidence(
 }
 
 /// List all hash records for a case.
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub async fn hash_list_for_case(
     token: String,
     case_id: String,
@@ -364,7 +364,7 @@ pub async fn hash_list_for_case(
 ///
 /// `execution_datetime` defaults to now() when absent.
 /// Logs `TOOL_LOGGED` to the case audit trail.
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub async fn tool_add(
     token: String,
     case_id: String,
@@ -397,7 +397,7 @@ pub async fn tool_add(
 }
 
 /// List all tool usage records for a case, ordered by execution_datetime DESC.
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub async fn tool_list_for_case(
     token: String,
     case_id: String,
@@ -410,7 +410,7 @@ pub async fn tool_list_for_case(
 }
 
 /// List tool usage records for a specific evidence item.
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub async fn tool_list_for_evidence(
     token: String,
     evidence_id: String,
@@ -428,7 +428,7 @@ pub async fn tool_list_for_evidence(
 ///
 /// `confidence_level` defaults to "Medium".
 /// Logs `ANALYSIS_ADDED` to the case audit trail.
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub async fn analysis_add(
     token: String,
     case_id: String,
@@ -461,7 +461,7 @@ pub async fn analysis_add(
 }
 
 /// List all analysis notes for a case, ordered by created_at DESC.
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub async fn analysis_list_for_case(
     token: String,
     case_id: String,
@@ -474,7 +474,7 @@ pub async fn analysis_list_for_case(
 }
 
 /// List analysis notes linked to a specific evidence item.
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub async fn analysis_list_for_evidence(
     token: String,
     evidence_id: String,

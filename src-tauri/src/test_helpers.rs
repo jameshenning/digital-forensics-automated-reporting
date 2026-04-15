@@ -370,6 +370,7 @@ pub async fn build_test_state() -> (Arc<AppState>, SqlitePool) {
         config: AppConfig::default(),
         config_path: PathBuf::new(),
         agent_zero: AgentZeroState::new(),
+        osint_consent_runtime: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
     });
 
     (state, auth_pool)

@@ -49,7 +49,7 @@ const EVENT_DELETED: &str = "EVENT_DELETED";
 ///
 /// Validates entity_type, subtype, display_name, parent_entity_id, metadata_json.
 /// Logs `ENTITY_ADDED` to the case audit trail.
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub async fn entity_add(
     token: String,
     case_id: String,
@@ -82,7 +82,7 @@ pub async fn entity_add(
 }
 
 /// Fetch a single entity by entity_id.
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub async fn entity_get(
     token: String,
     entity_id: i64,
@@ -95,7 +95,7 @@ pub async fn entity_get(
 }
 
 /// List all active entities for a case.
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub async fn entity_list_for_case(
     token: String,
     case_id: String,
@@ -111,7 +111,7 @@ pub async fn entity_list_for_case(
 ///
 /// Includes cycle check on parent_entity_id.
 /// Logs `ENTITY_UPDATED` to the case audit trail.
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub async fn entity_update(
     token: String,
     entity_id: i64,
@@ -145,7 +145,7 @@ pub async fn entity_update(
 /// Soft-delete an entity (cascades to entity_links atomically).
 ///
 /// Logs `ENTITY_DELETED` to the case audit trail.
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub async fn entity_delete(
     token: String,
     entity_id: i64,
@@ -185,7 +185,7 @@ pub async fn entity_delete(
 ///
 /// Validates both endpoints, no self-loops, directional/weight bounds.
 /// Logs `LINK_ADDED` to the case audit trail.
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub async fn link_add(
     token: String,
     case_id: String,
@@ -219,7 +219,7 @@ pub async fn link_add(
 }
 
 /// List all active links for a case.
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub async fn link_list_for_case(
     token: String,
     case_id: String,
@@ -234,7 +234,7 @@ pub async fn link_list_for_case(
 /// Soft-delete a link by link_id.
 ///
 /// Logs `LINK_DELETED` to the case audit trail.
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub async fn link_delete(
     token: String,
     link_id: i64,
@@ -275,7 +275,7 @@ pub async fn link_delete(
 ///
 /// Validates title, category, datetime bounds, related FK refs.
 /// Logs `EVENT_ADDED` to the case audit trail.
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub async fn event_add(
     token: String,
     case_id: String,
@@ -307,7 +307,7 @@ pub async fn event_add(
 }
 
 /// List all active events for a case, ordered by event_datetime ASC.
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub async fn event_list_for_case(
     token: String,
     case_id: String,
@@ -322,7 +322,7 @@ pub async fn event_list_for_case(
 /// Update an existing event's mutable fields.
 ///
 /// Logs `EVENT_UPDATED` to the case audit trail.
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub async fn event_update(
     token: String,
     event_id: i64,
@@ -352,7 +352,7 @@ pub async fn event_update(
 /// Soft-delete a case event by event_id.
 ///
 /// Logs `EVENT_DELETED` to the case audit trail.
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub async fn event_delete(
     token: String,
     event_id: i64,
@@ -389,7 +389,7 @@ pub async fn event_delete(
 ///
 /// Requires a valid session — evidentiary data is never exposed unauthenticated.
 /// `filter` controls entity_type inclusion and whether evidence nodes are included.
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub async fn case_graph(
     token: String,
     case_id: String,
@@ -406,7 +406,7 @@ pub async fn case_graph(
 ///
 /// Requires a valid session.
 /// `filter` provides optional start/end date bounds applied to all 6 event groups.
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub async fn case_crime_line(
     token: String,
     case_id: String,

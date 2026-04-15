@@ -38,6 +38,7 @@ const VERIFIED_BY_MAX_LEN: usize = 100;
 // ─── Public data types ────────────────────────────────────────────────────────
 
 /// Full hash verification row, maps 1:1 to the `hash_verification` table.
+/// `verification_datetime` is a `String` for v1 compat — see `db::cases::Case`.
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct HashRecord {
     pub hash_id: i64,
@@ -45,7 +46,7 @@ pub struct HashRecord {
     pub algorithm: String,
     pub hash_value: String,
     pub verified_by: String,
-    pub verification_datetime: NaiveDateTime,
+    pub verification_datetime: String,
     pub notes: Option<String>,
 }
 

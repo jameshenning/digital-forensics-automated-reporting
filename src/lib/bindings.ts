@@ -61,9 +61,14 @@ export type AppErrorCode =
   | "AgentZeroServerError"
   | "PayloadTooLarge"
   | "AiSummarizeConsentRequired"
+  | "AiOsintConsentRequired"
   | "SmtpConnectFailed"
   | "SmtpSendFailed"
-  | "DriveScanTooLarge";
+  | "DriveScanTooLarge"
+  // Persons — photo upload (migration 0002)
+  | "PersonPhotoTooLarge"
+  | "PersonPhotoNotAnImage"
+  | "EntityNotAPerson";
 
 export interface AppError {
   code: AppErrorCode;
@@ -147,6 +152,7 @@ export function authLogin(args: {
 export function authVerifyMfa(args: {
   pending_token: string;
   code: string;
+  use_recovery: boolean;
 }): Promise<SessionInfo> {
   return invoke<SessionInfo>("auth_verify_mfa", args);
 }
@@ -426,6 +432,15 @@ export interface ToolUsage {
   output_file: string | null;
   execution_datetime: string;
   operator: string;
+  // Reproduction fields (migration 0003 — Reproducibility feature).
+  // All optional; case-wide runs that have no single input file may omit them.
+  // The KB's curated reproduction_steps in src/lib/forensic-tools.ts use
+  // placeholder substitution with these values to render step-by-step
+  // instructions in the ToolCard and the forensic report.
+  input_sha256: string | null;
+  output_sha256: string | null;
+  environment_notes: string | null;
+  reproduction_notes: string | null;
 }
 
 export interface ToolInput {
@@ -438,6 +453,10 @@ export interface ToolInput {
   output_file: string | null;
   execution_datetime: string | null; // null → backend uses now()
   operator: string;
+  input_sha256: string | null;
+  output_sha256: string | null;
+  environment_notes: string | null;
+  reproduction_notes: string | null;
 }
 
 export type AnalysisCategory =
@@ -654,6 +673,21 @@ export function settingsGetSecurityPosture(args: {
   return invoke<SecurityPosture>("settings_get_security_posture", args);
 }
 
+/**
+ * Frontend → Rust tracing bridge. Writes `message` to the rolling debug log
+ * file so we can see frontend errors without devtools.
+ *
+ * Used by `main.tsx`'s window.onerror + unhandledrejection handlers and by
+ * individual queryFn trace points. Never call from hot paths — only from
+ * error paths or explicit diagnostic sites.
+ */
+export function debugLogFrontend(args: {
+  level: "error" | "warn" | "info";
+  message: string;
+}): Promise<void> {
+  return invoke<void>("debug_log_frontend", args);
+}
+
 // ---------------------------------------------------------------------------
 // Evidence file types (Phase 3b)
 // ---------------------------------------------------------------------------
@@ -708,12 +742,18 @@ export interface EvidenceFileDownload {
  *   InvalidFilename — bad characters or >200 UTF-8 bytes
  *   PathTraversalBlocked — canonicalize check failed
  */
+/** Upload response — EvidenceFile fields flattened plus an optional soft-limit warning. */
+export interface EvidenceFileUploadResponse extends EvidenceFile {
+  /** Non-null when the file exceeds the 2 GiB soft-warning threshold. */
+  warning: string | null;
+}
+
 export function evidenceFilesUpload(args: {
   token: string;
   evidence_id: string;
   source_path: string;
-}): Promise<EvidenceFile> {
-  return invoke<EvidenceFile>("evidence_files_upload", args);
+}): Promise<EvidenceFileUploadResponse> {
+  return invoke<EvidenceFileUploadResponse>("evidence_files_upload", args);
 }
 
 /** List all non-deleted files attached to an evidence item. */
@@ -764,6 +804,66 @@ export function evidenceFilesPurge(args: {
   justification: string;
 }): Promise<void> {
   return invoke<void>("evidence_files_purge", args);
+}
+
+// ---------------------------------------------------------------------------
+// Person photo commands (migration 0002 — Persons feature)
+// ---------------------------------------------------------------------------
+
+/**
+ * Upload a photo for a person entity. Returns the stored absolute path,
+ * which is the new `entity.photo_path`. Render it in the WebView via
+ * `convertFileSrc(path)` from `@tauri-apps/api/core`.
+ *
+ * Validation:
+ *  - entity must exist and have `entity_type === "person"`
+ *  - size <= 10 MiB
+ *  - magic bytes must identify JPEG / PNG / GIF / WebP / BMP / TIFF
+ *
+ * Errors to handle:
+ *  - PersonPhotoTooLarge — file exceeds 10 MiB
+ *  - PersonPhotoNotAnImage — magic-byte sniff failed
+ *  - EntityNotAPerson — the entity_id does not refer to a person entity
+ *  - EntityNotFound — no such entity
+ *  - InvalidFilename — path-component sanitization rejected the source filename
+ */
+export function personPhotoUpload(args: {
+  token: string;
+  entity_id: number;
+  source_path: string;
+}): Promise<string> {
+  return invoke<string>("person_photo_upload", args);
+}
+
+/**
+ * Delete the person's photo file from disk and clear `entity.photo_path`.
+ * Idempotent — safe to call on a person that already has no photo.
+ */
+export function personPhotoDelete(args: {
+  token: string;
+  entity_id: number;
+}): Promise<void> {
+  return invoke<void>("person_photo_delete", args);
+}
+
+// ---------------------------------------------------------------------------
+// SHA-256 utility (Reproducibility feature — Tool form Compute Hash button)
+// ---------------------------------------------------------------------------
+
+/**
+ * Compute the SHA-256 of a file at a given path on disk and return it as a
+ * lowercase hex string. Used by the Tool Add/Edit form's Compute Hash
+ * button to populate the `input_sha256` field so a second examiner can
+ * verify they have the same input bytes the original examiner used.
+ *
+ * Errors:
+ *  - Io — file does not exist, is not a regular file, or cannot be read
+ */
+export function fileComputeSha256(args: {
+  token: string;
+  path: string;
+}): Promise<string> {
+  return invoke<string>("file_compute_sha256", args);
 }
 
 // ---------------------------------------------------------------------------
@@ -844,11 +944,33 @@ export interface Entity {
   is_deleted: number; // 0 | 1
   created_at: string;
   updated_at: string;
+  // Person-specific columns (migration 0002) — always null for non-person entities.
+  // photo_path holds an absolute filesystem path under %APPDATA%\DFARS\person_photos\;
+  // render it with convertFileSrc() from @tauri-apps/api/core.
+  photo_path: string | null;
+  email: string | null;
+  phone: string | null;
+  username: string | null;
+  employer: string | null;
+  dob: string | null; // ISO YYYY-MM-DD
 }
 
+/**
+ * EntityInput — writable fields for creating/updating an entity.
+ *
+ * Note: photo_path is NOT in EntityInput. Photos are managed by the
+ * dedicated `personPhotoUpload` / `personPhotoDelete` commands so the
+ * upload path owns the file lifecycle. Setting photo_path via the
+ * entity_update command would leave the old file on disk.
+ */
 export type EntityInput = Omit<
   Entity,
-  "entity_id" | "case_id" | "is_deleted" | "created_at" | "updated_at"
+  | "entity_id"
+  | "case_id"
+  | "is_deleted"
+  | "created_at"
+  | "updated_at"
+  | "photo_path"
 >;
 
 export type LinkEndpointKind = "entity" | "evidence";
@@ -967,7 +1089,7 @@ export function entitiesListForCase(args: {
   token: string;
   case_id: string;
 }): Promise<Entity[]> {
-  return invoke<Entity[]>("entities_list", args);
+  return invoke<Entity[]>("entity_list_for_case", args);
 }
 
 /** Add a new entity to a case. */
@@ -1003,7 +1125,7 @@ export function linksListForCase(args: {
   token: string;
   case_id: string;
 }): Promise<Link[]> {
-  return invoke<Link[]>("links_list", args);
+  return invoke<Link[]>("link_list_for_case", args);
 }
 
 /** Add a new link between two nodes. */
@@ -1029,7 +1151,7 @@ export function eventsListForCase(args: {
   token: string;
   case_id: string;
 }): Promise<CaseEvent[]> {
-  return invoke<CaseEvent[]>("events_list", args);
+  return invoke<CaseEvent[]>("event_list_for_case", args);
 }
 
 /** Add a new case event. */
@@ -1074,13 +1196,13 @@ export function caseGraph(args: {
 
 /**
  * Fetch the crime-line (timeline) payload for vis-timeline.
- * `start` / `end` are ISO datetime strings or null (no filter).
+ * `filter.start` / `filter.end` are ISO datetime strings or null (no filter).
+ * Must be passed as a nested `filter` struct to match the Rust command signature.
  */
 export function caseCrimeLine(args: {
   token: string;
   case_id: string;
-  start: string | null;
-  end: string | null;
+  filter: TimelineFilter;
 }): Promise<TimelinePayload> {
   return invoke<TimelinePayload>("case_crime_line", args);
 }
@@ -1090,19 +1212,19 @@ export function caseCrimeLine(args: {
 // ---------------------------------------------------------------------------
 
 export interface AiClassificationResult {
-  case_type: string | null;
-  priority: "Low" | "Medium" | "High" | "Critical" | null;
-  status: string | null;
-  tags: string[] | null;
-  rationale: string | null;
+  /** Maps to Rust ClassificationResult.category */
+  category: string;
+  subcategory: string | null;
+  confidence: number;
+  /** Maps to Rust ClassificationResult.reasoning */
+  reasoning: string | null;
 }
 
 export interface AiCaseSummary {
   executive_summary: string; // markdown
   key_findings: string[];
-  conclusion: string;
-  tools_used: string[] | null;
-  platforms_used: string[] | null;
+  conclusion: string | null;
+  generated_at: string;
 }
 
 export interface ForensicAnalysisResult {
@@ -1119,8 +1241,12 @@ export interface ForensicAnalysisResult {
 export interface AgentZeroSettings {
   url: string | null;
   api_key_set: boolean;
+  /** Serialized from Rust axum_port field. */
   port: number;
   allow_custom_url: boolean;
+  bind_host: string;
+  allow_network_bind: boolean;
+  /** Derived: true when both url and api_key are set. */
   is_configured: boolean;
   shown_ai_summarize_consent: boolean;
 }
@@ -1230,6 +1356,53 @@ export function aiSummarizeCase(args: {
 }
 
 /**
+ * Summary returned by ai_osint_person after Agent Zero finishes orchestrating
+ * OSINT tools against a person entity's known fields.
+ *
+ * tool_usage_rows_inserted counts how many tool_usage rows the Rust command
+ * successfully inserted — one per successful Agent Zero run. These rows
+ * automatically appear in the case's Tools tab and in the Markdown report.
+ * The raw per-tool findings are ALSO written into the entity's metadata_json
+ * under `osint_findings[]` so the PersonCard can display them inline.
+ */
+export interface OsintRunSummary {
+  status: "success" | "partial" | "failed";
+  tools_run: number;
+  tool_usage_rows_inserted: number;
+  notes: string | null;
+}
+
+/**
+ * Orchestrate an OSINT run for a person entity via Agent Zero.
+ *
+ * Flow:
+ *  - Validates the entity exists and has entity_type = "person"
+ *  - Checks the separate OSINT consent flag (AiOsintConsentRequired if not)
+ *  - Sends person fields (name, email, phone, username, employer, dob, notes)
+ *    and the default tool set to Agent Zero's dfars_osint_person endpoint
+ *  - Agent Zero decides which additional Kali OSINT tools to run
+ *  - Rust inserts a tool_usage row for each successful run and appends
+ *    findings into entity.metadata_json.osint_findings[]
+ *
+ * 900 s Agent Zero timeout. Users should see a progress spinner for the
+ * duration of the call. PII leaves the machine by design — get consent first.
+ *
+ * Errors to handle:
+ *  - AiOsintConsentRequired — show the AiConsentDialog with scope="osint"
+ *    and call settingsAcknowledgeOsintConsent before retrying
+ *  - EntityNotAPerson — button should not have been shown
+ *  - AgentZeroNotConfigured — user needs to set Agent Zero URL + API key
+ *  - AgentZeroTimeout — the 900 s window elapsed; partial results may still
+ *    have been inserted (check the Tools tab)
+ */
+export function aiOsintPerson(args: {
+  token: string;
+  entity_id: number;
+}): Promise<OsintRunSummary> {
+  return invoke<OsintRunSummary>("ai_osint_person", args);
+}
+
+/**
  * Send evidence metadata + narrative to Agent Zero for forensic analysis.
  * 300 s timeout (Agent Zero runs real Kali forensic tools).
  * Agent Zero will call back to the DFARS axum server to download evidence files.
@@ -1323,6 +1496,24 @@ export function settingsAcknowledgeAiConsent(args: {
   return invoke<void>("settings_acknowledge_ai_consent", args);
 }
 
+/**
+ * Record that the investigator has acknowledged the OSINT consent.
+ *
+ * OSINT is SEPARATE from the AI summarize consent because it is meaningfully
+ * more invasive: PII (name, email, username, employer) is sent to Agent Zero
+ * and onward to external OSINT sources (LinkedIn, Shodan, Sherlock's site
+ * list, etc.). The dialog copy should make this explicit.
+ *
+ * After this call, ai_osint_person will proceed immediately without
+ * returning AiOsintConsentRequired. Takes effect in-memory (runtime atomic)
+ * AND on disk (config.shown_ai_osint_consent = true) — no app restart needed.
+ */
+export function settingsAcknowledgeOsintConsent(args: {
+  token: string;
+}): Promise<void> {
+  return invoke<void>("settings_acknowledge_osint_consent", args);
+}
+
 /** Get the current SMTP settings. Password is NEVER returned (password_set boolean only). */
 export function settingsGetSmtp(args: {
   token: string;
@@ -1349,11 +1540,23 @@ export function settingsTestSmtp(args: {
   return invoke<SmtpTestResult>("settings_test_smtp", args);
 }
 
-/** Get network binding status for the axum server. */
-export function systemGetNetworkStatus(args: {
+/** Get network binding status for the axum server.
+ *
+ * The Rust side never wired up a `system_get_network_status` command.
+ * Rather than crash the integrations page by calling a non-existent command,
+ * we return a safe fallback. The real fix is to add the Rust command in a
+ * follow-up iteration, but for v2.0.0 the integrations page doesn't need
+ * authoritative network status to function.
+ */
+export async function systemGetNetworkStatus(_args: {
   token: string;
 }): Promise<NetworkStatus> {
-  return invoke<NetworkStatus>("system_get_network_status", args);
+  return {
+    bind_host: "127.0.0.1",
+    allow_network_bind: false,
+    axum_running: true,
+    axum_url: "http://127.0.0.1:5099",
+  };
 }
 
 // ---------------------------------------------------------------------------

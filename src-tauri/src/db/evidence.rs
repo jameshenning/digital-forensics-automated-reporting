@@ -28,13 +28,19 @@ const EVIDENCE_ID_MAX_LEN: usize = 64;
 // ─── Public data types ────────────────────────────────────────────────────────
 
 /// Full evidence row, maps 1:1 to the `evidence` table.
+///
+/// NOTE: `collection_datetime` is read as `String` (not `NaiveDateTime`)
+/// because v1 stored datetimes as space-separated strings (e.g.
+/// `"2026-04-11 00:00:00"`) which sqlx's chrono integration can't parse.
+/// See `db::cases::Case` for the full rationale. Frontend already treats
+/// these as ISO strings.
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct Evidence {
     pub evidence_id: String,
     pub case_id: String,
     pub description: String,
     pub collected_by: String,
-    pub collection_datetime: NaiveDateTime,
+    pub collection_datetime: String,
     pub location: Option<String>,
     pub status: String,
     pub evidence_type: Option<String>,

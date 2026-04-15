@@ -34,6 +34,7 @@ import {
   aiSummarizeCase,
   aiClassify,
   settingsGetAgentZero,
+  debugLogFrontend,
   type AiCaseSummary,
   type AiClassificationResult,
 } from "@/lib/bindings";
@@ -69,6 +70,7 @@ import {
 } from "@/components/ui/dialog";
 
 import { EvidencePanel } from "@/components/evidence-panel";
+import { PersonsPanel } from "@/components/persons-panel";
 import { CustodyPanel } from "@/components/custody-panel";
 import { HashPanel } from "@/components/hash-panel";
 import { ToolsPanel } from "@/components/tools-panel";
@@ -84,8 +86,36 @@ import { AiConsentDialog } from "@/components/ai-consent-dialog";
 import { DriveScanButton } from "@/components/drive-scan-button";
 
 export const Route = createFileRoute("/case/$caseId")({
-  beforeLoad: requireAuthBeforeLoad,
+  beforeLoad: (opts) => {
+    void debugLogFrontend({
+      level: "info",
+      message: `case.$caseId beforeLoad — params=${JSON.stringify(opts.params)}`,
+    }).catch(() => {});
+    return requireAuthBeforeLoad();
+  },
   component: CaseDetailPage,
+  errorComponent: ({ error }) => {
+    const msg = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+    const stack = error instanceof Error ? error.stack ?? "" : "";
+    void debugLogFrontend({
+      level: "error",
+      message: `case.$caseId errorComponent — ${msg}\n${stack}`,
+    }).catch(() => {});
+    return (
+      <div className="min-h-screen bg-background p-8">
+        <div className="mx-auto max-w-2xl rounded-lg border border-destructive bg-destructive/10 p-6">
+          <h1 className="text-lg font-semibold text-destructive mb-2">
+            Route error in /case/$caseId
+          </h1>
+          <pre className="text-xs font-mono whitespace-pre-wrap text-destructive/90">
+            {msg}
+            {stack && "\n\n"}
+            {stack}
+          </pre>
+        </div>
+      </div>
+    );
+  },
 });
 
 // ---------------------------------------------------------------------------
@@ -205,6 +235,15 @@ function CaseDetailPage() {
   const queryClient = useQueryClient();
   const token = getToken() ?? "";
 
+  // Diagnostic breadcrumb — we NEED to know this component is mounting and
+  // what state the token + caseId are in. Fires once per mount via useEffect.
+  React.useEffect(() => {
+    void debugLogFrontend({
+      level: "info",
+      message: `CaseDetailPage mounted — caseId=${JSON.stringify(caseId)} token_len=${token.length} token_prefix=${token.slice(0, 8)}`,
+    }).catch(() => {});
+  }, [caseId, token]);
+
   const [deleteHasEvidenceError, setDeleteHasEvidenceError] =
     React.useState(false);
   const [reportOpen, setReportOpen] = React.useState(false);
@@ -226,7 +265,27 @@ function CaseDetailPage() {
 
   const { data, isLoading, isError, error, refetch } = useQuery<CaseDetail>({
     queryKey: queryKeys.cases.detail(caseId),
-    queryFn: () => caseGet({ token, case_id: caseId }),
+    queryFn: async () => {
+      void debugLogFrontend({
+        level: "info",
+        message: `caseGet queryFn starting — caseId=${JSON.stringify(caseId)} token_prefix=${token.slice(0, 8)}`,
+      }).catch(() => {});
+      try {
+        const result = await caseGet({ token, case_id: caseId });
+        void debugLogFrontend({
+          level: "info",
+          message: `caseGet queryFn OK — keys=${Object.keys(result as object).join(",")}`,
+        }).catch(() => {});
+        return result;
+      } catch (err) {
+        const msg = err instanceof Error ? `${err.name}: ${err.message}` : JSON.stringify(err);
+        void debugLogFrontend({
+          level: "error",
+          message: `caseGet queryFn REJECTED — ${msg}`,
+        }).catch(() => {});
+        throw err;
+      }
+    },
     enabled: !!token,
   });
 
@@ -305,7 +364,7 @@ function CaseDetailPage() {
   if (isLoading) {
     return (
       <div className="min-h-screen bg-background">
-        <main className="mx-auto max-w-4xl px-6 py-8">
+        <main className="mx-auto max-w-5xl px-6 py-8">
           <Skeleton className="h-8 w-32 mb-6" />
           <Card>
             <CardContent className="pt-6">
@@ -323,7 +382,7 @@ function CaseDetailPage() {
 
     return (
       <div className="min-h-screen bg-background">
-        <main className="mx-auto max-w-4xl px-6 py-8">
+        <main className="mx-auto max-w-5xl px-6 py-8">
           <Button
             variant="ghost"
             size="sm"
@@ -355,7 +414,7 @@ function CaseDetailPage() {
 
   return (
     <div className="min-h-screen bg-background">
-      <main className="mx-auto max-w-4xl px-6 py-8">
+      <main className="mx-auto max-w-5xl px-6 py-8">
         {/* Back */}
         <Button
           variant="ghost"
@@ -363,39 +422,42 @@ function CaseDetailPage() {
           className="mb-4 -ml-2"
           onClick={() => void navigate({ to: "/dashboard" })}
         >
-          <ArrowLeft className="h-4 w-4 mr-1" />
+          <ArrowLeft className="h-4 w-4 mr-1.5" />
           Dashboard
         </Button>
 
         {/* Case header card */}
         <Card className="mb-4">
-          <CardHeader>
-            <div className="flex items-start justify-between gap-3">
-              <div className="min-w-0">
-                <CardTitle className="text-xl">{c.case_name}</CardTitle>
-                <code className="text-xs text-muted-foreground font-mono mt-1 block">
-                  {c.case_id}
-                </code>
-                <div className="flex flex-wrap gap-1.5 mt-2">
-                  <span
-                    className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium ${statusBadgeClass(c.status)}`}
-                  >
-                    {c.status}
-                  </span>
-                  <span
-                    className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium ${priorityBadgeClass(c.priority)}`}
-                  >
-                    {c.priority}
-                  </span>
-                  {tags.map((tag) => (
-                    <Badge key={tag} variant="secondary" className="text-xs">
-                      {tag}
-                    </Badge>
-                  ))}
-                </div>
+          <CardHeader className="space-y-4">
+            {/* Title + identifiers + badges */}
+            <div className="min-w-0">
+              <CardTitle className="text-2xl leading-tight">{c.case_name}</CardTitle>
+              <code className="text-xs text-muted-foreground font-mono mt-1.5 block">
+                {c.case_id}
+              </code>
+              <div className="flex flex-wrap gap-1.5 mt-3">
+                <span
+                  className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-medium ${statusBadgeClass(c.status)}`}
+                >
+                  {c.status}
+                </span>
+                <span
+                  className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-medium ${priorityBadgeClass(c.priority)}`}
+                >
+                  {c.priority}
+                </span>
+                {tags.map((tag) => (
+                  <Badge key={tag} variant="secondary" className="text-xs">
+                    {tag}
+                  </Badge>
+                ))}
               </div>
-              <div className="flex gap-2 shrink-0 flex-wrap">
-                {/* AI buttons */}
+            </div>
+
+            {/* Action bar — grouped with separators, destructive pushed right */}
+            <div className="flex flex-wrap items-center gap-2 border-t pt-4">
+              {/* AI group */}
+              <div className="flex flex-wrap gap-2">
                 <Button
                   size="sm"
                   variant="outline"
@@ -404,9 +466,9 @@ function CaseDetailPage() {
                   title={!agentZeroSettings?.is_configured ? "Configure Agent Zero in Settings" : "Summarize with AI"}
                 >
                   {summarizeMutation.isPending ? (
-                    <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                    <Loader2 className="h-4 w-4 mr-1.5 animate-spin" />
                   ) : (
-                    <BookOpen className="h-4 w-4 mr-1" />
+                    <BookOpen className="h-4 w-4 mr-1.5" />
                   )}
                   Summarize
                 </Button>
@@ -418,12 +480,18 @@ function CaseDetailPage() {
                   title={!agentZeroSettings?.is_configured ? "Configure Agent Zero in Settings" : "Classify with AI"}
                 >
                   {classifyMutation.isPending ? (
-                    <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                    <Loader2 className="h-4 w-4 mr-1.5 animate-spin" />
                   ) : (
-                    <Tags className="h-4 w-4 mr-1" />
+                    <Tags className="h-4 w-4 mr-1.5" />
                   )}
                   Classify
                 </Button>
+              </div>
+
+              <div className="hidden h-6 w-px bg-border sm:block" />
+
+              {/* Actions group */}
+              <div className="flex flex-wrap gap-2">
                 <DriveScanButton
                   caseId={caseId}
                   drivePath={c.evidence_drive_path}
@@ -433,7 +501,7 @@ function CaseDetailPage() {
                   variant="outline"
                   onClick={() => setReportOpen(true)}
                 >
-                  <FileText className="h-4 w-4 mr-1" />
+                  <FileText className="h-4 w-4 mr-1.5" />
                   Report
                 </Button>
                 <Button
@@ -446,9 +514,13 @@ function CaseDetailPage() {
                     })
                   }
                 >
-                  <Network className="h-4 w-4 mr-1" />
+                  <Network className="h-4 w-4 mr-1.5" />
                   Link Analysis
                 </Button>
+              </div>
+
+              {/* Edit + Delete pushed to the right */}
+              <div className="flex flex-wrap gap-2 sm:ml-auto">
                 <Button
                   size="sm"
                   variant="outline"
@@ -459,7 +531,7 @@ function CaseDetailPage() {
                     })
                   }
                 >
-                  <Pencil className="h-4 w-4 mr-1" />
+                  <Pencil className="h-4 w-4 mr-1.5" />
                   Edit
                 </Button>
                 <DeleteDialog
@@ -553,12 +625,14 @@ function CaseDetailPage() {
                     </ul>
                   </div>
                 )}
-                <div>
-                  <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1">
-                    Conclusion
-                  </p>
-                  <p className="text-sm">{summary.conclusion}</p>
-                </div>
+                {summary.conclusion && (
+                  <div>
+                    <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1">
+                      Conclusion
+                    </p>
+                    <p className="text-sm">{summary.conclusion}</p>
+                  </div>
+                )}
               </div>
             )}
             <DialogFooter>
@@ -578,32 +652,24 @@ function CaseDetailPage() {
             </DialogHeader>
             {classifyResult && (
               <div className="space-y-3 text-sm">
-                {classifyResult.case_type && (
+                <div>
+                  <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-0.5">Category</p>
+                  <p>{classifyResult.category}</p>
+                </div>
+                {classifyResult.subcategory && (
                   <div>
-                    <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-0.5">Case type</p>
-                    <p>{classifyResult.case_type}</p>
+                    <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-0.5">Subcategory</p>
+                    <p>{classifyResult.subcategory}</p>
                   </div>
                 )}
-                {classifyResult.priority && (
+                <div>
+                  <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-0.5">Confidence</p>
+                  <Badge variant="secondary">{Math.round(classifyResult.confidence * 100)}%</Badge>
+                </div>
+                {classifyResult.reasoning && (
                   <div>
-                    <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-0.5">Suggested priority</p>
-                    <Badge variant="secondary">{classifyResult.priority}</Badge>
-                  </div>
-                )}
-                {classifyResult.tags && classifyResult.tags.length > 0 && (
-                  <div>
-                    <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1">Suggested tags</p>
-                    <div className="flex gap-1 flex-wrap">
-                      {classifyResult.tags.map((t) => (
-                        <Badge key={t} variant="secondary" className="text-xs">{t}</Badge>
-                      ))}
-                    </div>
-                  </div>
-                )}
-                {classifyResult.rationale && (
-                  <div>
-                    <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-0.5">Rationale</p>
-                    <p className="text-muted-foreground">{classifyResult.rationale}</p>
+                    <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-0.5">Reasoning</p>
+                    <p className="text-muted-foreground">{classifyResult.reasoning}</p>
                   </div>
                 )}
                 <p className="text-xs text-muted-foreground pt-1">
@@ -621,9 +687,10 @@ function CaseDetailPage() {
         <Tabs defaultValue="evidence">
           <TabsList className="w-full justify-start overflow-x-auto flex-wrap h-auto gap-1 mb-4">
             <TabsTrigger value="evidence">Evidence</TabsTrigger>
+            <TabsTrigger value="persons">Persons</TabsTrigger>
             <TabsTrigger value="custody">Chain of Custody</TabsTrigger>
             <TabsTrigger value="hashes">Hashes</TabsTrigger>
-            <TabsTrigger value="tools">Tools</TabsTrigger>
+            <TabsTrigger value="tools">Case-wide Tools</TabsTrigger>
             <TabsTrigger value="analysis">Analysis</TabsTrigger>
           </TabsList>
 
@@ -642,6 +709,19 @@ function CaseDetailPage() {
                     })
                   }
                 />
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          <TabsContent value="persons">
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">
+                  Persons of interest, suspects, victims, witnesses
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <PersonsPanel caseId={caseId} />
               </CardContent>
             </Card>
           </TabsContent>
@@ -671,7 +751,9 @@ function CaseDetailPage() {
           <TabsContent value="tools">
             <Card>
               <CardHeader>
-                <CardTitle className="text-base">Tool Usage</CardTitle>
+                <CardTitle className="text-base">
+                  Case-wide Tool Usage (OSINT, case-level forensics)
+                </CardTitle>
               </CardHeader>
               <CardContent>
                 <ToolsPanel caseId={caseId} />

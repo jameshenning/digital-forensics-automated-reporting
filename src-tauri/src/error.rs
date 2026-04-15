@@ -117,6 +117,17 @@ pub enum AppError {
     #[error("hash mismatch on download: file_id={file_id}, expected={expected}, actual={actual}")]
     HashMismatchOnDownload { file_id: i64, expected: String, actual: String },
 
+    // ─── Persons — photo upload (migration 0002) ─────────────────────────────
+
+    #[error("person photo too large: size={size} bytes exceeds limit={limit} bytes")]
+    PersonPhotoTooLarge { size: u64, limit: u64 },
+
+    #[error("person photo is not an image: detected={detected}")]
+    PersonPhotoNotAnImage { detected: String },
+
+    #[error("entity is not a person: entity_id={entity_id}, entity_type={entity_type}")]
+    EntityNotAPerson { entity_id: i64, entity_type: String },
+
     // ─── Phase 3b: reports ───────────────────────────────────────────────────
 
     #[error("report generation failed: {reason}")]
@@ -151,6 +162,12 @@ pub enum AppError {
     /// SEC-4 MUST-DO 8: one-time consent gate for ai_summarize_case.
     #[error("AI summarize consent required")]
     AiSummarizeConsentRequired,
+
+    /// One-time consent gate for Agent Zero OSINT runs against a person.
+    /// Separate from the case-summary consent because OSINT sends PII to
+    /// external sources and is meaningfully more invasive.
+    #[error("AI OSINT consent required")]
+    AiOsintConsentRequired,
 
     /// SMTP connection failed.
     #[error("SMTP connection failed: {reason}")]

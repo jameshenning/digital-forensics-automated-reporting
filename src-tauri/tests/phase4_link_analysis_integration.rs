@@ -135,6 +135,10 @@ CREATE TABLE IF NOT EXISTS tool_usage (
     output_file TEXT,
     execution_datetime TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     operator TEXT NOT NULL,
+    input_sha256 TEXT,
+    output_sha256 TEXT,
+    environment_notes TEXT,
+    reproduction_notes TEXT,
     FOREIGN KEY (case_id) REFERENCES cases (case_id) ON DELETE RESTRICT
 );
 
@@ -181,6 +185,12 @@ CREATE TABLE IF NOT EXISTS entities (
     is_deleted INTEGER DEFAULT 0,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    photo_path TEXT,
+    email TEXT,
+    phone TEXT,
+    username TEXT,
+    employer TEXT,
+    dob TEXT,
     FOREIGN KEY (case_id) REFERENCES cases (case_id) ON DELETE RESTRICT,
     FOREIGN KEY (parent_entity_id) REFERENCES entities (entity_id) ON DELETE SET NULL
 );
@@ -342,6 +352,7 @@ async fn make_state() -> (Arc<AppState>, SqlitePool) {
         config: dfars_desktop_lib::config::AppConfig::default(),
         config_path: std::path::PathBuf::new(),
         agent_zero: dfars_desktop_lib::agent_zero::AgentZeroState::new(),
+        osint_consent_runtime: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
     });
 
     (state, forensics)
@@ -376,6 +387,11 @@ async fn make_entity(pool: &SqlitePool, case_id: &str, name: &str, etype: &str) 
         parent_entity_id: None,
         notes: None,
         metadata_json: None,
+        email: None,
+        phone: None,
+        username: None,
+        employer: None,
+        dob: None,
     };
     add_entity(pool, case_id, &input)
         .await
@@ -425,6 +441,11 @@ async fn test_entity_crud() {
         parent_entity_id: None,
         notes: Some("Key suspect".into()),
         metadata_json: None,
+        email: None,
+        phone: None,
+        username: None,
+        employer: None,
+        dob: None,
     };
     let entity = add_entity(&pool, &case_id, &input).await.expect("add failed");
     assert_eq!(entity.display_name, "Alice Smith");
@@ -450,6 +471,11 @@ async fn test_entity_crud() {
         parent_entity_id: None,
         notes: None,
         metadata_json: None,
+        email: None,
+        phone: None,
+        username: None,
+        employer: None,
+        dob: None,
     };
     let updated = update_entity(&pool, entity.entity_id, &update_input)
         .await
@@ -481,6 +507,11 @@ async fn test_entity_type_subtype_validation() {
         parent_entity_id: None,
         notes: None,
         metadata_json: None,
+        email: None,
+        phone: None,
+        username: None,
+        employer: None,
+        dob: None,
     };
     let err = add_entity(&pool, &case_id, &bad_type).await.unwrap_err();
     assert!(matches!(err, AppError::ValidationError { .. }), "invalid entity_type must be rejected: {err:?}");
@@ -494,6 +525,11 @@ async fn test_entity_type_subtype_validation() {
         parent_entity_id: None,
         notes: None,
         metadata_json: None,
+        email: None,
+        phone: None,
+        username: None,
+        employer: None,
+        dob: None,
     };
     let err = add_entity(&pool, &case_id, &bad_subtype).await.unwrap_err();
     assert!(matches!(err, AppError::ValidationError { .. }), "non-person subtype must be rejected: {err:?}");
@@ -507,6 +543,11 @@ async fn test_entity_type_subtype_validation() {
         parent_entity_id: None,
         notes: None,
         metadata_json: None,
+        email: None,
+        phone: None,
+        username: None,
+        employer: None,
+        dob: None,
     };
     add_entity(&pool, &case_id, &ok).await.expect("person without subtype should be allowed");
 
@@ -519,6 +560,11 @@ async fn test_entity_type_subtype_validation() {
         parent_entity_id: None,
         notes: None,
         metadata_json: None,
+        email: None,
+        phone: None,
+        username: None,
+        employer: None,
+        dob: None,
     };
     let err = add_entity(&pool, &case_id, &bad_person_subtype).await.unwrap_err();
     assert!(matches!(err, AppError::ValidationError { .. }), "invalid person subtype must be rejected: {err:?}");
@@ -543,6 +589,11 @@ async fn test_entity_parent_validation() {
         parent_entity_id: Some(entity_a),
         notes: None,
         metadata_json: None,
+        email: None,
+        phone: None,
+        username: None,
+        employer: None,
+        dob: None,
     };
     let err = update_entity(&pool, entity_a, &self_input).await.unwrap_err();
     assert!(matches!(err, AppError::ValidationError { .. }), "self-parent must be rejected: {err:?}");
@@ -557,6 +608,11 @@ async fn test_entity_parent_validation() {
         parent_entity_id: Some(entity_b),
         notes: None,
         metadata_json: None,
+        email: None,
+        phone: None,
+        username: None,
+        employer: None,
+        dob: None,
     };
     let err = add_entity(&pool, &case_a, &input_cross).await.unwrap_err();
     assert!(matches!(err, AppError::ValidationError { .. }), "cross-case parent must be rejected: {err:?}");
@@ -573,6 +629,11 @@ async fn test_entity_parent_validation() {
         parent_entity_id: Some(entity_a),
         notes: None,
         metadata_json: None,
+        email: None,
+        phone: None,
+        username: None,
+        employer: None,
+        dob: None,
     };
     update_entity(&pool, entity_b_in_a, &input_b_parent)
         .await
@@ -586,6 +647,11 @@ async fn test_entity_parent_validation() {
         parent_entity_id: Some(entity_b_in_a),
         notes: None,
         metadata_json: None,
+        email: None,
+        phone: None,
+        username: None,
+        employer: None,
+        dob: None,
     };
     let entity_c = add_entity(&pool, &case_a, &input_c)
         .await
@@ -601,6 +667,11 @@ async fn test_entity_parent_validation() {
         parent_entity_id: Some(entity_c),
         notes: None,
         metadata_json: None,
+        email: None,
+        phone: None,
+        username: None,
+        employer: None,
+        dob: None,
     };
     let err = update_entity(&pool, entity_a, &cycle_input).await.unwrap_err();
     assert!(
@@ -625,6 +696,11 @@ async fn test_entity_metadata_json_validation() {
         parent_entity_id: None,
         notes: None,
         metadata_json: Some("{not valid json}".into()),
+        email: None,
+        phone: None,
+        username: None,
+        employer: None,
+        dob: None,
     };
     let err = add_entity(&pool, &case_id, &bad).await.unwrap_err();
     assert!(matches!(err, AppError::ValidationError { .. }), "bad JSON must be rejected: {err:?}");
@@ -638,6 +714,11 @@ async fn test_entity_metadata_json_validation() {
         parent_entity_id: None,
         notes: None,
         metadata_json: Some(r#"{"phone": "555-1234"}"#.into()),
+        email: None,
+        phone: None,
+        username: None,
+        employer: None,
+        dob: None,
     };
     add_entity(&pool, &case_id, &good).await.expect("valid JSON should be accepted");
 }
@@ -1218,6 +1299,10 @@ async fn test_crime_line_all_groups() {
         output_file: None,
         execution_datetime: Some(past_dt()),
         operator: "Alice".into(),
+        input_sha256: None,
+        output_sha256: None,
+        environment_notes: None,
+        reproduction_notes: None,
     };
     add_tool(&pool, &case_id, &tool_input).await.expect("add tool");
 
@@ -1306,17 +1391,22 @@ async fn test_crime_line_date_range_filter() {
     let window_end = base + Duration::days(17);
 
     let filter = TimelineFilter {
-        start: Some(window_start),
-        end: Some(window_end),
+        start: Some(window_start.format("%Y-%m-%dT%H:%M:%S").to_string()),
+        end: Some(window_end.format("%Y-%m-%dT%H:%M:%S").to_string()),
     };
     let payload = build_crime_line(&pool, &case_id, &filter)
         .await
         .expect("build_crime_line with filter failed");
 
-    // All returned items must be within the window
+    // All returned items must be within the window.
+    // TimelineItem.start is now a String (v1-compat, see db::graph) — parse
+    // it back via the helper to do the range comparison.
+    use dfars_desktop_lib::db::graph::parse_loose_datetime;
     for item in &payload.items {
+        let parsed = parse_loose_datetime(&item.start)
+            .unwrap_or_else(|| panic!("item {} has unparseable start: {}", item.id, item.start));
         assert!(
-            item.start >= window_start && item.start <= window_end,
+            parsed >= window_start && parsed <= window_end,
             "item {} (start {:?}) is outside filter window [{:?}, {:?}]",
             item.id, item.start, window_start, window_end
         );

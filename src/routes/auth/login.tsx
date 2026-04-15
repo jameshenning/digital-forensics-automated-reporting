@@ -11,7 +11,7 @@
  * NO HTTP cookies anywhere in this file.
  */
 
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, useNavigate, Link } from "@tanstack/react-router";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -210,10 +210,19 @@ function LoginPage() {
           </form>
         </CardContent>
 
-        <CardFooter>
+        <CardFooter className="flex flex-col items-start gap-2">
           <p className="text-xs text-muted-foreground">
             DFARS Desktop stores credentials locally. After 5 failed attempts,
             the account is locked for 5 minutes.
+          </p>
+          <p className="text-xs text-muted-foreground">
+            First-time install?{" "}
+            <Link
+              to="/auth/setup"
+              className="font-medium text-primary underline underline-offset-2 hover:text-primary/80"
+            >
+              Set up your account
+            </Link>
           </p>
         </CardFooter>
       </Card>

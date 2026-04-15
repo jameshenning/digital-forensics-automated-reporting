@@ -306,7 +306,7 @@ pub async fn download_file(
     );
 
     Ok(EvidenceFileDownload {
-        path: stored_path,
+        path: stored_path.to_string_lossy().into_owned(),
         hash_verified,
         is_executable,
         original_filename: file_row.original_filename,
@@ -835,6 +835,165 @@ pub fn ensure_directory_acl(dir: &Path) {
             );
         }
     }
+}
+
+// ─── Person photo upload (migration 0002) ────────────────────────────────────
+//
+// Lightweight path — NOT gated by SEC-3. Photos are identifying metadata, not
+// chain-of-custody evidence. They live in %APPDATA%\DFARS\person_photos\ and
+// are never re-hashed on download, never audited as evidence, never subject to
+// OneDrive sync warnings. We still reuse sanitize_filename + infer MIME sniff
+// from the main upload pipeline so path-traversal and file-type checks are
+// still enforced at the boundary.
+
+/// Hard upper bound for a person photo — 10 MiB is plenty for a headshot.
+pub const MAX_PERSON_PHOTO_BYTES: u64 = 10 * 1024 * 1024;
+
+/// Allowed image MIME types. Anything else is rejected.
+const ALLOWED_PHOTO_MIME: &[&str] = &[
+    "image/jpeg",
+    "image/png",
+    "image/gif",
+    "image/webp",
+    "image/bmp",
+    "image/tiff",
+];
+
+/// Resolve the person-photo storage root for a case.
+///   `<appdata>/DFARS/person_photos/<case_id>/`
+/// No `evidence_drive_path` fallback — photos always live under appdata so
+/// they don't pollute the evidence tree or the OneDrive guard path.
+pub fn resolve_person_photo_root(appdata: &Path, case_id: &str) -> PathBuf {
+    appdata
+        .join("DFARS")
+        .join("person_photos")
+        .join(sanitize_name_for_disk(case_id))
+}
+
+/// Upload a person photo from `source_path` into the person-photo tree and
+/// return the absolute stored path. Caller is responsible for updating the
+/// `entities.photo_path` column with this path.
+///
+/// Validation:
+///  - `source_path` must name a readable file
+///  - size <= 10 MiB
+///  - magic bytes must identify one of ALLOWED_PHOTO_MIME
+///  - filename sanitization (Path::file_name, Unicode NFC, forbidden chars,
+///    200-byte limit) via the existing `sanitize_filename` helper
+///
+/// The on-disk filename is `<entity_id>_<sanitized_stem>.<ext>` so the same
+/// entity always lands at the same slot and re-upload overwrites.
+pub fn upload_person_photo(
+    source_path: &str,
+    case_id: &str,
+    entity_id: i64,
+    appdata: &Path,
+) -> Result<PathBuf, AppError> {
+    let source = Path::new(source_path);
+
+    // Size + existence check up front
+    let metadata = std::fs::metadata(source).map_err(AppError::from)?;
+    let size = metadata.len();
+    if size > MAX_PERSON_PHOTO_BYTES {
+        return Err(AppError::PersonPhotoTooLarge {
+            size,
+            limit: MAX_PERSON_PHOTO_BYTES,
+        });
+    }
+
+    // Magic-byte MIME sniff — rejects non-images even if extension lies
+    let sniffed = sniff_mime(source).unwrap_or_else(|| "application/octet-stream".to_string());
+    if !ALLOWED_PHOTO_MIME.iter().any(|m| *m == sniffed) {
+        return Err(AppError::PersonPhotoNotAnImage { detected: sniffed });
+    }
+
+    // Sanitize filename (reject path traversal, control chars, >200 bytes)
+    let original_filename = sanitize_filename(source)?;
+
+    // Split into stem + ext to build the on-disk name
+    let sanitized_full = sanitize_name_for_disk(&original_filename);
+    let (stem, ext) = match sanitized_full.rfind('.') {
+        Some(i) => (&sanitized_full[..i], &sanitized_full[i + 1..]),
+        None => (sanitized_full.as_str(), ""),
+    };
+    let on_disk_name = if ext.is_empty() {
+        format!("{entity_id}_{stem}")
+    } else {
+        format!("{entity_id}_{stem}.{ext}")
+    };
+
+    // Create the directory tree
+    let storage_dir = resolve_person_photo_root(appdata, case_id);
+    std::fs::create_dir_all(&storage_dir).map_err(AppError::from)?;
+
+    // Canonicalize the parent and verify the on-disk name doesn't escape it
+    let canonical_dir = std::fs::canonicalize(&storage_dir).map_err(AppError::from)?;
+    let target = canonical_dir.join(&on_disk_name);
+    if !target.starts_with(&canonical_dir) {
+        return Err(AppError::PathTraversalBlocked {
+            attempted_path: target.display().to_string(),
+        });
+    }
+
+    // Clean up any previous photo for the same entity before writing the new
+    // one. Different extension = different filename, so re-upload of a JPG
+    // when the old file was a PNG would leave the PNG orphaned. Best-effort
+    // cleanup removes any `<entity_id>_*` file in the directory first.
+    if let Ok(entries) = std::fs::read_dir(&canonical_dir) {
+        for entry in entries.flatten() {
+            if let Some(name) = entry.file_name().to_str() {
+                if name.starts_with(&format!("{entity_id}_")) && name != on_disk_name {
+                    let _ = std::fs::remove_file(entry.path());
+                }
+            }
+        }
+    }
+
+    // Copy source → target. std::fs::copy is sufficient — no streaming hash,
+    // no multi-pass TOCTOU defense; a photo mutation during the 10 MiB copy
+    // is a non-threat for this use case.
+    std::fs::copy(source, &target).map_err(AppError::from)?;
+
+    tracing::info!(
+        case_id = %case_id,
+        entity_id = %entity_id,
+        size_bytes = %size,
+        mime = %sniffed,
+        "person photo uploaded"
+    );
+
+    // On Windows, `std::fs::canonicalize` returns paths with the `\\?\`
+    // verbatim-prefix. Tauri's asset-protocol scope matcher does not handle
+    // that form — `convertFileSrc()` produces URLs whose scope check fails
+    // against `$APPDATA/DFARS/person_photos/**`, so `<img>` tags fail to
+    // load even though the file is on disk. Strip the prefix before
+    // returning so the stored path matches the scope.
+    Ok(strip_verbatim_prefix(target))
+}
+
+/// Remove the Windows `\\?\` verbatim prefix from a path, if present.
+/// The underlying file is the same; this is purely a string-form change
+/// so downstream consumers that do lexical path matching (like Tauri's
+/// asset-protocol scope) can recognize the path.
+fn strip_verbatim_prefix(path: PathBuf) -> PathBuf {
+    let s = path.to_string_lossy();
+    if let Some(stripped) = s.strip_prefix(r"\\?\") {
+        PathBuf::from(stripped.to_owned())
+    } else {
+        path
+    }
+}
+
+/// Delete a person photo file from disk. Best-effort — returns Ok even if the
+/// file doesn't exist (so repeated deletes are idempotent). Caller is
+/// responsible for nulling the `entities.photo_path` column.
+pub fn delete_person_photo(photo_path: &str) -> Result<(), AppError> {
+    let path = Path::new(photo_path);
+    if path.exists() {
+        std::fs::remove_file(path).map_err(AppError::from)?;
+        tracing::info!(path = %photo_path, "person photo deleted");
+    }
+    Ok(())
 }
 
 // ─── hex encoding helper (avoid pulling in a separate crate) ──────────────────
