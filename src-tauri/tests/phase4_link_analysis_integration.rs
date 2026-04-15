@@ -44,6 +44,11 @@ use dfars_desktop_lib::{
         custody::{CustodyInput, add_custody},
         entities::{EntityInput, add_entity, get_entity, list_for_case as entity_list_for_case,
                    soft_delete as entity_soft_delete, update_entity},
+        person_identifiers::{
+            PersonIdentifierInput, add_identifier, get_identifier,
+            list_for_entity as identifier_list_for_entity, soft_delete as identifier_soft_delete,
+            update_identifier,
+        },
         events::{EventInput, add_event, get_event, list_for_case as event_list_for_case,
                  soft_delete as event_soft_delete, update_event},
         evidence::{EvidenceInput, add_evidence},
@@ -279,6 +284,25 @@ CREATE TABLE IF NOT EXISTS case_shares (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (case_id) REFERENCES cases (case_id) ON DELETE RESTRICT
 );
+
+-- migration 0004: person_identifiers
+CREATE TABLE IF NOT EXISTS person_identifiers (
+    identifier_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    entity_id INTEGER NOT NULL,
+    kind TEXT NOT NULL,
+    value TEXT NOT NULL,
+    platform TEXT,
+    notes TEXT,
+    is_deleted INTEGER DEFAULT 0,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (entity_id) REFERENCES entities (entity_id) ON DELETE RESTRICT
+);
+
+CREATE INDEX IF NOT EXISTS idx_person_identifiers_entity
+    ON person_identifiers(entity_id, is_deleted);
+CREATE INDEX IF NOT EXISTS idx_person_identifiers_kind
+    ON person_identifiers(entity_id, kind, is_deleted);
 "#;
 
 async fn new_forensics_pool() -> SqlitePool {
@@ -1532,4 +1556,367 @@ async fn test_session_guard_valid_token_accepted() {
     let token = state.sessions.create_verified("tester");
     let result = dfars_desktop_lib::auth::session::require_session(&state, &token);
     assert!(result.is_ok(), "valid verified session token must be accepted: {result:?}");
+}
+
+// ─── Person identifiers (migration 0004) ──────────────────────────────────────
+
+/// Helper: create a person entity and return its id. Person-typed so
+/// identifier insertion is allowed.
+async fn make_person(pool: &SqlitePool, case_id: &str, name: &str) -> i64 {
+    let input = EntityInput {
+        entity_type: "person".into(),
+        display_name: name.to_string(),
+        subtype: Some("poi".into()),
+        organizational_rank: None,
+        parent_entity_id: None,
+        notes: None,
+        metadata_json: None,
+        email: None,
+        phone: None,
+        username: None,
+        employer: None,
+        dob: None,
+    };
+    add_entity(pool, case_id, &input)
+        .await
+        .expect("make_person failed")
+        .entity_id
+}
+
+fn make_identifier_input(kind: &str, value: &str) -> PersonIdentifierInput {
+    PersonIdentifierInput {
+        kind: kind.into(),
+        value: value.into(),
+        platform: None,
+        notes: None,
+    }
+}
+
+#[tokio::test]
+async fn test_person_identifier_crud_roundtrip() {
+    let (_, pool) = make_state().await;
+    let case_id = make_case(&pool, "PID-01").await;
+    let entity_id = make_person(&pool, &case_id, "Alice Example").await;
+
+    // add
+    let added = add_identifier(
+        &pool,
+        entity_id,
+        &PersonIdentifierInput {
+            kind: "email".into(),
+            value: "alice@example.com".into(),
+            platform: Some("gmail".into()),
+            notes: Some("primary".into()),
+        },
+    )
+    .await
+    .expect("add identifier");
+    assert!(added.identifier_id > 0);
+    assert_eq!(added.entity_id, entity_id);
+
+    // list
+    let list = identifier_list_for_entity(&pool, entity_id).await.unwrap();
+    assert_eq!(list.len(), 1);
+    assert_eq!(list[0].value, "alice@example.com");
+
+    // update
+    let updated = update_identifier(
+        &pool,
+        added.identifier_id,
+        &PersonIdentifierInput {
+            kind: "email".into(),
+            value: "alice@new.example.com".into(),
+            platform: Some("protonmail".into()),
+            notes: None,
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(updated.value, "alice@new.example.com");
+    assert_eq!(updated.platform.as_deref(), Some("protonmail"));
+    assert!(updated.notes.is_none());
+
+    // delete
+    identifier_soft_delete(&pool, added.identifier_id).await.unwrap();
+    let after = identifier_list_for_entity(&pool, entity_id).await.unwrap();
+    assert!(after.is_empty(), "soft-deleted identifier must not appear in list");
+
+    // get still returns (audit trail semantics)
+    let fetched = get_identifier(&pool, added.identifier_id).await.unwrap();
+    assert_eq!(fetched.is_deleted, 1);
+}
+
+#[tokio::test]
+async fn test_person_identifier_multi_platform_ordering() {
+    let (_, pool) = make_state().await;
+    let case_id = make_case(&pool, "PID-02").await;
+    let entity_id = make_person(&pool, &case_id, "Bob").await;
+
+    // Scrambled kinds — list should come back sorted by kind ASC, created_at ASC.
+    add_identifier(&pool, entity_id, &make_identifier_input("url", "https://bob.example.com"))
+        .await
+        .unwrap();
+    add_identifier(&pool, entity_id, &make_identifier_input("email", "bob1@example.com"))
+        .await
+        .unwrap();
+    add_identifier(&pool, entity_id, &make_identifier_input("email", "bob2@example.com"))
+        .await
+        .unwrap();
+    add_identifier(&pool, entity_id, &make_identifier_input("handle", "@bob"))
+        .await
+        .unwrap();
+    add_identifier(&pool, entity_id, &make_identifier_input("phone", "+15555550001"))
+        .await
+        .unwrap();
+    add_identifier(&pool, entity_id, &make_identifier_input("username", "bob_u"))
+        .await
+        .unwrap();
+
+    let list = identifier_list_for_entity(&pool, entity_id).await.unwrap();
+    let kinds: Vec<&str> = list.iter().map(|i| i.kind.as_str()).collect();
+    assert_eq!(kinds, vec!["email", "email", "handle", "phone", "url", "username"]);
+    // Within the email group, first-inserted appears first.
+    assert_eq!(list[0].value, "bob1@example.com");
+    assert_eq!(list[1].value, "bob2@example.com");
+}
+
+#[tokio::test]
+async fn test_person_identifier_cascade_soft_delete_with_entity() {
+    let (_, pool) = make_state().await;
+    let case_id = make_case(&pool, "PID-03").await;
+    let entity_id = make_person(&pool, &case_id, "Carol").await;
+
+    add_identifier(&pool, entity_id, &make_identifier_input("email", "carol@example.com"))
+        .await
+        .unwrap();
+    add_identifier(&pool, entity_id, &make_identifier_input("handle", "@carol"))
+        .await
+        .unwrap();
+    add_identifier(&pool, entity_id, &make_identifier_input("phone", "+15555550002"))
+        .await
+        .unwrap();
+
+    // Pre-check.
+    assert_eq!(
+        identifier_list_for_entity(&pool, entity_id).await.unwrap().len(),
+        3
+    );
+
+    // Soft-delete the parent entity. cascade_soft_delete_for_entity runs
+    // inside the same transaction and must hide all identifiers.
+    entity_soft_delete(&pool, entity_id).await.unwrap();
+
+    // All identifiers must now be soft-deleted (the list excludes them).
+    assert!(
+        identifier_list_for_entity(&pool, entity_id)
+            .await
+            .unwrap()
+            .is_empty(),
+        "cascade from entity soft-delete must hide all identifiers"
+    );
+
+    // The entity itself is soft-deleted too.
+    let after = get_entity(&pool, entity_id).await.unwrap();
+    assert_eq!(after.is_deleted, 1);
+}
+
+#[tokio::test]
+async fn test_person_identifier_rejects_non_person_entity() {
+    let (_, pool) = make_state().await;
+    let case_id = make_case(&pool, "PID-04").await;
+    let biz_id = make_entity(&pool, &case_id, "Acme Corp", "business").await;
+
+    let err = add_identifier(
+        &pool,
+        biz_id,
+        &make_identifier_input("email", "info@acme.com"),
+    )
+    .await
+    .unwrap_err();
+    assert!(matches!(
+        err,
+        AppError::EntityNotAPerson { entity_type, .. } if entity_type == "business"
+    ));
+}
+
+#[tokio::test]
+async fn test_person_identifier_rejects_missing_parent() {
+    let (_, pool) = make_state().await;
+
+    let err = add_identifier(
+        &pool,
+        999_999,
+        &make_identifier_input("email", "ghost@example.com"),
+    )
+    .await
+    .unwrap_err();
+    assert!(matches!(err, AppError::EntityNotFound { entity_id: 999_999 }));
+}
+
+#[tokio::test]
+async fn test_person_identifier_session_guard() {
+    let (state, _) = make_state().await;
+    // person_identifier_* commands all start with require_session.
+    let err = dfars_desktop_lib::auth::session::require_session(&state, "sess_fake_identifier");
+    assert!(matches!(err, Err(AppError::Unauthorized)));
+}
+
+/// End-to-end chain test: create identifiers through the db layer, then
+/// fetch them through `list_for_entity`, then pipe them into
+/// `build_osint_payload` (Pass 2). Proves that the Pass 1 → Pass 2 handoff
+/// survives a real DB roundtrip (not just the pure-function unit tests in
+/// `ai_cmd::tests::*` which never touch sqlx).
+#[tokio::test]
+async fn test_pass1_to_pass2_identifier_flow_end_to_end() {
+    use dfars_desktop_lib::commands::ai_cmd::build_osint_payload;
+
+    let (_, pool) = make_state().await;
+    let case_id = make_case(&pool, "PID-E2E").await;
+    let entity_id = make_person(&pool, &case_id, "Alice E2E").await;
+
+    // Add a realistic, multi-kind, mixed-case-duplicate identifier set.
+    let inputs = [
+        ("email", "alice@example.com", Some("gmail")),
+        ("email", "Alice@Example.COM", Some("Gmail")),            // dup of #0
+        ("email", "alice@example.com", Some("protonmail")),        // distinct platform
+        ("handle", "@alice", Some("twitter")),
+        ("handle", "@alice", Some("reddit")),                       // distinct platform
+        ("username", "alice_dev", None),
+        ("phone", "+15555550101", None),
+        ("url", "https://alice.example", None),
+    ];
+    for (kind, value, platform) in inputs {
+        let input = PersonIdentifierInput {
+            kind: kind.into(),
+            value: value.into(),
+            platform: platform.map(|p| p.into()),
+            notes: None,
+        };
+        add_identifier(&pool, entity_id, &input).await.unwrap();
+    }
+
+    // Fetch via list_for_entity (the exact path ai_osint_person uses).
+    let identifiers = identifier_list_for_entity(&pool, entity_id).await.unwrap();
+    assert_eq!(
+        identifiers.len(),
+        8,
+        "all 8 rows should be inserted (dedup happens in build_osint_payload, not at the db)"
+    );
+
+    // Fetch the entity to feed the payload builder.
+    let entity = get_entity(&pool, entity_id).await.unwrap();
+
+    // Run the Pass 2 pure function over the real data.
+    let result = build_osint_payload(&entity, &identifiers);
+
+    // The two case-mangled duplicates of alice@example.com on gmail should
+    // collapse; everything else (different kind, different platform, or
+    // different value) must survive.
+    //   - email a@e.com gmail (first) ✓
+    //   - email A@E.C gmail          dropped as duplicate of above
+    //   - email a@e.com protonmail   ✓ (distinct platform)
+    //   - handle @alice twitter      ✓
+    //   - handle @alice reddit       ✓ (distinct platform)
+    //   - username alice_dev         ✓
+    //   - phone +15555550101         ✓
+    //   - url https://alice.example  ✓
+    // Expected survivors: 7
+    assert_eq!(
+        result.payload.identifiers.len(),
+        7,
+        "platform-aware dedup must collapse exactly one duplicate"
+    );
+    assert_eq!(
+        result.deduped_count, 7,
+        "post-dedup count should match since nothing was truncated"
+    );
+
+    // Legacy single-value fallback: entity.email is None, so first-of-kind wins.
+    assert_eq!(result.payload.email.as_deref(), Some("alice@example.com"));
+    assert_eq!(result.payload.phone.as_deref(), Some("+15555550101"));
+    assert_eq!(result.payload.username.as_deref(), Some("alice_dev"));
+
+    // First-seen ordering preserves the protonmail identifier after the gmail.
+    let emails: Vec<&str> = result
+        .payload
+        .identifiers
+        .iter()
+        .filter(|i| i.kind == "email")
+        .map(|i| i.platform.as_deref().unwrap_or(""))
+        .collect();
+    assert_eq!(emails, vec!["gmail", "protonmail"]);
+}
+
+/// Structural guard: every `person_identifier_*` Tauri command MUST carry
+/// the `#[tauri::command(rename_all = "snake_case")]` attribute, or multi-
+/// word parameters like `entity_id` / `identifier_id` silently deserialize
+/// as zero in Tauri v2 (camelCase auto-convert trap — see
+/// feedback_tauri_v2_camelcase.md). This test reads the source of
+/// link_analysis_cmd.rs at compile time and asserts the attribute appears
+/// immediately before each `pub async fn person_identifier_*`.
+#[test]
+fn test_person_identifier_commands_have_rename_all_snake_case() {
+    let source = include_str!("../src/commands/link_analysis_cmd.rs");
+    let expected_attr = "#[tauri::command(rename_all = \"snake_case\")]";
+
+    for cmd in [
+        "pub async fn person_identifier_add",
+        "pub async fn person_identifier_list",
+        "pub async fn person_identifier_update",
+        "pub async fn person_identifier_delete",
+    ] {
+        let cmd_idx = source.find(cmd).unwrap_or_else(|| {
+            panic!("could not locate `{cmd}` in link_analysis_cmd.rs — did it get renamed or moved?")
+        });
+        // Walk back up to 200 bytes looking for the attribute on a preceding
+        // line. 200 is plenty for a docstring + attribute header.
+        let window_start = cmd_idx.saturating_sub(400);
+        let preamble = &source[window_start..cmd_idx];
+        assert!(
+            preamble.contains(expected_attr),
+            "{cmd} is missing {expected_attr} — this will silently break the \
+             Tauri v2 camelCase-to-snake_case parameter binding and the frontend \
+             call will pass NULL for every multi-word argument."
+        );
+    }
+}
+
+/// Structural guard: `ai_osint_person` MUST check `require_session` BEFORE
+/// `osint_consent_granted`, or a missing-session bypass could reach the
+/// consent check with unauthenticated state. This tests the source-level
+/// ordering, not the runtime behavior (which is covered indirectly by the
+/// empty-token tests in ai_cmd.rs's own test module).
+#[test]
+fn test_ai_osint_person_session_guard_precedes_consent_check() {
+    let source = include_str!("../src/commands/ai_cmd.rs");
+
+    let fn_idx = source
+        .find("pub async fn ai_osint_person(")
+        .expect("could not locate ai_osint_person in ai_cmd.rs — did it get renamed?");
+
+    // Slice from the function signature through the end of the file (or
+    // 2 KiB, whichever is smaller) so we can check ordering within the body.
+    let window_end = (fn_idx + 2048).min(source.len());
+    let body = &source[fn_idx..window_end];
+
+    let session_idx = body
+        .find("require_session(&state, &token)")
+        .expect("ai_osint_person must call require_session with (&state, &token)");
+    let consent_idx = body
+        .find("osint_consent_granted()")
+        .expect("ai_osint_person must call osint_consent_granted()");
+
+    assert!(
+        session_idx < consent_idx,
+        "ai_osint_person must call require_session BEFORE osint_consent_granted — \
+         reordering would allow a missing session to reach the consent check."
+    );
+
+    // Also confirm the command header attribute.
+    let window_start = fn_idx.saturating_sub(400);
+    let preamble = &source[window_start..fn_idx];
+    assert!(
+        preamble.contains("#[tauri::command(rename_all = \"snake_case\")]"),
+        "ai_osint_person is missing rename_all = \"snake_case\""
+    );
 }

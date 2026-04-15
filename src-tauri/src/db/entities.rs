@@ -420,6 +420,9 @@ pub async fn soft_delete(pool: &SqlitePool, entity_id: i64) -> Result<(), AppErr
     // Cascade soft-delete to entity_links
     cascade_soft_delete_links(&mut tx, entity_id).await?;
 
+    // Cascade soft-delete to person_identifiers (no-op for non-person entities)
+    crate::db::person_identifiers::cascade_soft_delete_for_entity(&mut tx, entity_id).await?;
+
     // Soft-delete the entity itself
     let rows_affected = sqlx::query(
         "UPDATE entities SET is_deleted = 1, updated_at = CURRENT_TIMESTAMP WHERE entity_id = ?",

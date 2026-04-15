@@ -23,6 +23,7 @@ import { Upload, X, User } from "lucide-react";
 import { PERSON_SUBTYPES } from "@/lib/link-analysis-enums";
 import { personFormSchema, type PersonFormValues } from "@/lib/person-schema";
 
+import { PersonIdentifierEditor } from "@/components/person-identifier-editor";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -51,6 +52,10 @@ interface PersonFormProps {
   defaultValues?: Partial<PersonFormValues>;
   /** Existing photo path if any — rendered as the current image in edit mode. */
   currentPhotoPath?: string | null;
+  /** Parent entity id when editing an existing person; null when adding a
+   *  new one. Enables the multi-identifier editor once the parent row
+   *  exists. */
+  entityId?: number | null;
   isPending: boolean;
   onSubmit: (values: PersonFormValues, pickedPhotoPath: string | null) => void;
   onCancel: () => void;
@@ -64,6 +69,7 @@ interface PersonFormProps {
 export function PersonForm({
   defaultValues,
   currentPhotoPath,
+  entityId,
   isPending,
   onSubmit,
   onCancel,
@@ -349,6 +355,12 @@ export function PersonForm({
             </FormItem>
           )}
         />
+
+        {/* Multi-valued OSINT identifiers (migration 0004).
+            Only the `email`/`phone`/`username` fields above are the "primary"
+            shortcut displayed on the card; the real source of truth for OSINT
+            submission is this editor. */}
+        <PersonIdentifierEditor entityId={entityId ?? null} />
 
         {/* Action buttons */}
         <div className="flex justify-end gap-2 pt-2">

@@ -79,3 +79,42 @@ export const personFormSchema = z.object({
 });
 
 export type PersonFormValues = z.input<typeof personFormSchema>;
+
+// ─── Person identifier schema (migration 0004) ───────────────────────────────
+
+/**
+ * Allowed identifier kinds. Must match the Rust VALID_KINDS allowlist in
+ * `src-tauri/src/db/person_identifiers.rs`.
+ */
+export const PERSON_IDENTIFIER_KINDS = [
+  "email",
+  "username",
+  "handle",
+  "phone",
+  "url",
+] as const;
+
+export const personIdentifierFormSchema = z.object({
+  kind: z.enum(PERSON_IDENTIFIER_KINDS, {
+    error: "Select a valid kind",
+  }),
+  value: z
+    .string()
+    .min(1, "Value is required")
+    .max(500, "Value must be at most 500 characters")
+    .refine((v) => v.trim().length > 0, {
+      message: "Value must not be blank",
+    }),
+  platform: z
+    .string()
+    .max(100, "Platform must be at most 100 characters")
+    .optional(),
+  notes: z
+    .string()
+    .max(2000, "Notes must be at most 2000 characters")
+    .optional(),
+});
+
+export type PersonIdentifierFormValues = z.input<
+  typeof personIdentifierFormSchema
+>;

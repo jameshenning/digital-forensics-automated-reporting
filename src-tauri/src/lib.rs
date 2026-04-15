@@ -2,7 +2,7 @@ pub mod agent_zero;
 mod audit;
 pub mod auth;
 pub mod axum_server;
-mod commands;
+pub mod commands;
 pub mod config;
 pub mod crypto;
 pub mod db;
@@ -56,6 +56,8 @@ use commands::{
         entity_add, entity_delete, entity_get, entity_list_for_case, entity_update,
         event_add, event_delete, event_list_for_case, event_update,
         link_add, link_delete, link_list_for_case,
+        person_identifier_add, person_identifier_delete, person_identifier_list,
+        person_identifier_update,
     },
     records_cmd::{
         analysis_add, analysis_list_for_case, analysis_list_for_evidence,
@@ -359,6 +361,11 @@ pub fn run() {
             // Graph aggregate commands (Phase 4)
             case_graph,
             case_crime_line,
+            // Person identifier commands (migration 0004)
+            person_identifier_add,
+            person_identifier_list,
+            person_identifier_update,
+            person_identifier_delete,
             // System commands
             settings_get_security_posture,
             debug_log_frontend,

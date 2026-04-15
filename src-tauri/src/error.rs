@@ -128,6 +128,11 @@ pub enum AppError {
     #[error("entity is not a person: entity_id={entity_id}, entity_type={entity_type}")]
     EntityNotAPerson { entity_id: i64, entity_type: String },
 
+    // ─── Persons — identifiers (migration 0004) ──────────────────────────────
+
+    #[error("person identifier not found: identifier_id={identifier_id}")]
+    PersonIdentifierNotFound { identifier_id: i64 },
+
     // ─── Phase 3b: reports ───────────────────────────────────────────────────
 
     #[error("report generation failed: {reason}")]

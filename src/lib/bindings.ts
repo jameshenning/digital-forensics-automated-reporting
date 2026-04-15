@@ -68,7 +68,9 @@ export type AppErrorCode =
   // Persons — photo upload (migration 0002)
   | "PersonPhotoTooLarge"
   | "PersonPhotoNotAnImage"
-  | "EntityNotAPerson";
+  | "EntityNotAPerson"
+  // Persons — identifiers (migration 0004)
+  | "PersonIdentifierNotFound";
 
 export interface AppError {
   code: AppErrorCode;
@@ -1208,6 +1210,85 @@ export function caseCrimeLine(args: {
 }
 
 // ---------------------------------------------------------------------------
+// Person identifiers (migration 0004)
+// ---------------------------------------------------------------------------
+
+/**
+ * The kinds of OSINT-relevant identifiers a person can have. Each person
+ * entity typically has many of these across platforms — multiple emails,
+ * Twitter/Reddit/GitHub/Discord handles, phone numbers, profile URLs.
+ * The OSINT submission flow (pass 2) batches the active rows for a given
+ * person into a single Agent Zero job.
+ */
+export type PersonIdentifierKind =
+  | "email"
+  | "username"
+  | "handle"
+  | "phone"
+  | "url";
+
+export interface PersonIdentifier {
+  identifier_id: number;
+  entity_id: number;
+  kind: PersonIdentifierKind;
+  value: string;
+  /** Free-form platform tag (twitter, reddit, github, discord, gmail, ...). */
+  platform: string | null;
+  notes: string | null;
+  is_deleted: 0 | 1;
+  created_at: string;
+  updated_at: string;
+}
+
+/**
+ * Writable fields for creating or updating a person identifier.
+ *
+ * `entity_id` is NOT in this input — it's supplied as a command parameter on
+ * the add path and is immutable on the update path (moving an identifier
+ * between people would lose the audit trail).
+ */
+export interface PersonIdentifierInput {
+  kind: PersonIdentifierKind;
+  value: string;
+  platform: string | null;
+  notes: string | null;
+}
+
+/** List all active identifiers for a person entity (excludes soft-deleted). */
+export function personIdentifierList(args: {
+  token: string;
+  entity_id: number;
+}): Promise<PersonIdentifier[]> {
+  return invoke<PersonIdentifier[]>("person_identifier_list", args);
+}
+
+/** Add a new identifier to a person entity. */
+export function personIdentifierAdd(args: {
+  token: string;
+  entity_id: number;
+  input: PersonIdentifierInput;
+}): Promise<PersonIdentifier> {
+  return invoke<PersonIdentifier>("person_identifier_add", args);
+}
+
+/** Update an existing identifier. */
+export function personIdentifierUpdate(args: {
+  token: string;
+  identifier_id: number;
+  input: PersonIdentifierInput;
+}): Promise<PersonIdentifier> {
+  return invoke<PersonIdentifier>("person_identifier_update", args);
+}
+
+/** Soft-delete an identifier. */
+export function personIdentifierDelete(args: {
+  token: string;
+  identifier_id: number;
+}): Promise<void> {
+  return invoke<void>("person_identifier_delete", args);
+}
+
+// ---------------------------------------------------------------------------
 // Phase 5 — AI / Agent Zero types
 // ---------------------------------------------------------------------------
 
@@ -1357,16 +1438,29 @@ export function aiSummarizeCase(args: {
 
 /**
  * Summary returned by ai_osint_person after Agent Zero finishes orchestrating
- * OSINT tools against a person entity's known fields.
+ * OSINT tools against a person entity's full identifier set.
  *
- * tool_usage_rows_inserted counts how many tool_usage rows the Rust command
- * successfully inserted — one per successful Agent Zero run. These rows
- * automatically appear in the case's Tools tab and in the Markdown report.
+ * - `status` — Agent Zero's reported status. Typically one of
+ *   `"success" | "partial" | "failed"`, but typed as `string` because the
+ *   Rust boundary does not normalize unknown values — future Agent Zero
+ *   versions may emit additional states. Switch on it cautiously.
+ * - `identifiers_submitted` — how many DEDUPED rows from `person_identifiers`
+ *   (migration 0004) were sent to Agent Zero in this batch. Dedup key is
+ *   `(kind, lowercased+trimmed value, lowercased+trimmed platform)` — same
+ *   email on two different platforms is NOT a duplicate.
+ * - `tool_usage_rows_inserted` — one per successful Agent Zero run. These
+ *   rows appear in the case's Tools tab and in the Markdown report.
+ * - `notes` — a single combined status line, prefixed with local Rust-side
+ *   annotations (name-only submission, batch truncation) when relevant, then
+ *   any notes Agent Zero returned. Render verbatim in the UI.
+ *
  * The raw per-tool findings are ALSO written into the entity's metadata_json
- * under `osint_findings[]` so the PersonCard can display them inline.
+ * under `osint_findings[]` via an atomic `json_set` update so the PersonCard
+ * can display the latest run inline without racing concurrent writes.
  */
 export interface OsintRunSummary {
-  status: "success" | "partial" | "failed";
+  status: string;
+  identifiers_submitted: number;
   tools_run: number;
   tool_usage_rows_inserted: number;
   notes: string | null;
@@ -1378,9 +1472,15 @@ export interface OsintRunSummary {
  * Flow:
  *  - Validates the entity exists and has entity_type = "person"
  *  - Checks the separate OSINT consent flag (AiOsintConsentRequired if not)
- *  - Sends person fields (name, email, phone, username, employer, dob, notes)
- *    and the default tool set to Agent Zero's dfars_osint_person endpoint
- *  - Agent Zero decides which additional Kali OSINT tools to run
+ *  - Fetches the person's full identifier list from `person_identifiers`
+ *    (migration 0004), dedupes by
+ *    `(kind, lowercased+trimmed value, lowercased+trimmed platform)`, and
+ *    sends the deduped batch plus the legacy single-value fields (name,
+ *    email, phone, username, employer, dob, notes) to Agent Zero's
+ *    `dfars_osint_person` endpoint. Same email on two different platforms
+ *    is NOT a duplicate — different platforms are distinct OSINT signals.
+ *  - Agent Zero decides which additional Kali OSINT tools to run across the
+ *    multi-identifier batch
  *  - Rust inserts a tool_usage row for each successful run and appends
  *    findings into entity.metadata_json.osint_findings[]
  *

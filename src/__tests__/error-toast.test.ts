@@ -57,7 +57,8 @@ const ERROR_CODES: AppErrorCode[] = [
   "LinkNotFound",
   "LinkEndpointMissing",
   "EventNotFound",
-  // Phase 5 additions (excluding AiSummarizeConsentRequired — handled by dialog, not toast)
+  // Phase 5 additions (excluding AiSummarizeConsentRequired/AiOsintConsentRequired
+  // — both handled by a dedicated dialog, not the toast pipeline)
   "NetworkBindRefused",
   "AgentZeroUrlRejected",
   "AgentZeroNotConfigured",
@@ -67,6 +68,12 @@ const ERROR_CODES: AppErrorCode[] = [
   "SmtpConnectFailed",
   "SmtpSendFailed",
   "DriveScanTooLarge",
+  // Persons — photo upload (migration 0002)
+  "PersonPhotoTooLarge",
+  "PersonPhotoNotAnImage",
+  "EntityNotAPerson",
+  // Persons — identifiers (migration 0004)
+  "PersonIdentifierNotFound",
 ];
 
 describe("toastError", () => {

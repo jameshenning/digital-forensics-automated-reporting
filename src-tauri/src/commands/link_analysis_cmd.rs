@@ -1,19 +1,22 @@
-/// Link analysis Tauri commands — Phase 4.
+/// Link analysis Tauri commands — Phase 4 + migration 0004.
 ///
 /// MUST-DO 3 (SEC-1): every command starts with `require_session()` as its
 /// first statement. This is non-negotiable — see `commands/mod.rs`.
 ///
-/// Covers three entity tables + two aggregate queries:
-///   - `entities`       — add, get, list for case, update, soft-delete
-///   - `entity_links`   — add, list for case, soft-delete
-///   - `case_events`    — add, list for case, update, soft-delete
-///   - `case_graph`     — Cytoscape.js node+edge aggregate
-///   - `case_crime_line`— vis-timeline items+groups aggregate
+/// Covers three entity tables + two aggregate queries + person identifiers:
+///   - `entities`           — add, get, list for case, update, soft-delete
+///   - `entity_links`       — add, list for case, soft-delete
+///   - `case_events`        — add, list for case, update, soft-delete
+///   - `case_graph`         — Cytoscape.js node+edge aggregate
+///   - `case_crime_line`    — vis-timeline items+groups aggregate
+///   - `person_identifiers` — add, list for entity, update, soft-delete
+///                            (multi-valued OSINT identifiers per person)
 ///
 /// Audit actions emitted on mutations:
 ///   ENTITY_ADDED, ENTITY_UPDATED, ENTITY_DELETED,
 ///   LINK_ADDED, LINK_DELETED,
-///   EVENT_ADDED, EVENT_UPDATED, EVENT_DELETED
+///   EVENT_ADDED, EVENT_UPDATED, EVENT_DELETED,
+///   PERSON_IDENTIFIER_ADDED, PERSON_IDENTIFIER_UPDATED, PERSON_IDENTIFIER_DELETED
 use std::sync::Arc;
 
 use tauri::State;
@@ -27,6 +30,7 @@ use crate::{
         events::{CaseEvent, EventInput},
         graph::{GraphFilter, GraphPayload, TimelineFilter, TimelinePayload},
         links::{Link, LinkInput},
+        person_identifiers::{PersonIdentifier, PersonIdentifierInput},
     },
     error::AppError,
     state::AppState,
@@ -42,6 +46,9 @@ const LINK_DELETED: &str = "LINK_DELETED";
 const EVENT_ADDED: &str = "EVENT_ADDED";
 const EVENT_UPDATED: &str = "EVENT_UPDATED";
 const EVENT_DELETED: &str = "EVENT_DELETED";
+const PERSON_IDENTIFIER_ADDED: &str = "PERSON_IDENTIFIER_ADDED";
+const PERSON_IDENTIFIER_UPDATED: &str = "PERSON_IDENTIFIER_UPDATED";
+const PERSON_IDENTIFIER_DELETED: &str = "PERSON_IDENTIFIER_DELETED";
 
 // ─── Entity commands ──────────────────────────────────────────────────────────
 
@@ -417,4 +424,158 @@ pub async fn case_crime_line(
     let _session = require_session(&state, &token)?;
 
     crate::db::graph::build_crime_line(&state.db.forensics, &case_id, &filter).await
+}
+
+// ─── Person identifier commands (migration 0004) ──────────────────────────────
+
+/// Add a new identifier (email / username / handle / phone / url) to a
+/// person entity. Validates kind + value + parent-entity-is-person.
+/// Logs `PERSON_IDENTIFIER_ADDED` to the case audit trail.
+///
+/// Fetches the parent entity BEFORE calling `add_identifier` so the audit
+/// log's `case_id` is already cached by the time the insert runs. If we
+/// fetched after the insert and a concurrent command soft-deleted the parent
+/// in the meantime, the audit log would still succeed (entity_get returns
+/// soft-deleted rows for audit purposes) but the ordering would be racy.
+#[tauri::command(rename_all = "snake_case")]
+pub async fn person_identifier_add(
+    token: String,
+    entity_id: i64,
+    input: PersonIdentifierInput,
+    state: State<'_, Arc<AppState>>,
+) -> Result<PersonIdentifier, AppError> {
+    // MUST-DO 3 — session guard first
+    let session = require_session(&state, &token)?;
+
+    // Fetch the parent entity first so we have `case_id` cached for the
+    // audit log. `add_identifier` will re-verify the parent is a person.
+    let entity = crate::db::entities::get_entity(&state.db.forensics, entity_id).await?;
+
+    let identifier =
+        crate::db::person_identifiers::add_identifier(&state.db.forensics, entity_id, &input)
+            .await?;
+
+    info!(
+        username = %session.username,
+        entity_id = %entity_id,
+        identifier_id = %identifier.identifier_id,
+        kind = %identifier.kind,
+        "person identifier added"
+    );
+    audit::log_case(
+        &entity.case_id,
+        &session.username,
+        PERSON_IDENTIFIER_ADDED,
+        &format!(
+            "identifier_id={} entity_id={} kind={:?} platform={:?}",
+            identifier.identifier_id,
+            entity_id,
+            identifier.kind,
+            identifier.platform.as_deref().unwrap_or(""),
+        ),
+    );
+
+    Ok(identifier)
+}
+
+/// List all active identifiers for a person entity (ordered by kind, created_at).
+#[tauri::command(rename_all = "snake_case")]
+pub async fn person_identifier_list(
+    token: String,
+    entity_id: i64,
+    state: State<'_, Arc<AppState>>,
+) -> Result<Vec<PersonIdentifier>, AppError> {
+    // MUST-DO 3 — session guard first
+    let _session = require_session(&state, &token)?;
+
+    crate::db::person_identifiers::list_for_entity(&state.db.forensics, entity_id).await
+}
+
+/// Update mutable fields of an existing person identifier.
+/// Logs `PERSON_IDENTIFIER_UPDATED` to the case audit trail.
+///
+/// Fetches the current identifier + parent entity BEFORE calling
+/// `update_identifier` so `case_id` is cached for the audit log before any
+/// mutation happens.
+#[tauri::command(rename_all = "snake_case")]
+pub async fn person_identifier_update(
+    token: String,
+    identifier_id: i64,
+    input: PersonIdentifierInput,
+    state: State<'_, Arc<AppState>>,
+) -> Result<PersonIdentifier, AppError> {
+    // MUST-DO 3 — session guard first
+    let session = require_session(&state, &token)?;
+
+    // Fetch the current row to find the parent entity_id (identifiers are
+    // not re-homeable between entities).
+    let existing =
+        crate::db::person_identifiers::get_identifier(&state.db.forensics, identifier_id).await?;
+    let entity =
+        crate::db::entities::get_entity(&state.db.forensics, existing.entity_id).await?;
+
+    let identifier = crate::db::person_identifiers::update_identifier(
+        &state.db.forensics,
+        identifier_id,
+        &input,
+    )
+    .await?;
+
+    info!(
+        username = %session.username,
+        identifier_id = %identifier_id,
+        "person identifier updated"
+    );
+    audit::log_case(
+        &entity.case_id,
+        &session.username,
+        PERSON_IDENTIFIER_UPDATED,
+        &format!(
+            "identifier_id={} entity_id={} kind={:?} platform={:?}",
+            identifier_id,
+            identifier.entity_id,
+            identifier.kind,
+            identifier.platform.as_deref().unwrap_or(""),
+        ),
+    );
+
+    Ok(identifier)
+}
+
+/// Soft-delete a person identifier.
+/// Logs `PERSON_IDENTIFIER_DELETED` to the case audit trail.
+#[tauri::command(rename_all = "snake_case")]
+pub async fn person_identifier_delete(
+    token: String,
+    identifier_id: i64,
+    state: State<'_, Arc<AppState>>,
+) -> Result<(), AppError> {
+    // MUST-DO 3 — session guard first
+    let session = require_session(&state, &token)?;
+
+    // Fetch first so we can include kind/entity in the audit log.
+    let existing =
+        crate::db::person_identifiers::get_identifier(&state.db.forensics, identifier_id).await?;
+    let entity =
+        crate::db::entities::get_entity(&state.db.forensics, existing.entity_id).await?;
+
+    crate::db::person_identifiers::soft_delete(&state.db.forensics, identifier_id).await?;
+
+    info!(
+        username = %session.username,
+        identifier_id = %identifier_id,
+        entity_id = %existing.entity_id,
+        "person identifier soft-deleted"
+    );
+    audit::log_case(
+        &entity.case_id,
+        &session.username,
+        PERSON_IDENTIFIER_DELETED,
+        &format!(
+            "identifier_id={} entity_id={} kind={:?}",
+            identifier_id, existing.entity_id, existing.kind
+        ),
+    );
+
+    Ok(())
 }

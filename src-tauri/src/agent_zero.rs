@@ -127,9 +127,30 @@ pub struct ForensicAnalysisResult {
 
 // ─── OSINT (Persons feature) ─────────────────────────────────────────────────
 
+/// One OSINT-relevant identifier attached to a person. Mirrors a row from the
+/// `person_identifiers` table (migration 0004) minus the audit/ownership
+/// columns. Agent Zero's orchestration uses the full array to dispatch tools
+/// across every known handle/email/phone/url in parallel instead of the
+/// single-value legacy fields.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct OsintPersonIdentifier {
+    /// One of: email | username | handle | phone | url
+    pub kind: String,
+    pub value: String,
+    /// Free-form platform tag (twitter, reddit, github, gmail, …). Optional.
+    pub platform: Option<String>,
+}
+
 /// Known fields about a person that Agent Zero can use as OSINT input.
-/// Every field is optional — Agent Zero decides which tools to run based on
-/// which inputs are present.
+/// Every legacy field is optional — Agent Zero decides which tools to run
+/// based on which inputs are present.
+///
+/// `identifiers` (migration 0004) is the multi-valued replacement: a single
+/// person typically has many emails, handles, and URLs across platforms.
+/// The legacy single-value `email`/`phone`/`username` columns stay populated
+/// for backward compatibility with existing Agent Zero containers that only
+/// speak the v1 payload shape — they are filled from the first identifier of
+/// each applicable kind when the entity row itself doesn't have them.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OsintPersonPayload {
     pub name: String,
@@ -139,6 +160,10 @@ pub struct OsintPersonPayload {
     pub employer: Option<String>,
     pub dob: Option<String>,
     pub notes: Option<String>,
+    /// Multi-valued OSINT identifiers from the person_identifiers table,
+    /// already deduplicated by (kind, lowercased value) before send.
+    #[serde(default)]
+    pub identifiers: Vec<OsintPersonIdentifier>,
 }
 
 /// Request body for `dfars_osint_person`.
@@ -311,8 +336,9 @@ impl AgentZeroClient {
             action = audit::AI_OSINT_PERSON_CALLED,
             case_id = %req.case_id,
             tools_requested_count = req.tools_requested.len(),
+            identifiers_count = req.person.identifiers.len(),
             discretion_allowed = req.discretion_allowed,
-            fields_sent = "person(name,email,phone,username,employer,dob,notes), tools_requested, discretion_allowed"
+            fields_sent = "person(name,email,phone,username,employer,dob,notes,identifiers[]), tools_requested, discretion_allowed"
         );
         let body = serde_json::to_value(req)
             .map_err(|e| AppError::Internal(format!("osint_person serialize failed: {e}")))?;

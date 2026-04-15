@@ -232,9 +232,15 @@ export function PersonsPanel({ caseId }: PersonsPanelProps) {
       setOsintPersonId(null);
       const inserted = summary.tool_usage_rows_inserted;
       const tools = summary.tools_run;
-      toastSuccess(
-        `OSINT ${summary.status} — ${tools} tool run${tools === 1 ? "" : "s"}, ${inserted} logged to the Tools tab.`,
-      );
+      const ids = summary.identifiers_submitted;
+      const headline =
+        ids === 0
+          ? `OSINT ${summary.status} — name-only submission, ${tools} tool run${tools === 1 ? "" : "s"}, ${inserted} logged.`
+          : `OSINT ${summary.status} — ${ids} identifier${ids === 1 ? "" : "s"} submitted, ${tools} tool run${tools === 1 ? "" : "s"}, ${inserted} logged.`;
+      // Append any notes the backend added (truncation, upstream Agent Zero
+      // warnings) so the investigator sees a single unambiguous status line.
+      const msg = summary.notes ? `${headline} ${summary.notes}` : headline;
+      toastSuccess(msg);
     },
     onError: () => {
       // onError path is handled per-call inside handleRunOsint so we can
@@ -364,6 +370,7 @@ export function PersonsPanel({ caseId }: PersonsPanelProps) {
             <PersonForm
               defaultValues={personToFormValues(editPerson)}
               currentPhotoPath={editPerson.photo_path}
+              entityId={editPerson.entity_id}
               isPending={updateMutation.isPending}
               onSubmit={(values, pickedPhotoPath) =>
                 updateMutation.mutate({

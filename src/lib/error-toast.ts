@@ -65,7 +65,9 @@ const ERROR_MESSAGES: Record<AppErrorCode, string> = {
   PersonPhotoNotAnImage:
     "The selected file is not a recognized image (JPEG, PNG, GIF, WebP, BMP, or TIFF). Pick a different file.",
   EntityNotAPerson:
-    "This entity is not a person, so a photo cannot be attached. Photos are only supported on person entities.",
+    "This entity is not a person. Photos and OSINT identifiers can only be attached to person-type entities.",
+  PersonIdentifierNotFound:
+    "Identifier not found. It may have been deleted — refresh the list and try again.",
   AiOsintConsentRequired:
     "See dialog.", // The AiConsentDialog with scope='osint' handles this — toast is supplemental only
   ReportGenerationFailed:

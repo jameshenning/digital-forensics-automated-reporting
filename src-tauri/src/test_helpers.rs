@@ -172,6 +172,7 @@ CREATE TABLE IF NOT EXISTS chain_of_custody (
 CREATE TABLE IF NOT EXISTS tool_usage (
     tool_id INTEGER PRIMARY KEY AUTOINCREMENT,
     case_id TEXT NOT NULL,
+    evidence_id TEXT,
     tool_name TEXT NOT NULL,
     version TEXT,
     purpose TEXT NOT NULL,
@@ -180,8 +181,15 @@ CREATE TABLE IF NOT EXISTS tool_usage (
     output_file TEXT,
     execution_datetime TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     operator TEXT NOT NULL,
+    -- migration 0003: tool reproduction fields
+    input_sha256 TEXT,
+    output_sha256 TEXT,
+    environment_notes TEXT,
+    reproduction_notes TEXT,
     FOREIGN KEY (case_id) REFERENCES cases (case_id) ON DELETE RESTRICT
 );
+
+CREATE INDEX IF NOT EXISTS idx_tool_evidence_id ON tool_usage(evidence_id);
 
 CREATE TABLE IF NOT EXISTS analysis_notes (
     note_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -233,11 +241,39 @@ CREATE TABLE IF NOT EXISTS entities (
     is_deleted INTEGER DEFAULT 0,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    -- migration 0002: person sub-type columns
+    photo_path TEXT,
+    email TEXT,
+    phone TEXT,
+    username TEXT,
+    employer TEXT,
+    dob TEXT,
     FOREIGN KEY (case_id) REFERENCES cases (case_id) ON DELETE RESTRICT,
     FOREIGN KEY (parent_entity_id) REFERENCES entities (entity_id) ON DELETE SET NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_entities_case ON entities(case_id);
+CREATE INDEX IF NOT EXISTS idx_entities_case_type ON entities(case_id, entity_type);
+CREATE INDEX IF NOT EXISTS idx_entities_parent ON entities(parent_entity_id);
+
+-- migration 0004: person_identifiers
+CREATE TABLE IF NOT EXISTS person_identifiers (
+    identifier_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    entity_id INTEGER NOT NULL,
+    kind TEXT NOT NULL,
+    value TEXT NOT NULL,
+    platform TEXT,
+    notes TEXT,
+    is_deleted INTEGER DEFAULT 0,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (entity_id) REFERENCES entities (entity_id) ON DELETE RESTRICT
+);
+
+CREATE INDEX IF NOT EXISTS idx_person_identifiers_entity
+    ON person_identifiers(entity_id, is_deleted);
+CREATE INDEX IF NOT EXISTS idx_person_identifiers_kind
+    ON person_identifiers(entity_id, kind, is_deleted);
 
 CREATE TABLE IF NOT EXISTS entity_links (
     link_id INTEGER PRIMARY KEY AUTOINCREMENT,

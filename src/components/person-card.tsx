@@ -31,6 +31,7 @@ import {
 import type { Entity } from "@/lib/bindings";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { PersonIdentifierEditor } from "@/components/person-identifier-editor";
 
 // ---------------------------------------------------------------------------
 // OSINT findings shape — written by the ai_osint_person command into the
@@ -215,6 +216,12 @@ export function PersonCard({
           </p>
         </div>
       )}
+
+      {/* OSINT identifiers (migration 0004) — rendered read-only; editing
+          happens inside the Edit dialog. */}
+      <div className="border-t px-5 py-3">
+        <PersonIdentifierEditor entityId={person.entity_id} readOnly />
+      </div>
 
       {/* OSINT findings block */}
       <div className="border-t px-5 py-3 bg-muted/20">
