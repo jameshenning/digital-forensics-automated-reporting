@@ -256,7 +256,7 @@ CREATE INDEX IF NOT EXISTS idx_entities_case ON entities(case_id);
 CREATE INDEX IF NOT EXISTS idx_entities_case_type ON entities(case_id, entity_type);
 CREATE INDEX IF NOT EXISTS idx_entities_parent ON entities(parent_entity_id);
 
--- migration 0004: person_identifiers
+-- migration 0004: person_identifiers (+ 0006 discovered_via_tool)
 CREATE TABLE IF NOT EXISTS person_identifiers (
     identifier_id INTEGER PRIMARY KEY AUTOINCREMENT,
     entity_id INTEGER NOT NULL,
@@ -264,6 +264,7 @@ CREATE TABLE IF NOT EXISTS person_identifiers (
     value TEXT NOT NULL,
     platform TEXT,
     notes TEXT,
+    discovered_via_tool TEXT,
     is_deleted INTEGER DEFAULT 0,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -274,8 +275,10 @@ CREATE INDEX IF NOT EXISTS idx_person_identifiers_entity
     ON person_identifiers(entity_id, is_deleted);
 CREATE INDEX IF NOT EXISTS idx_person_identifiers_kind
     ON person_identifiers(entity_id, kind, is_deleted);
+CREATE INDEX IF NOT EXISTS idx_person_identifiers_discovered_via_tool
+    ON person_identifiers(discovered_via_tool);
 
--- migration 0005: business_identifiers
+-- migration 0005: business_identifiers (+ 0006 discovered_via_tool)
 CREATE TABLE IF NOT EXISTS business_identifiers (
     identifier_id INTEGER PRIMARY KEY AUTOINCREMENT,
     entity_id INTEGER NOT NULL,
@@ -283,6 +286,7 @@ CREATE TABLE IF NOT EXISTS business_identifiers (
     value TEXT NOT NULL,
     platform TEXT,
     notes TEXT,
+    discovered_via_tool TEXT,
     is_deleted INTEGER DEFAULT 0,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -293,6 +297,8 @@ CREATE INDEX IF NOT EXISTS idx_business_identifiers_entity
     ON business_identifiers(entity_id, is_deleted);
 CREATE INDEX IF NOT EXISTS idx_business_identifiers_kind
     ON business_identifiers(entity_id, kind, is_deleted);
+CREATE INDEX IF NOT EXISTS idx_business_identifiers_discovered_via_tool
+    ON business_identifiers(discovered_via_tool);
 
 CREATE TABLE IF NOT EXISTS entity_links (
     link_id INTEGER PRIMARY KEY AUTOINCREMENT,

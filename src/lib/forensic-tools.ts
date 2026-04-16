@@ -983,6 +983,90 @@ const TOOLS: ForensicTool[] = [
     reproductionSteps: [],
     verificationSteps: [],
   },
+  {
+    name: "whois",
+    aliases: ["whois"],
+    category: "osint",
+    description:
+      "The classic internet lookup utility that queries WHOIS databases for ownership and registration details about a domain name, IP address, or autonomous-system number. Every registered domain has a WHOIS record containing the registrar, registration and expiration dates, and (unless redacted behind a privacy service) the registrant's name, organization, email, phone, and postal address.",
+    typicalFindings: [
+      "Registrar that issued the domain (GoDaddy, Namecheap, Cloudflare, etc.)",
+      "Registration and expiration dates — reveals operator history",
+      "Registrant contact details when not behind a privacy service",
+      "Name servers and DNS provider",
+      "Abuse-reporting email for the registrar",
+    ],
+    whyItMatters:
+      "WHOIS is the first query an OSINT investigator runs on any domain. Even when registrant details are redacted, the registrar + registration date fingerprint the operator's tooling and timeline — short-lived domains and bulk-registered sets are strong indicators of phishing or fraud infrastructure. Free, passive, and leaves no trace on the target.",
+    feedsInto: ["SpiderFoot", "Amass", "theHarvester"],
+    consumesFrom: [],
+    reference: "https://en.wikipedia.org/wiki/WHOIS",
+    environmentSetup: [],
+    reproductionSteps: [],
+    verificationSteps: [],
+  },
+  {
+    name: "subfinder",
+    aliases: ["subfinder"],
+    category: "osint",
+    description:
+      "A fast passive subdomain-enumeration tool from the ProjectDiscovery toolkit. Queries dozens of certificate-transparency logs, DNS aggregators, search engines, and passive-DNS databases to build a list of every subdomain that has ever been seen for a target domain — without sending a single packet to the target itself.",
+    typicalFindings: [
+      "Production, staging, and dev subdomains (api, mail, vpn, admin, dev, test)",
+      "Forgotten legacy subdomains still answering DNS",
+      "Third-party SaaS subdomains (e.g. target.salesforce.com, target.okta.com)",
+      "Internal service names accidentally exposed via certificate transparency",
+    ],
+    whyItMatters:
+      "The attack surface of an organization is almost always bigger than its flagship domain. Subfinder surfaces the full DNS footprint — every forgotten subdomain is a potential entry point for attackers and a piece of evidence for investigators mapping infrastructure. Purely passive, so the target never sees the reconnaissance.",
+    feedsInto: ["theHarvester", "SpiderFoot", "Amass"],
+    consumesFrom: ["whois"],
+    reference: "https://github.com/projectdiscovery/subfinder",
+    environmentSetup: [],
+    reproductionSteps: [],
+    verificationSteps: [],
+  },
+  {
+    name: "onionsearch",
+    aliases: ["onionsearch"],
+    category: "osint",
+    description:
+      "A Python OSINT tool that runs a keyword search across 15+ dark-web search engines (Ahmia, Torch, DarkSearch, Haystak, Phobos, etc.) and returns every onion URL that mentions the keyword. Runs inside Tor so the queries themselves are anonymous, and the dark-web engines don't know who's looking.",
+    typicalFindings: [
+      "Dark-web marketplace listings that mention the target",
+      "Onion sites that reference the target's name, domain, or email",
+      "Leaked-credential dumps or paste-site-style indexes on the dark web",
+      "Forum threads discussing the target",
+    ],
+    whyItMatters:
+      "A surface-web OSINT sweep will never see the dark web. OnionSearch is how you find out whether your target is being discussed, sold, or leaked on Tor-hidden services. Critical for fraud, breach, and threat-intelligence investigations where the stolen data often lands on onion sites before anywhere else.",
+    feedsInto: ["SpiderFoot"],
+    consumesFrom: [],
+    reference: "https://github.com/megadose/OnionSearch",
+    environmentSetup: ["Tor daemon running on the scanning host (onionsearch routes through the local SOCKS proxy)"],
+    reproductionSteps: [],
+    verificationSteps: [],
+  },
+  {
+    name: "darkdump",
+    aliases: ["darkdump", "darkdump.py"],
+    category: "osint",
+    description:
+      "A Python dark-web OSINT scanner that searches Ahmia and a set of additional dark-web sources for mentions of a keyword, name, or domain and returns the matching onion URLs. Complementary to onionsearch — similar problem, different source set, so running both gives broader dark-web coverage.",
+    typicalFindings: [
+      "Onion URLs where the target name or domain appears",
+      "Mentions of the target in dark-web forums and marketplaces",
+      "Keyword-adjacent onion sites worth manual review",
+    ],
+    whyItMatters:
+      "Complements OnionSearch — the dark-web search engines each index different subsets of the onion network, so a single tool can miss sites another would find. Using both produces the broadest possible dark-web OSINT sweep for a given keyword.",
+    feedsInto: ["SpiderFoot"],
+    consumesFrom: [],
+    reference: "https://github.com/josh0xA/darkdump",
+    environmentSetup: ["Tor daemon running on the scanning host (darkdump routes through the local SOCKS proxy)"],
+    reproductionSteps: [],
+    verificationSteps: [],
+  },
 ];
 
 // ---------------------------------------------------------------------------

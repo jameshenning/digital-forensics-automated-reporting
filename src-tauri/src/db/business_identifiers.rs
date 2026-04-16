@@ -48,6 +48,14 @@ pub struct BusinessIdentifier {
     pub value: String,
     pub platform: Option<String>,
     pub notes: Option<String>,
+    /// Set by `insert_discovered_batch` when a row originates from an OSINT
+    /// run. Carries the tool that surfaced the identifier (e.g. `"subfinder"`,
+    /// `"spiderfoot"`). `NULL` for identifiers entered manually by the
+    /// investigator.  Migration 0006 added this column and backfilled it by
+    /// parsing the pre-existing "Auto-discovered via OSINT <tool> on <date>"
+    /// notes stamp.
+    #[serde(default)]
+    pub discovered_via_tool: Option<String>,
     pub is_deleted: i64,
     pub created_at: String,
     pub updated_at: String,
@@ -192,10 +200,10 @@ pub async fn add_identifier(
 
     let row = sqlx::query_as::<_, BusinessIdentifier>(
         r#"
-        INSERT INTO business_identifiers (entity_id, kind, value, platform, notes)
-        VALUES (?, ?, ?, ?, ?)
+        INSERT INTO business_identifiers (entity_id, kind, value, platform, notes, discovered_via_tool)
+        VALUES (?, ?, ?, ?, ?, NULL)
         RETURNING identifier_id, entity_id, kind, value, platform, notes,
-                  is_deleted, created_at, updated_at
+                  discovered_via_tool, is_deleted, created_at, updated_at
         "#,
     )
     .bind(entity_id)
@@ -217,7 +225,7 @@ pub async fn get_identifier(
     sqlx::query_as::<_, BusinessIdentifier>(
         r#"
         SELECT identifier_id, entity_id, kind, value, platform, notes,
-               is_deleted, created_at, updated_at
+               discovered_via_tool, is_deleted, created_at, updated_at
         FROM business_identifiers
         WHERE identifier_id = ?
         "#,
@@ -238,7 +246,7 @@ pub async fn list_for_entity(
     let rows = sqlx::query_as::<_, BusinessIdentifier>(
         r#"
         SELECT identifier_id, entity_id, kind, value, platform, notes,
-               is_deleted, created_at, updated_at
+               discovered_via_tool, is_deleted, created_at, updated_at
         FROM business_identifiers
         WHERE entity_id = ? AND is_deleted = 0
         ORDER BY kind ASC, created_at ASC
@@ -294,7 +302,7 @@ pub async fn update_identifier(
             updated_at = CURRENT_TIMESTAMP
         WHERE identifier_id = ? AND is_deleted = 0
         RETURNING identifier_id, entity_id, kind, value, platform, notes,
-                  is_deleted, created_at, updated_at
+                  discovered_via_tool, is_deleted, created_at, updated_at
         "#,
     )
     .bind(kind)
@@ -416,7 +424,33 @@ pub async fn insert_discovered_batch(
         }
 
         attempted += 1;
-        match add_identifier(pool, entity_id, &input).await {
+        let trimmed_kind = input.kind.trim();
+        let trimmed_value = input.value.trim();
+        let norm_platform = normalize_optional(&input.platform);
+        let norm_notes = normalize_optional(&input.notes);
+
+        // Direct INSERT (rather than going through `add_identifier`) so we
+        // can populate `discovered_via_tool` on the same row — that column
+        // is what the per-row source-tool badge in the UI reads from.
+        let result: Result<BusinessIdentifier, sqlx::Error> =
+            sqlx::query_as::<_, BusinessIdentifier>(
+                r#"
+                INSERT INTO business_identifiers (entity_id, kind, value, platform, notes, discovered_via_tool)
+                VALUES (?, ?, ?, ?, ?, ?)
+                RETURNING identifier_id, entity_id, kind, value, platform, notes,
+                          discovered_via_tool, is_deleted, created_at, updated_at
+                "#,
+            )
+            .bind(entity_id)
+            .bind(trimmed_kind)
+            .bind(trimmed_value)
+            .bind(&norm_platform)
+            .bind(&norm_notes)
+            .bind(source_tool)
+            .fetch_one(pool)
+            .await;
+
+        match result {
             Ok(_) => {
                 inserted += 1;
                 seen.insert(key);
@@ -924,6 +958,20 @@ mod tests {
                 && notes.contains("2026-04-16"),
             "notes should carry tool + date provenance, got: {notes}"
         );
+        // Migration 0006: the dedicated column must also carry the tool name
+        // so the UI can render a source-tool badge without parsing notes.
+        assert_eq!(row.discovered_via_tool.as_deref(), Some("subfinder"));
+    }
+
+    #[tokio::test]
+    async fn manual_add_leaves_discovered_via_tool_null() {
+        let pool = make_forensics_pool().await;
+        let entity_id = seed_business(&pool).await;
+
+        let added = add_identifier(&pool, entity_id, &make_input("domain", "manual.acme.com"))
+            .await
+            .unwrap();
+        assert!(added.discovered_via_tool.is_none());
     }
 
     #[tokio::test]

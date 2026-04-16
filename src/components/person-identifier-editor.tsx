@@ -37,6 +37,7 @@ import {
   PERSON_IDENTIFIER_KINDS,
 } from "@/lib/person-schema";
 
+import { SourceToolBadge } from "@/components/source-tool-badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -341,12 +342,15 @@ function IdentifierRow({
     <div className="flex items-center gap-2 rounded-md border bg-card px-3 py-2">
       <Icon className="h-4 w-4 text-muted-foreground shrink-0" />
       <div className="flex-1 min-w-0">
-        <div className="flex items-baseline gap-2 flex-wrap">
+        <div className="flex items-center gap-2 flex-wrap">
           <span className="text-sm font-medium break-all">{identifier.value}</span>
           {identifier.platform && (
             <span className="text-xs text-muted-foreground">
               · {identifier.platform}
             </span>
+          )}
+          {identifier.discovered_via_tool && (
+            <SourceToolBadge toolName={identifier.discovered_via_tool} />
           )}
         </div>
         {identifier.notes && (

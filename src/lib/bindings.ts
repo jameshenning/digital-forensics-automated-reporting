@@ -1283,6 +1283,18 @@ export interface PersonIdentifier {
   /** Free-form platform tag (twitter, reddit, github, discord, gmail, ...). */
   platform: string | null;
   notes: string | null;
+  /**
+   * Populated by `insert_discovered_batch` on the Rust side when the row
+   * originates from an OSINT run (e.g. "sherlock", "holehe", "theHarvester").
+   * NULL for identifiers the investigator entered by hand. The
+   * BusinessIdentifierEditor / PersonIdentifierEditor renders a small
+   * "Discovered via <tool>" badge whenever this field is non-null and wires
+   * a Tooltip to the tool's entry in `forensic-tools.ts`.
+   *
+   * Added by migration 0006; existing auto-discovered rows were backfilled
+   * from the "Auto-discovered via OSINT <tool> on <date>" notes stamp.
+   */
+  discovered_via_tool: string | null;
   is_deleted: 0 | 1;
   created_at: string;
   updated_at: string;
@@ -1363,6 +1375,15 @@ export interface BusinessIdentifier {
   /** Free-form platform tag (linkedin, secretary-of-state, irs, ...). */
   platform: string | null;
   notes: string | null;
+  /**
+   * Populated by `insert_discovered_batch` on the Rust side when the row
+   * originates from an OSINT run (e.g. "subfinder", "spiderfoot",
+   * "theHarvester"). NULL for identifiers the investigator entered by
+   * hand. See the matching comment on `PersonIdentifier.discovered_via_tool`.
+   *
+   * Added by migration 0006.
+   */
+  discovered_via_tool: string | null;
   is_deleted: 0 | 1;
   created_at: string;
   updated_at: string;
