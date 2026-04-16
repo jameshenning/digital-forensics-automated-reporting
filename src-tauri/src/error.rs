@@ -133,6 +133,14 @@ pub enum AppError {
     #[error("person identifier not found: identifier_id={identifier_id}")]
     PersonIdentifierNotFound { identifier_id: i64 },
 
+    // ─── Businesses — identifiers (migration 0005) ──────────────────────────
+
+    #[error("entity is not a business: entity_id={entity_id}, entity_type={entity_type}")]
+    EntityNotABusiness { entity_id: i64, entity_type: String },
+
+    #[error("business identifier not found: identifier_id={identifier_id}")]
+    BusinessIdentifierNotFound { identifier_id: i64 },
+
     // ─── Phase 3b: reports ───────────────────────────────────────────────────
 
     #[error("report generation failed: {reason}")]

@@ -1,15 +1,15 @@
-//! Person identifier queries — migration 0004.
+//! Business identifier queries — migration 0005.
 //!
-//! Manages the `person_identifiers` table: add, get, list by entity, update,
+//! Manages the `business_identifiers` table: add, get, list by entity, update,
 //! soft-delete. Every identifier is attached to a parent `entities` row whose
-//! `entity_type` MUST be `'person'` (enforced at add time). Deletes are soft
+//! `entity_type` MUST be `'business'` (enforced at add time). Deletes are soft
 //! only (`is_deleted = 1`) so the OSINT submission history stays intact even
 //! after the investigator removes an identifier from the active view.
 //!
-//! A single person typically has many OSINT-relevant identifiers — multiple
-//! emails, handles across platforms (Twitter/Reddit/GitHub/Discord), phone
-//! numbers, profile URLs. The OSINT submission flow (Pass 2) batches the
-//! active rows here for a given entity into a single Agent Zero job.
+//! A single business typically has many OSINT-relevant identifiers — domain
+//! names, registration numbers, EINs, email addresses, phone numbers, addresses,
+//! social media profiles, and URLs. The OSINT submission flow (Pass 2) batches
+//! the active rows here for a given entity into a single Agent Zero job.
 //!
 //! Public surface:
 //!   - `add_identifier`        — INSERT with validation + parent-entity check
@@ -18,7 +18,7 @@
 //!   - `update_identifier`     — UPDATE mutable fields
 //!   - `soft_delete`           — sets is_deleted = 1
 //!   - `cascade_soft_delete_for_entity` — tx-scoped helper called from
-//!     `entities::soft_delete` so deleting a person also removes their
+//!     `entities::soft_delete` so deleting a business also removes their
 //!     identifiers from the active view.
 
 use serde::{Deserialize, Serialize};
@@ -28,7 +28,9 @@ use crate::error::AppError;
 
 // ─── Validation constants ─────────────────────────────────────────────────────
 
-const VALID_KINDS: &[&str] = &["email", "username", "handle", "phone", "url"];
+const VALID_KINDS: &[&str] = &[
+    "domain", "registration", "ein", "email", "phone", "address", "social", "url",
+];
 
 const VALUE_MAX_LEN: usize = 500;
 const PLATFORM_MAX_LEN: usize = 100;
@@ -36,10 +38,10 @@ const NOTES_MAX_LEN: usize = 2000;
 
 // ─── Public data types ────────────────────────────────────────────────────────
 
-/// Full person_identifier row. `created_at`/`updated_at` are `String` for
+/// Full business_identifier row. `created_at`/`updated_at` are `String` for
 /// v1-compat with the rest of the schema — see `db::cases::Case`.
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
-pub struct PersonIdentifier {
+pub struct BusinessIdentifier {
     pub identifier_id: i64,
     pub entity_id: i64,
     pub kind: String,
@@ -51,13 +53,13 @@ pub struct PersonIdentifier {
     pub updated_at: String,
 }
 
-/// Writable fields for creating or updating a person_identifier.
+/// Writable fields for creating or updating a business_identifier.
 ///
 /// `entity_id` is supplied as a path/command parameter on the add path and
 /// is implicit (from the existing row) on the update path, so it is NOT
 /// part of this input struct.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PersonIdentifierInput {
+pub struct BusinessIdentifierInput {
     pub kind: String,
     pub value: String,
     #[serde(default)]
@@ -68,7 +70,7 @@ pub struct PersonIdentifierInput {
 
 // ─── Validation ───────────────────────────────────────────────────────────────
 
-fn validate_input(input: &PersonIdentifierInput) -> Result<(), AppError> {
+fn validate_input(input: &BusinessIdentifierInput) -> Result<(), AppError> {
     // kind: lowercase allowlist
     let kind = input.kind.trim();
     if !VALID_KINDS.contains(&kind) {
@@ -95,10 +97,9 @@ fn validate_input(input: &PersonIdentifierInput) -> Result<(), AppError> {
     }
     // Reject values that start with '-' — prevents argv-injection (CWE-88)
     // when Agent Zero tools receive the value as a positional argument (e.g.,
-    // `sherlock <username>`, `onionsearch <keyword>`). A leading-dash value
-    // would be parsed as a flag rather than a positional. No legitimate
-    // email / username / handle / phone / url starts with a dash. Handles
-    // prefixed with '@' are stripped before sherlock anyway.
+    // `whois <domain>`, `spiderfoot -s <target>`, `onionsearch <keyword>`).
+    // A leading-dash value would be parsed as a flag rather than a positional.
+    // No legitimate domain / email / registration / phone starts with a dash.
     if value.starts_with('-') {
         return Err(AppError::ValidationError {
             field: "value".into(),
@@ -129,9 +130,9 @@ fn validate_input(input: &PersonIdentifierInput) -> Result<(), AppError> {
     Ok(())
 }
 
-/// Verify the parent entity exists, is not soft-deleted, and is a person.
+/// Verify the parent entity exists, is not soft-deleted, and is a business.
 /// Returns the entity's `case_id` (needed for audit logging by callers).
-async fn validate_parent_is_person(
+async fn validate_parent_is_business(
     pool: &SqlitePool,
     entity_id: i64,
 ) -> Result<String, AppError> {
@@ -147,8 +148,8 @@ async fn validate_parent_is_person(
         Some((_, _, is_deleted)) if is_deleted != 0 => {
             Err(AppError::EntityNotFound { entity_id })
         }
-        Some((_, entity_type, _)) if entity_type != "person" => {
-            Err(AppError::EntityNotAPerson {
+        Some((_, entity_type, _)) if entity_type != "business" => {
+            Err(AppError::EntityNotABusiness {
                 entity_id,
                 entity_type,
             })
@@ -172,26 +173,26 @@ fn normalize_optional(s: &Option<String>) -> Option<String> {
 
 // ─── Public query functions ───────────────────────────────────────────────────
 
-/// Add a new identifier to a person entity. Returns the inserted row.
+/// Add a new identifier to a business entity. Returns the inserted row.
 ///
 /// Validates the input, then verifies the parent entity exists, is active,
-/// and has `entity_type = 'person'`. Callers are responsible for audit logging.
+/// and has `entity_type = 'business'`. Callers are responsible for audit logging.
 pub async fn add_identifier(
     pool: &SqlitePool,
     entity_id: i64,
-    input: &PersonIdentifierInput,
-) -> Result<PersonIdentifier, AppError> {
+    input: &BusinessIdentifierInput,
+) -> Result<BusinessIdentifier, AppError> {
     validate_input(input)?;
-    validate_parent_is_person(pool, entity_id).await?;
+    validate_parent_is_business(pool, entity_id).await?;
 
     let kind = input.kind.trim();
     let value = input.value.trim();
     let platform = normalize_optional(&input.platform);
     let notes = normalize_optional(&input.notes);
 
-    let row = sqlx::query_as::<_, PersonIdentifier>(
+    let row = sqlx::query_as::<_, BusinessIdentifier>(
         r#"
-        INSERT INTO person_identifiers (entity_id, kind, value, platform, notes)
+        INSERT INTO business_identifiers (entity_id, kind, value, platform, notes)
         VALUES (?, ?, ?, ?, ?)
         RETURNING identifier_id, entity_id, kind, value, platform, notes,
                   is_deleted, created_at, updated_at
@@ -212,33 +213,33 @@ pub async fn add_identifier(
 pub async fn get_identifier(
     pool: &SqlitePool,
     identifier_id: i64,
-) -> Result<PersonIdentifier, AppError> {
-    sqlx::query_as::<_, PersonIdentifier>(
+) -> Result<BusinessIdentifier, AppError> {
+    sqlx::query_as::<_, BusinessIdentifier>(
         r#"
         SELECT identifier_id, entity_id, kind, value, platform, notes,
                is_deleted, created_at, updated_at
-        FROM person_identifiers
+        FROM business_identifiers
         WHERE identifier_id = ?
         "#,
     )
     .bind(identifier_id)
     .fetch_optional(pool)
     .await?
-    .ok_or(AppError::PersonIdentifierNotFound { identifier_id })
+    .ok_or(AppError::BusinessIdentifierNotFound { identifier_id })
 }
 
 /// List all active (non-deleted) identifiers for a given entity, ordered by
-/// `kind ASC, created_at ASC` so the UI shows emails before handles before
-/// phones, each group in creation order.
+/// `kind ASC, created_at ASC` so the UI shows addresses before domains before
+/// EINs, each group in creation order.
 pub async fn list_for_entity(
     pool: &SqlitePool,
     entity_id: i64,
-) -> Result<Vec<PersonIdentifier>, AppError> {
-    let rows = sqlx::query_as::<_, PersonIdentifier>(
+) -> Result<Vec<BusinessIdentifier>, AppError> {
+    let rows = sqlx::query_as::<_, BusinessIdentifier>(
         r#"
         SELECT identifier_id, entity_id, kind, value, platform, notes,
                is_deleted, created_at, updated_at
-        FROM person_identifiers
+        FROM business_identifiers
         WHERE entity_id = ? AND is_deleted = 0
         ORDER BY kind ASC, created_at ASC
         "#,
@@ -254,16 +255,16 @@ pub async fn list_for_entity(
 /// changeable — that would require deleting and recreating the row so the
 /// audit trail reflects a real move. `updated_at` is set to `CURRENT_TIMESTAMP`.
 ///
-/// Re-validates that the parent entity is still a person on every update —
+/// Re-validates that the parent entity is still a business on every update —
 /// `add_identifier` guaranteed this at insert time, but nothing prevents a
 /// future call to `entity_update` from retyping the parent. Without this
-/// check an orphan identifier could be edited indefinitely on a non-person
-/// row, violating the "identifiers only exist on persons" invariant.
+/// check an orphan identifier could be edited indefinitely on a non-business
+/// row, violating the "identifiers only exist on businesses" invariant.
 pub async fn update_identifier(
     pool: &SqlitePool,
     identifier_id: i64,
-    input: &PersonIdentifierInput,
-) -> Result<PersonIdentifier, AppError> {
+    input: &BusinessIdentifierInput,
+) -> Result<BusinessIdentifier, AppError> {
     validate_input(input)?;
 
     // Verify the row exists and is active first — update-if-soft-deleted is
@@ -271,21 +272,21 @@ pub async fn update_identifier(
     // currently exposed) or add a fresh row.
     let existing = get_identifier(pool, identifier_id).await?;
     if existing.is_deleted != 0 {
-        return Err(AppError::PersonIdentifierNotFound { identifier_id });
+        return Err(AppError::BusinessIdentifierNotFound { identifier_id });
     }
 
-    // Re-enforce the "identifiers only exist on persons" invariant in case
+    // Re-enforce the "identifiers only exist on businesses" invariant in case
     // the parent entity was retyped after the identifier was created.
-    validate_parent_is_person(pool, existing.entity_id).await?;
+    validate_parent_is_business(pool, existing.entity_id).await?;
 
     let kind = input.kind.trim();
     let value = input.value.trim();
     let platform = normalize_optional(&input.platform);
     let notes = normalize_optional(&input.notes);
 
-    let row = sqlx::query_as::<_, PersonIdentifier>(
+    let row = sqlx::query_as::<_, BusinessIdentifier>(
         r#"
-        UPDATE person_identifiers SET
+        UPDATE business_identifiers SET
             kind = ?,
             value = ?,
             platform = ?,
@@ -303,7 +304,7 @@ pub async fn update_identifier(
     .bind(identifier_id)
     .fetch_optional(pool)
     .await?
-    .ok_or(AppError::PersonIdentifierNotFound { identifier_id })?;
+    .ok_or(AppError::BusinessIdentifierNotFound { identifier_id })?;
 
     Ok(row)
 }
@@ -314,12 +315,12 @@ pub async fn soft_delete(pool: &SqlitePool, identifier_id: i64) -> Result<(), Ap
     // row is a no-op but should still fail loudly so callers can log it.
     let existing = get_identifier(pool, identifier_id).await?;
     if existing.is_deleted != 0 {
-        return Err(AppError::PersonIdentifierNotFound { identifier_id });
+        return Err(AppError::BusinessIdentifierNotFound { identifier_id });
     }
 
     let rows_affected = sqlx::query(
         r#"
-        UPDATE person_identifiers
+        UPDATE business_identifiers
         SET is_deleted = 1, updated_at = CURRENT_TIMESTAMP
         WHERE identifier_id = ? AND is_deleted = 0
         "#,
@@ -330,13 +331,13 @@ pub async fn soft_delete(pool: &SqlitePool, identifier_id: i64) -> Result<(), Ap
     .rows_affected();
 
     if rows_affected == 0 {
-        return Err(AppError::PersonIdentifierNotFound { identifier_id });
+        return Err(AppError::BusinessIdentifierNotFound { identifier_id });
     }
     Ok(())
 }
 
 /// Cascade soft-delete all active identifiers for a given entity. Called from
-/// `entities::soft_delete` inside its transaction so deleting a person and
+/// `entities::soft_delete` inside its transaction so deleting a business and
 /// hiding their identifiers is atomic.
 pub(crate) async fn cascade_soft_delete_for_entity(
     tx: &mut Transaction<'_, Sqlite>,
@@ -344,7 +345,7 @@ pub(crate) async fn cascade_soft_delete_for_entity(
 ) -> Result<(), AppError> {
     sqlx::query(
         r#"
-        UPDATE person_identifiers
+        UPDATE business_identifiers
         SET is_deleted = 1, updated_at = CURRENT_TIMESTAMP
         WHERE entity_id = ? AND is_deleted = 0
         "#,
@@ -364,7 +365,7 @@ mod tests {
     use crate::db::entities::{add_entity, EntityInput};
     use crate::test_helpers::test_forensics_db_with_schema as make_forensics_pool;
 
-    async fn seed_person(pool: &SqlitePool) -> i64 {
+    async fn seed_business(pool: &SqlitePool) -> i64 {
         // A case must exist because entities.case_id has a FK to cases.
         sqlx::query(
             r#"
@@ -376,44 +377,9 @@ mod tests {
         .await
         .expect("insert test case");
 
-        let person = add_entity(
-            pool,
-            "CASE-001",
-            &EntityInput {
-                entity_type: "person".into(),
-                display_name: "Alice Example".into(),
-                subtype: Some("suspect".into()),
-                organizational_rank: None,
-                parent_entity_id: None,
-                notes: None,
-                metadata_json: None,
-                email: None,
-                phone: None,
-                username: None,
-                employer: None,
-                dob: None,
-            },
-        )
-        .await
-        .expect("add person");
-
-        person.entity_id
-    }
-
-    async fn seed_business(pool: &SqlitePool) -> i64 {
-        sqlx::query(
-            r#"
-            INSERT INTO cases (case_id, case_name, investigator, start_date)
-            VALUES ('CASE-002', 'Test Case 2', 'Investigator', '2026-01-01')
-            "#,
-        )
-        .execute(pool)
-        .await
-        .expect("insert test case");
-
         let biz = add_entity(
             pool,
-            "CASE-002",
+            "CASE-001",
             &EntityInput {
                 entity_type: "business".into(),
                 display_name: "Acme Corp".into(),
@@ -435,8 +401,43 @@ mod tests {
         biz.entity_id
     }
 
-    fn make_input(kind: &str, value: &str) -> PersonIdentifierInput {
-        PersonIdentifierInput {
+    async fn seed_person(pool: &SqlitePool) -> i64 {
+        sqlx::query(
+            r#"
+            INSERT INTO cases (case_id, case_name, investigator, start_date)
+            VALUES ('CASE-002', 'Test Case 2', 'Investigator', '2026-01-01')
+            "#,
+        )
+        .execute(pool)
+        .await
+        .expect("insert test case");
+
+        let person = add_entity(
+            pool,
+            "CASE-002",
+            &EntityInput {
+                entity_type: "person".into(),
+                display_name: "Alice Example".into(),
+                subtype: Some("suspect".into()),
+                organizational_rank: None,
+                parent_entity_id: None,
+                notes: None,
+                metadata_json: None,
+                email: None,
+                phone: None,
+                username: None,
+                employer: None,
+                dob: None,
+            },
+        )
+        .await
+        .expect("add person");
+
+        person.entity_id
+    }
+
+    fn make_input(kind: &str, value: &str) -> BusinessIdentifierInput {
+        BusinessIdentifierInput {
             kind: kind.into(),
             value: value.into(),
             platform: None,
@@ -447,65 +448,65 @@ mod tests {
     #[tokio::test]
     async fn add_and_get_roundtrip() {
         let pool = make_forensics_pool().await;
-        let entity_id = seed_person(&pool).await;
+        let entity_id = seed_business(&pool).await;
 
-        let input = PersonIdentifierInput {
+        let input = BusinessIdentifierInput {
             kind: "email".into(),
-            value: "alice@example.com".into(),
-            platform: Some("gmail".into()),
+            value: "info@acme.com".into(),
+            platform: Some("google-workspace".into()),
             notes: Some("primary contact".into()),
         };
         let added = add_identifier(&pool, entity_id, &input).await.unwrap();
         assert!(added.identifier_id > 0);
         assert_eq!(added.entity_id, entity_id);
         assert_eq!(added.kind, "email");
-        assert_eq!(added.value, "alice@example.com");
-        assert_eq!(added.platform.as_deref(), Some("gmail"));
+        assert_eq!(added.value, "info@acme.com");
+        assert_eq!(added.platform.as_deref(), Some("google-workspace"));
         assert_eq!(added.notes.as_deref(), Some("primary contact"));
         assert_eq!(added.is_deleted, 0);
 
         let fetched = get_identifier(&pool, added.identifier_id).await.unwrap();
         assert_eq!(fetched.identifier_id, added.identifier_id);
-        assert_eq!(fetched.value, "alice@example.com");
+        assert_eq!(fetched.value, "info@acme.com");
     }
 
     #[tokio::test]
     async fn list_for_entity_orders_by_kind_then_created_at() {
         let pool = make_forensics_pool().await;
-        let entity_id = seed_person(&pool).await;
+        let entity_id = seed_business(&pool).await;
 
-        // Insert in scrambled order: username, email, email, handle
-        add_identifier(&pool, entity_id, &make_input("username", "alice_u"))
+        // Insert in scrambled order: url, domain, domain, email
+        add_identifier(&pool, entity_id, &make_input("url", "https://acme.com/about"))
             .await
             .unwrap();
-        add_identifier(&pool, entity_id, &make_input("email", "alice1@example.com"))
+        add_identifier(&pool, entity_id, &make_input("domain", "acme.com"))
             .await
             .unwrap();
-        add_identifier(&pool, entity_id, &make_input("email", "alice2@example.com"))
+        add_identifier(&pool, entity_id, &make_input("domain", "acme.org"))
             .await
             .unwrap();
-        add_identifier(&pool, entity_id, &make_input("handle", "@alice_h"))
+        add_identifier(&pool, entity_id, &make_input("email", "info@acme.com"))
             .await
             .unwrap();
 
         let list = list_for_entity(&pool, entity_id).await.unwrap();
-        // Order: email, email, handle, username (alphabetical by kind)
+        // Order: domain, domain, email, url (alphabetical by kind)
         let kinds: Vec<&str> = list.iter().map(|i| i.kind.as_str()).collect();
-        assert_eq!(kinds, vec!["email", "email", "handle", "username"]);
-        // Within email group, insertion order is preserved.
-        assert_eq!(list[0].value, "alice1@example.com");
-        assert_eq!(list[1].value, "alice2@example.com");
+        assert_eq!(kinds, vec!["domain", "domain", "email", "url"]);
+        // Within domain group, insertion order is preserved.
+        assert_eq!(list[0].value, "acme.com");
+        assert_eq!(list[1].value, "acme.org");
     }
 
     #[tokio::test]
     async fn validation_rejects_bad_kind() {
         let pool = make_forensics_pool().await;
-        let entity_id = seed_person(&pool).await;
+        let entity_id = seed_business(&pool).await;
 
         let err = add_identifier(
             &pool,
             entity_id,
-            &make_input("facebook", "alice.facebook"),
+            &make_input("facebook", "acme.facebook"),
         )
         .await
         .unwrap_err();
@@ -515,7 +516,7 @@ mod tests {
     #[tokio::test]
     async fn validation_rejects_empty_value() {
         let pool = make_forensics_pool().await;
-        let entity_id = seed_person(&pool).await;
+        let entity_id = seed_business(&pool).await;
 
         let err = add_identifier(&pool, entity_id, &make_input("email", "   "))
             .await
@@ -526,7 +527,7 @@ mod tests {
     #[tokio::test]
     async fn validation_rejects_oversize_value() {
         let pool = make_forensics_pool().await;
-        let entity_id = seed_person(&pool).await;
+        let entity_id = seed_business(&pool).await;
 
         let huge = "a".repeat(VALUE_MAX_LEN + 1);
         let err = add_identifier(&pool, entity_id, &make_input("email", &huge))
@@ -536,23 +537,23 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn rejects_non_person_parent() {
+    async fn rejects_non_business_parent() {
         let pool = make_forensics_pool().await;
-        let biz_id = seed_business(&pool).await;
+        let person_id = seed_person(&pool).await;
 
-        let err = add_identifier(&pool, biz_id, &make_input("email", "info@acme.com"))
+        let err = add_identifier(&pool, person_id, &make_input("email", "info@acme.com"))
             .await
             .unwrap_err();
         assert!(matches!(
             err,
-            AppError::EntityNotAPerson { entity_type, .. } if entity_type == "business"
+            AppError::EntityNotABusiness { entity_type, .. } if entity_type == "person"
         ));
     }
 
     #[tokio::test]
     async fn rejects_missing_parent() {
         let pool = make_forensics_pool().await;
-        let err = add_identifier(&pool, 999_999, &make_input("email", "alice@example.com"))
+        let err = add_identifier(&pool, 999_999, &make_input("email", "info@acme.com"))
             .await
             .unwrap_err();
         assert!(matches!(err, AppError::EntityNotFound { entity_id: 999_999 }));
@@ -561,36 +562,36 @@ mod tests {
     #[tokio::test]
     async fn update_changes_fields_and_stamps_updated_at() {
         let pool = make_forensics_pool().await;
-        let entity_id = seed_person(&pool).await;
+        let entity_id = seed_business(&pool).await;
 
-        let added = add_identifier(&pool, entity_id, &make_input("email", "alice@example.com"))
+        let added = add_identifier(&pool, entity_id, &make_input("email", "info@acme.com"))
             .await
             .unwrap();
 
         let updated = update_identifier(
             &pool,
             added.identifier_id,
-            &PersonIdentifierInput {
+            &BusinessIdentifierInput {
                 kind: "email".into(),
-                value: "alice@new.example.com".into(),
-                platform: Some("protonmail".into()),
-                notes: Some("moved 2026-04".into()),
+                value: "contact@acme.com".into(),
+                platform: Some("google-workspace".into()),
+                notes: Some("updated 2026-04".into()),
             },
         )
         .await
         .unwrap();
 
-        assert_eq!(updated.value, "alice@new.example.com");
-        assert_eq!(updated.platform.as_deref(), Some("protonmail"));
-        assert_eq!(updated.notes.as_deref(), Some("moved 2026-04"));
+        assert_eq!(updated.value, "contact@acme.com");
+        assert_eq!(updated.platform.as_deref(), Some("google-workspace"));
+        assert_eq!(updated.notes.as_deref(), Some("updated 2026-04"));
     }
 
     #[tokio::test]
     async fn soft_delete_hides_from_list_but_get_still_returns() {
         let pool = make_forensics_pool().await;
-        let entity_id = seed_person(&pool).await;
+        let entity_id = seed_business(&pool).await;
 
-        let added = add_identifier(&pool, entity_id, &make_input("email", "alice@example.com"))
+        let added = add_identifier(&pool, entity_id, &make_input("email", "info@acme.com"))
             .await
             .unwrap();
 
@@ -608,9 +609,9 @@ mod tests {
     #[tokio::test]
     async fn soft_delete_twice_fails() {
         let pool = make_forensics_pool().await;
-        let entity_id = seed_person(&pool).await;
+        let entity_id = seed_business(&pool).await;
 
-        let added = add_identifier(&pool, entity_id, &make_input("email", "alice@example.com"))
+        let added = add_identifier(&pool, entity_id, &make_input("email", "info@acme.com"))
             .await
             .unwrap();
 
@@ -618,16 +619,16 @@ mod tests {
         let err = soft_delete(&pool, added.identifier_id).await.unwrap_err();
         assert!(matches!(
             err,
-            AppError::PersonIdentifierNotFound { identifier_id } if identifier_id == added.identifier_id
+            AppError::BusinessIdentifierNotFound { identifier_id } if identifier_id == added.identifier_id
         ));
     }
 
     #[tokio::test]
     async fn update_rejects_soft_deleted() {
         let pool = make_forensics_pool().await;
-        let entity_id = seed_person(&pool).await;
+        let entity_id = seed_business(&pool).await;
 
-        let added = add_identifier(&pool, entity_id, &make_input("email", "alice@example.com"))
+        let added = add_identifier(&pool, entity_id, &make_input("email", "info@acme.com"))
             .await
             .unwrap();
         soft_delete(&pool, added.identifier_id).await.unwrap();
@@ -635,21 +636,21 @@ mod tests {
         let err = update_identifier(
             &pool,
             added.identifier_id,
-            &make_input("email", "alice2@example.com"),
+            &make_input("email", "contact@acme.com"),
         )
         .await
         .unwrap_err();
-        assert!(matches!(err, AppError::PersonIdentifierNotFound { .. }));
+        assert!(matches!(err, AppError::BusinessIdentifierNotFound { .. }));
     }
 
     #[tokio::test]
     async fn empty_platform_and_notes_normalized_to_none() {
         let pool = make_forensics_pool().await;
-        let entity_id = seed_person(&pool).await;
+        let entity_id = seed_business(&pool).await;
 
-        let input = PersonIdentifierInput {
-            kind: "handle".into(),
-            value: "@alice".into(),
+        let input = BusinessIdentifierInput {
+            kind: "domain".into(),
+            value: "acme.com".into(),
             platform: Some("   ".into()),
             notes: Some("".into()),
         };
@@ -659,21 +660,21 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn update_rejects_parent_retyped_to_non_person() {
-        // Invariant: identifiers only exist on person entities. If the parent
+    async fn update_rejects_parent_retyped_to_non_business() {
+        // Invariant: identifiers only exist on business entities. If the parent
         // entity is retyped (via entity_update) after an identifier is added,
         // any subsequent update to the identifier must fail with
-        // EntityNotAPerson — the update path re-validates.
+        // EntityNotABusiness — the update path re-validates.
         let pool = make_forensics_pool().await;
-        let entity_id = seed_person(&pool).await;
+        let entity_id = seed_business(&pool).await;
 
-        let added = add_identifier(&pool, entity_id, &make_input("email", "alice@example.com"))
+        let added = add_identifier(&pool, entity_id, &make_input("email", "info@acme.com"))
             .await
             .unwrap();
 
-        // Retype the person to a business via direct SQL. This simulates a
+        // Retype the business to a person via direct SQL. This simulates a
         // future entity_update that permits type changes.
-        sqlx::query("UPDATE entities SET entity_type = 'business' WHERE entity_id = ?")
+        sqlx::query("UPDATE entities SET entity_type = 'person' WHERE entity_id = ?")
             .bind(entity_id)
             .execute(&pool)
             .await
@@ -682,13 +683,13 @@ mod tests {
         let err = update_identifier(
             &pool,
             added.identifier_id,
-            &make_input("email", "alice@new.example.com"),
+            &make_input("email", "contact@acme.com"),
         )
         .await
         .unwrap_err();
         assert!(matches!(
             err,
-            AppError::EntityNotAPerson { entity_type, .. } if entity_type == "business"
+            AppError::EntityNotABusiness { entity_type, .. } if entity_type == "person"
         ));
     }
 
@@ -698,7 +699,7 @@ mod tests {
         // check now that we count characters instead of bytes. This matches
         // zod .max(500) on the frontend.
         let pool = make_forensics_pool().await;
-        let entity_id = seed_person(&pool).await;
+        let entity_id = seed_business(&pool).await;
 
         let emoji = "🦀".repeat(500); // exactly 500 chars, 2000 bytes
         assert_eq!(emoji.chars().count(), 500);
@@ -707,8 +708,8 @@ mod tests {
         let added = add_identifier(
             &pool,
             entity_id,
-            &PersonIdentifierInput {
-                kind: "username".into(),
+            &BusinessIdentifierInput {
+                kind: "domain".into(),
                 value: emoji,
                 platform: None,
                 notes: None,
@@ -723,8 +724,8 @@ mod tests {
         let err = add_identifier(
             &pool,
             entity_id,
-            &PersonIdentifierInput {
-                kind: "username".into(),
+            &BusinessIdentifierInput {
+                kind: "domain".into(),
                 value: too_long,
                 platform: None,
                 notes: None,
@@ -738,10 +739,10 @@ mod tests {
     #[tokio::test]
     async fn cascade_soft_delete_for_entity_hides_all_identifiers() {
         let pool = make_forensics_pool().await;
-        let entity_id = seed_person(&pool).await;
+        let entity_id = seed_business(&pool).await;
 
-        add_identifier(&pool, entity_id, &make_input("email", "a@x.com")).await.unwrap();
-        add_identifier(&pool, entity_id, &make_input("handle", "@a")).await.unwrap();
+        add_identifier(&pool, entity_id, &make_input("email", "a@acme.com")).await.unwrap();
+        add_identifier(&pool, entity_id, &make_input("domain", "acme.com")).await.unwrap();
         add_identifier(&pool, entity_id, &make_input("phone", "+15555551234")).await.unwrap();
         assert_eq!(list_for_entity(&pool, entity_id).await.unwrap().len(), 3);
 

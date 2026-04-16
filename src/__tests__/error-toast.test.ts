@@ -74,6 +74,9 @@ const ERROR_CODES: AppErrorCode[] = [
   "EntityNotAPerson",
   // Persons — identifiers (migration 0004)
   "PersonIdentifierNotFound",
+  // Businesses — identifiers (migration 0005)
+  "EntityNotABusiness",
+  "BusinessIdentifierNotFound",
   // Dark-web OSINT — Tor preflight failure
   "TorUnavailable",
 ];

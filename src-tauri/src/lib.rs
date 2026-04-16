@@ -29,7 +29,7 @@ use tracing_appender::rolling::{RollingFileAppender, Rotation};
 use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
 use commands::{
-    ai_cmd::{ai_classify, ai_enhance, ai_osint_person, ai_summarize_case, evidence_forensic_analyze},
+    ai_cmd::{ai_classify, ai_enhance, ai_osint_business, ai_osint_person, ai_summarize_case, evidence_forensic_analyze},
     auth_cmd::{
         auth_change_password, auth_current_user, auth_login, auth_logout,
         auth_mfa_disable, auth_mfa_enroll_confirm, auth_mfa_enroll_start,
@@ -52,6 +52,8 @@ use commands::{
         settings_test_smtp,
     },
     link_analysis_cmd::{
+        business_identifier_add, business_identifier_delete, business_identifier_list,
+        business_identifier_update,
         case_crime_line, case_graph,
         entity_add, entity_delete, entity_get, entity_list_for_case, entity_update,
         event_add, event_delete, event_list_for_case, event_update,
@@ -366,6 +368,11 @@ pub fn run() {
             person_identifier_list,
             person_identifier_update,
             person_identifier_delete,
+            // Business identifier commands (migration 0005)
+            business_identifier_add,
+            business_identifier_list,
+            business_identifier_update,
+            business_identifier_delete,
             // System commands
             settings_get_security_posture,
             debug_log_frontend,
@@ -376,6 +383,8 @@ pub fn run() {
             evidence_forensic_analyze,
             // OSINT commands (Persons feature)
             ai_osint_person,
+            // Business OSINT (migration 0005)
+            ai_osint_business,
             // Drive commands (Phase 5)
             drives_list,
             drive_scan,

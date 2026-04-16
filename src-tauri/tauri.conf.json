@@ -22,8 +22,8 @@
       "assetProtocol": {
         "enable": true,
         "scope": [
-          "$APPDATA/DFARS/person_photos/**",
-          "$APPDATA/DFARS/evidence_files/**"
+          "$HOME/AppData/Roaming/DFARS/person_photos/**",
+          "$HOME/AppData/Roaming/DFARS/evidence_files/**"
         ]
       }
     }

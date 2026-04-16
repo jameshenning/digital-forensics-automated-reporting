@@ -9,6 +9,7 @@ pub mod graph;
 pub mod hashes;
 pub mod links;
 pub mod person_identifiers;
+pub mod business_identifiers;
 pub mod tools;
 
 use sqlx::{sqlite::{SqliteConnectOptions, SqlitePoolOptions}, SqlitePool};

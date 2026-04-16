@@ -71,6 +71,7 @@ import {
 
 import { EvidencePanel } from "@/components/evidence-panel";
 import { PersonsPanel } from "@/components/persons-panel";
+import { BusinessesPanel } from "@/components/businesses-panel";
 import { CustodyPanel } from "@/components/custody-panel";
 import { HashPanel } from "@/components/hash-panel";
 import { ToolsPanel } from "@/components/tools-panel";
@@ -688,6 +689,7 @@ function CaseDetailPage() {
           <TabsList className="w-full justify-start overflow-x-auto flex-wrap h-auto gap-1 mb-4">
             <TabsTrigger value="evidence">Evidence</TabsTrigger>
             <TabsTrigger value="persons">Persons</TabsTrigger>
+            <TabsTrigger value="businesses">Businesses</TabsTrigger>
             <TabsTrigger value="custody">Chain of Custody</TabsTrigger>
             <TabsTrigger value="hashes">Hashes</TabsTrigger>
             <TabsTrigger value="tools">Case-wide Tools</TabsTrigger>
@@ -722,6 +724,19 @@ function CaseDetailPage() {
               </CardHeader>
               <CardContent>
                 <PersonsPanel caseId={caseId} />
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          <TabsContent value="businesses">
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">
+                  Companies, organizations, and other business entities
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <BusinessesPanel caseId={caseId} />
               </CardContent>
             </Card>
           </TabsContent>

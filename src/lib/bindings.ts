@@ -71,6 +71,9 @@ export type AppErrorCode =
   | "EntityNotAPerson"
   // Persons — identifiers (migration 0004)
   | "PersonIdentifierNotFound"
+  // Businesses — identifiers (migration 0005)
+  | "EntityNotABusiness"
+  | "BusinessIdentifierNotFound"
   // Dark-web OSINT — Agent Zero Tor preflight failure
   | "TorUnavailable";
 
@@ -1291,6 +1294,85 @@ export function personIdentifierDelete(args: {
 }
 
 // ---------------------------------------------------------------------------
+// Business identifiers (migration 0005)
+// ---------------------------------------------------------------------------
+
+/**
+ * The kinds of OSINT-relevant identifiers a business entity can have.
+ * Domain names, registration numbers, EINs, emails, phones, addresses,
+ * social media profiles, and URLs.
+ */
+export type BusinessIdentifierKind =
+  | "domain"
+  | "registration"
+  | "ein"
+  | "email"
+  | "phone"
+  | "address"
+  | "social"
+  | "url";
+
+export interface BusinessIdentifier {
+  identifier_id: number;
+  entity_id: number;
+  kind: BusinessIdentifierKind;
+  value: string;
+  /** Free-form platform tag (linkedin, secretary-of-state, irs, ...). */
+  platform: string | null;
+  notes: string | null;
+  is_deleted: 0 | 1;
+  created_at: string;
+  updated_at: string;
+}
+
+/**
+ * Writable fields for creating or updating a business identifier.
+ *
+ * `entity_id` is NOT in this input — it's supplied as a command parameter on
+ * the add path and is immutable on the update path.
+ */
+export interface BusinessIdentifierInput {
+  kind: BusinessIdentifierKind;
+  value: string;
+  platform: string | null;
+  notes: string | null;
+}
+
+/** List all active identifiers for a business entity (excludes soft-deleted). */
+export function businessIdentifierList(args: {
+  token: string;
+  entity_id: number;
+}): Promise<BusinessIdentifier[]> {
+  return invoke<BusinessIdentifier[]>("business_identifier_list", args);
+}
+
+/** Add a new identifier to a business entity. */
+export function businessIdentifierAdd(args: {
+  token: string;
+  entity_id: number;
+  input: BusinessIdentifierInput;
+}): Promise<BusinessIdentifier> {
+  return invoke<BusinessIdentifier>("business_identifier_add", args);
+}
+
+/** Update an existing business identifier. */
+export function businessIdentifierUpdate(args: {
+  token: string;
+  identifier_id: number;
+  input: BusinessIdentifierInput;
+}): Promise<BusinessIdentifier> {
+  return invoke<BusinessIdentifier>("business_identifier_update", args);
+}
+
+/** Soft-delete a business identifier. */
+export function businessIdentifierDelete(args: {
+  token: string;
+  identifier_id: number;
+}): Promise<void> {
+  return invoke<void>("business_identifier_delete", args);
+}
+
+// ---------------------------------------------------------------------------
 // Phase 5 — AI / Agent Zero types
 // ---------------------------------------------------------------------------
 
@@ -1509,6 +1591,20 @@ export function aiOsintPerson(args: {
   entity_id: number;
 }): Promise<OsintRunSummary> {
   return invoke<OsintRunSummary>("ai_osint_person", args);
+}
+
+/**
+ * Orchestrate an OSINT run for a business entity via Agent Zero.
+ * Mirrors aiOsintPerson but dispatches business-specific tools (whois,
+ * subfinder, theHarvester, spiderfoot clearnet + dark-web modules when
+ * tor_enabled). Reuses the same AiOsintConsentRequired gate as persons —
+ * one acknowledgment covers both entity types.
+ */
+export function aiOsintBusiness(args: {
+  token: string;
+  entity_id: number;
+}): Promise<OsintRunSummary> {
+  return invoke<OsintRunSummary>("ai_osint_business", args);
 }
 
 /**

@@ -36,10 +36,16 @@ use sqlx::{
 
 use dfars_desktop_lib::{
     auth::{argon, lockout::LockoutMap, session::SessionState},
+    commands::ai_cmd::{build_business_osint_payload, BuildBusinessPayloadResult},
     crypto::CryptoState,
     db::{
         AppDb,
         analysis::{AnalysisInput, add_analysis},
+        business_identifiers::{
+            BusinessIdentifierInput, add_identifier as biz_add_identifier, get_identifier as biz_get_identifier,
+            list_for_entity as biz_identifier_list_for_entity, soft_delete as biz_identifier_soft_delete,
+            update_identifier as biz_update_identifier,
+        },
         cases::{CaseInput, create_case},
         custody::{CustodyInput, add_custody},
         entities::{EntityInput, add_entity, get_entity, list_for_case as entity_list_for_case,
@@ -303,6 +309,25 @@ CREATE INDEX IF NOT EXISTS idx_person_identifiers_entity
     ON person_identifiers(entity_id, is_deleted);
 CREATE INDEX IF NOT EXISTS idx_person_identifiers_kind
     ON person_identifiers(entity_id, kind, is_deleted);
+
+-- migration 0005: business_identifiers
+CREATE TABLE IF NOT EXISTS business_identifiers (
+    identifier_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    entity_id INTEGER NOT NULL,
+    kind TEXT NOT NULL,
+    value TEXT NOT NULL,
+    platform TEXT,
+    notes TEXT,
+    is_deleted INTEGER DEFAULT 0,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (entity_id) REFERENCES entities (entity_id) ON DELETE RESTRICT
+);
+
+CREATE INDEX IF NOT EXISTS idx_business_identifiers_entity
+    ON business_identifiers(entity_id, is_deleted);
+CREATE INDEX IF NOT EXISTS idx_business_identifiers_kind
+    ON business_identifiers(entity_id, kind, is_deleted);
 "#;
 
 async fn new_forensics_pool() -> SqlitePool {
@@ -1918,5 +1943,393 @@ fn test_ai_osint_person_session_guard_precedes_consent_check() {
     assert!(
         preamble.contains("#[tauri::command(rename_all = \"snake_case\")]"),
         "ai_osint_person is missing rename_all = \"snake_case\""
+    );
+}
+
+// ─── Business identifiers (migration 0005) ────────────────────────────────────
+
+/// Helper: create a business entity and return its id.
+async fn make_business(pool: &SqlitePool, case_id: &str, name: &str) -> i64 {
+    let input = EntityInput {
+        entity_type: "business".into(),
+        display_name: name.to_string(),
+        subtype: None,
+        organizational_rank: None,
+        parent_entity_id: None,
+        notes: None,
+        metadata_json: None,
+        email: None,
+        phone: None,
+        username: None,
+        employer: None,
+        dob: None,
+    };
+    add_entity(pool, case_id, &input)
+        .await
+        .expect("make_business failed")
+        .entity_id
+}
+
+fn make_biz_identifier_input(kind: &str, value: &str) -> BusinessIdentifierInput {
+    BusinessIdentifierInput {
+        kind: kind.into(),
+        value: value.into(),
+        platform: None,
+        notes: None,
+    }
+}
+
+#[tokio::test]
+async fn test_business_identifier_crud_roundtrip() {
+    let (_, pool) = make_state().await;
+    let case_id = make_case(&pool, "BID-01").await;
+    let entity_id = make_business(&pool, &case_id, "Acme Corp").await;
+
+    // add
+    let added = biz_add_identifier(
+        &pool,
+        entity_id,
+        &BusinessIdentifierInput {
+            kind: "email".into(),
+            value: "info@acme.com".into(),
+            platform: Some("google-workspace".into()),
+            notes: Some("primary".into()),
+        },
+    )
+    .await
+    .expect("add business identifier");
+    assert!(added.identifier_id > 0);
+    assert_eq!(added.entity_id, entity_id);
+
+    // list
+    let list = biz_identifier_list_for_entity(&pool, entity_id).await.unwrap();
+    assert_eq!(list.len(), 1);
+    assert_eq!(list[0].value, "info@acme.com");
+
+    // update
+    let updated = biz_update_identifier(
+        &pool,
+        added.identifier_id,
+        &BusinessIdentifierInput {
+            kind: "email".into(),
+            value: "contact@acme.com".into(),
+            platform: Some("google-workspace".into()),
+            notes: None,
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(updated.value, "contact@acme.com");
+    assert_eq!(updated.platform.as_deref(), Some("google-workspace"));
+    assert!(updated.notes.is_none());
+
+    // delete
+    biz_identifier_soft_delete(&pool, added.identifier_id).await.unwrap();
+    let after = biz_identifier_list_for_entity(&pool, entity_id).await.unwrap();
+    assert!(after.is_empty(), "soft-deleted identifier must not appear in list");
+
+    // get still returns (audit trail semantics)
+    let fetched = biz_get_identifier(&pool, added.identifier_id).await.unwrap();
+    assert_eq!(fetched.is_deleted, 1);
+}
+
+#[tokio::test]
+async fn test_business_identifier_multi_kind_ordering() {
+    let (_, pool) = make_state().await;
+    let case_id = make_case(&pool, "BID-02").await;
+    let entity_id = make_business(&pool, &case_id, "Globex Corp").await;
+
+    // Scrambled kinds — list should come back sorted by kind ASC, created_at ASC.
+    biz_add_identifier(&pool, entity_id, &make_biz_identifier_input("url", "https://globex.com/about"))
+        .await.unwrap();
+    biz_add_identifier(&pool, entity_id, &make_biz_identifier_input("domain", "globex.com"))
+        .await.unwrap();
+    biz_add_identifier(&pool, entity_id, &make_biz_identifier_input("domain", "globex.org"))
+        .await.unwrap();
+    biz_add_identifier(&pool, entity_id, &make_biz_identifier_input("email", "info@globex.com"))
+        .await.unwrap();
+
+    let list = biz_identifier_list_for_entity(&pool, entity_id).await.unwrap();
+    let kinds: Vec<&str> = list.iter().map(|i| i.kind.as_str()).collect();
+    assert_eq!(kinds, vec!["domain", "domain", "email", "url"]);
+    // Within the domain group, first-inserted appears first.
+    assert_eq!(list[0].value, "globex.com");
+    assert_eq!(list[1].value, "globex.org");
+}
+
+#[tokio::test]
+async fn test_business_identifier_cascade_soft_delete_with_entity() {
+    let (_, pool) = make_state().await;
+    let case_id = make_case(&pool, "BID-03").await;
+    let entity_id = make_business(&pool, &case_id, "Initech").await;
+
+    biz_add_identifier(&pool, entity_id, &make_biz_identifier_input("email", "info@initech.com"))
+        .await.unwrap();
+    biz_add_identifier(&pool, entity_id, &make_biz_identifier_input("domain", "initech.com"))
+        .await.unwrap();
+    biz_add_identifier(&pool, entity_id, &make_biz_identifier_input("phone", "+15555553456"))
+        .await.unwrap();
+
+    assert_eq!(
+        biz_identifier_list_for_entity(&pool, entity_id).await.unwrap().len(),
+        3
+    );
+
+    // Soft-delete the parent entity. cascade_soft_delete_for_entity runs
+    // inside the same transaction and must hide all business identifiers.
+    entity_soft_delete(&pool, entity_id).await.unwrap();
+
+    // All identifiers must now be soft-deleted.
+    assert!(
+        biz_identifier_list_for_entity(&pool, entity_id)
+            .await
+            .unwrap()
+            .is_empty(),
+        "cascade from entity soft-delete must hide all business identifiers"
+    );
+
+    // The entity itself is soft-deleted too.
+    let after = get_entity(&pool, entity_id).await.unwrap();
+    assert_eq!(after.is_deleted, 1);
+}
+
+#[tokio::test]
+async fn test_business_identifier_rejects_non_business_parent() {
+    let (_, pool) = make_state().await;
+    let case_id = make_case(&pool, "BID-04").await;
+    let person_id = make_person(&pool, &case_id, "Alice Smith").await;
+
+    let err = biz_add_identifier(
+        &pool,
+        person_id,
+        &make_biz_identifier_input("email", "alice@example.com"),
+    )
+    .await
+    .unwrap_err();
+    assert!(matches!(
+        err,
+        AppError::EntityNotABusiness { entity_type, .. } if entity_type == "person"
+    ));
+}
+
+#[tokio::test]
+async fn test_business_identifier_rejects_missing_parent() {
+    let (_, pool) = make_state().await;
+
+    let err = biz_add_identifier(
+        &pool,
+        999_999,
+        &make_biz_identifier_input("email", "ghost@acme.com"),
+    )
+    .await
+    .unwrap_err();
+    assert!(matches!(err, AppError::EntityNotFound { entity_id: 999_999 }));
+}
+
+#[tokio::test]
+async fn test_business_identifier_session_guard() {
+    let (state, _) = make_state().await;
+    // business_identifier_* commands all start with require_session.
+    let err = dfars_desktop_lib::auth::session::require_session(&state, "sess_fake_biz_identifier");
+    assert!(matches!(err, Err(AppError::Unauthorized)));
+}
+
+/// Structural guard: every `business_identifier_*` Tauri command MUST carry
+/// the `#[tauri::command(rename_all = "snake_case")]` attribute, or multi-
+/// word parameters like `entity_id` / `identifier_id` silently deserialize
+/// as zero in Tauri v2 (camelCase auto-convert trap).
+#[test]
+fn test_business_identifier_commands_have_rename_all_snake_case() {
+    let source = include_str!("../src/commands/link_analysis_cmd.rs");
+    let expected_attr = "#[tauri::command(rename_all = \"snake_case\")]";
+
+    for cmd in [
+        "pub async fn business_identifier_add",
+        "pub async fn business_identifier_list",
+        "pub async fn business_identifier_update",
+        "pub async fn business_identifier_delete",
+    ] {
+        let cmd_idx = source.find(cmd).unwrap_or_else(|| {
+            panic!("could not locate `{cmd}` in link_analysis_cmd.rs — did it get renamed or moved?")
+        });
+        let window_start = cmd_idx.saturating_sub(400);
+        let preamble = &source[window_start..cmd_idx];
+        assert!(
+            preamble.contains(expected_attr),
+            "{cmd} is missing {expected_attr} — this will silently break the \
+             Tauri v2 camelCase-to-snake_case parameter binding and the frontend \
+             call will pass NULL for every multi-word argument."
+        );
+    }
+}
+
+// ─── Pass 2 — Business OSINT integration tests ───────────────────────────────
+
+/// End-to-end: create a business entity, add 5 mixed-kind identifiers, fetch
+/// them back, call build_business_osint_payload, assert the payload is correct.
+#[tokio::test]
+async fn test_business_pass1_to_pass2_identifier_flow_end_to_end() {
+    let pool = new_forensics_pool().await;
+    let case_id = make_case(&pool, "CASE-BIZ-E2E").await;
+
+    // 1. Create a business entity with industry (organizational_rank) + notes.
+    let entity_input = EntityInput {
+        entity_type: "business".into(),
+        display_name: "Acme Corp".into(),
+        subtype: None,
+        organizational_rank: Some("Technology".into()),
+        parent_entity_id: None,
+        notes: Some("Primary fraud front company".into()),
+        metadata_json: None,
+        email: None,
+        phone: None,
+        username: None,
+        employer: None,
+        dob: None,
+    };
+    let entity = add_entity(&pool, &case_id, &entity_input)
+        .await
+        .expect("add business entity failed");
+
+    // 2. Add 5 mixed-kind identifiers (domain, email, phone, registration, url).
+    biz_add_identifier(
+        &pool,
+        entity.entity_id,
+        &BusinessIdentifierInput {
+            kind: "domain".into(),
+            value: "acme.com".into(),
+            platform: Some("godaddy".into()),
+            notes: None,
+        },
+    )
+    .await
+    .expect("add domain failed");
+
+    biz_add_identifier(
+        &pool,
+        entity.entity_id,
+        &BusinessIdentifierInput {
+            kind: "email".into(),
+            value: "info@acme.com".into(),
+            platform: Some("google-workspace".into()),
+            notes: None,
+        },
+    )
+    .await
+    .expect("add email failed");
+
+    biz_add_identifier(
+        &pool,
+        entity.entity_id,
+        &BusinessIdentifierInput {
+            kind: "phone".into(),
+            value: "+15555551234".into(),
+            platform: None,
+            notes: None,
+        },
+    )
+    .await
+    .expect("add phone failed");
+
+    biz_add_identifier(
+        &pool,
+        entity.entity_id,
+        &BusinessIdentifierInput {
+            kind: "registration".into(),
+            value: "DE-12345678".into(),
+            platform: None,
+            notes: Some("Delaware corp".into()),
+        },
+    )
+    .await
+    .expect("add registration failed");
+
+    biz_add_identifier(
+        &pool,
+        entity.entity_id,
+        &BusinessIdentifierInput {
+            kind: "url".into(),
+            value: "https://acme.com/about".into(),
+            platform: None,
+            notes: None,
+        },
+    )
+    .await
+    .expect("add url failed");
+
+    // 3. Fetch identifiers via the DB layer (mirrors what ai_osint_business does).
+    let identifiers = biz_identifier_list_for_entity(&pool, entity.entity_id)
+        .await
+        .expect("list identifiers failed");
+    assert_eq!(identifiers.len(), 5, "all 5 identifiers must be active");
+
+    // 4. Call build_business_osint_payload and validate the result.
+    let BuildBusinessPayloadResult {
+        payload,
+        deduped_count,
+    } = build_business_osint_payload(&entity, &identifiers);
+
+    // Payload name and industry must come from entity fields.
+    assert_eq!(payload.name, "Acme Corp");
+    assert_eq!(
+        payload.industry.as_deref(),
+        Some("Technology"),
+        "industry must populate from organizational_rank"
+    );
+    assert_eq!(
+        payload.notes.as_deref(),
+        Some("Primary fraud front company")
+    );
+
+    // All 5 are distinct — no dedup, no truncation.
+    assert_eq!(deduped_count, 5);
+    assert_eq!(payload.identifiers.len(), 5);
+
+    // Identifiers are returned in list_for_entity order (kind ASC, created_at ASC),
+    // but build_business_osint_payload preserves the input order it receives.
+    // list_for_entity sorts: domain, email, phone, registration, url.
+    let kinds: Vec<&str> = payload.identifiers.iter().map(|i| i.kind.as_str()).collect();
+    assert_eq!(kinds, vec!["domain", "email", "phone", "registration", "url"]);
+
+    // Values are trimmed but otherwise preserved.
+    assert_eq!(payload.identifiers[0].value, "acme.com");
+    assert_eq!(payload.identifiers[0].platform.as_deref(), Some("godaddy"));
+    assert_eq!(payload.identifiers[1].value, "info@acme.com");
+    assert_eq!(payload.identifiers[3].value, "DE-12345678");
+}
+
+/// grep-guard: ai_osint_business must carry rename_all = "snake_case" and
+/// require_session must appear before osint_consent_granted in the command body.
+#[test]
+fn test_ai_osint_business_has_rename_all_and_session_guard_before_consent_check() {
+    let source = include_str!("../src/commands/ai_cmd.rs");
+    let expected_attr = "#[tauri::command(rename_all = \"snake_case\")]";
+    let cmd = "pub async fn ai_osint_business";
+
+    let cmd_idx = source.find(cmd).unwrap_or_else(|| {
+        panic!("could not locate `{cmd}` in ai_cmd.rs — did it get renamed or moved?")
+    });
+
+    // Check rename_all in the 400 bytes of preamble before the fn signature.
+    let window_start = cmd_idx.saturating_sub(400);
+    let preamble = &source[window_start..cmd_idx];
+    assert!(
+        preamble.contains(expected_attr),
+        "ai_osint_business is missing {expected_attr} — this will silently break the \
+         Tauri v2 camelCase-to-snake_case parameter binding"
+    );
+
+    // In the function body, require_session must appear before osint_consent_granted.
+    let body_start = cmd_idx;
+    let require_pos = source[body_start..]
+        .find("require_session")
+        .unwrap_or_else(|| panic!("require_session not found in ai_osint_business"));
+    let consent_pos = source[body_start..]
+        .find("osint_consent_granted")
+        .unwrap_or_else(|| panic!("osint_consent_granted not found in ai_osint_business"));
+    assert!(
+        require_pos < consent_pos,
+        "require_session (SEC-1 gate) must appear BEFORE osint_consent_granted in \
+         ai_osint_business — SEC-1 non-negotiable"
     );
 }

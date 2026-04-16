@@ -214,6 +214,55 @@ pub struct OsintPersonResponse {
     pub notes: Option<String>,
 }
 
+// ─── OSINT (Business feature, migration 0005) ─────────────────────────────
+
+/// One OSINT-relevant identifier attached to a business. Mirrors a row from
+/// the `business_identifiers` table (migration 0005) minus the audit/ownership
+/// columns. Agent Zero's orchestration uses the full array to dispatch tools
+/// across every known domain/registration/email/phone/address/social/url.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct OsintBusinessIdentifier {
+    /// domain | registration | ein | email | phone | address | social | url
+    pub kind: String,
+    pub value: String,
+    pub platform: Option<String>,
+}
+
+/// Agent Zero's input shape for business OSINT. Unlike persons, businesses
+/// have NO legacy single-value fields on the entities table (no entity.domain,
+/// no entity.email etc.) so everything comes from the identifier batch.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OsintBusinessPayload {
+    pub name: String,              // entity.display_name
+    pub industry: Option<String>,  // entity.organizational_rank (repurposed)
+    pub notes: Option<String>,
+    #[serde(default)]
+    pub identifiers: Vec<OsintBusinessIdentifier>,
+}
+
+/// Request body for `dfars_osint_business`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OsintBusinessRequest {
+    pub case_id: String,
+    pub business: OsintBusinessPayload,
+    /// Minimum tool set Agent Zero MUST run if the required inputs are present.
+    pub tools_requested: Vec<String>,
+    /// If true, Agent Zero has discretion to run additional Kali OSINT tools
+    /// beyond `tools_requested` when it judges them useful.
+    pub discretion_allowed: bool,
+    /// When true, Agent Zero additionally runs dark-web OSINT tools
+    /// (SpiderFoot with dark-web modules, onionsearch, darkdump) via Tor.
+    /// The container plugin preflights the Tor daemon and returns
+    /// `status = "tor_unavailable"` if it can't reach it, which the Rust
+    /// side maps to `AppError::TorUnavailable`. Defaults to `false` via
+    /// `#[serde(default)]` so older Agent Zero containers continue to work.
+    #[serde(default)]
+    pub tor_enabled: bool,
+}
+
+// Business and Person responses share the same shape — reuse the type alias.
+pub type OsintBusinessResponse = OsintPersonResponse;
+
 // ─── Client ──────────────────────────────────────────────────────────────────
 
 pub struct AgentZeroClient {
@@ -377,6 +426,45 @@ impl AgentZeroClient {
         let bytes = bounded_body(resp, LIMIT_OSINT).await?;
         serde_json::from_slice(&bytes)
             .map_err(|e| AppError::Internal(format!("osint_person parse failed: {e}")))
+    }
+
+    /// `dfars_osint_business` — Agent Zero OSINT orchestration for business
+    /// entities. Sends a business payload (name + optional industry/notes +
+    /// multi-valued identifier set) and a minimum tool set; Agent Zero decides
+    /// which additional Kali OSINT tools to run and returns structured results.
+    ///
+    /// HIGH DATA SENSITIVITY — company data (name / identifiers / industry) is
+    /// sent to Agent Zero which may forward it to external OSINT sources (whois,
+    /// subfinder, theHarvester, spiderfoot). Caller MUST have checked
+    /// `config.shown_ai_osint_consent` before invoking.
+    ///
+    /// Timeout tier: 900s for clearnet-only runs; 1800s when
+    /// `req.tor_enabled` is true. Response body capped at 512 KiB.
+    pub async fn osint_business(
+        &self,
+        req: &OsintBusinessRequest,
+    ) -> Result<OsintBusinessResponse, AppError> {
+        let timeout = if req.tor_enabled {
+            TIMEOUT_OSINT_DEEP
+        } else {
+            TIMEOUT_OSINT
+        };
+        info!(
+            action = audit::AI_OSINT_BUSINESS_CALLED,
+            case_id = %req.case_id,
+            tools_requested_count = req.tools_requested.len(),
+            identifiers_count = req.business.identifiers.len(),
+            discretion_allowed = req.discretion_allowed,
+            tor_enabled = req.tor_enabled,
+            timeout_seconds = timeout.as_secs(),
+            fields_sent = "business(name,industry,notes,identifiers[]), tools_requested, discretion_allowed, tor_enabled"
+        );
+        let body = serde_json::to_value(req)
+            .map_err(|e| AppError::Internal(format!("osint_business serialize failed: {e}")))?;
+        let resp = self.post("dfars_osint_business", &body, timeout).await?;
+        let bytes = bounded_body(resp, LIMIT_OSINT).await?;
+        serde_json::from_slice(&bytes)
+            .map_err(|e| AppError::Internal(format!("osint_business parse failed: {e}")))
     }
 
     // ─── Internal helpers ─────────────────────────────────────────────────────
@@ -736,5 +824,85 @@ mod tests {
         );
         let bytes = bounded_body(resp, 8 * 1024).await.unwrap();
         assert_eq!(bytes.len(), 100);
+    }
+
+    // ─── OsintBusinessRequest tor_enabled serde contract ──────────────────
+
+    fn minimal_business_request(tor: bool) -> OsintBusinessRequest {
+        OsintBusinessRequest {
+            case_id: "CASE-001".into(),
+            business: OsintBusinessPayload {
+                name: "Acme Corp".into(),
+                industry: Some("Technology".into()),
+                notes: None,
+                identifiers: vec![OsintBusinessIdentifier {
+                    kind: "domain".into(),
+                    value: "acme.com".into(),
+                    platform: None,
+                }],
+            },
+            tools_requested: vec!["whois".into(), "subfinder".into()],
+            discretion_allowed: true,
+            tor_enabled: tor,
+        }
+    }
+
+    #[test]
+    fn osint_business_request_tor_enabled_roundtrips_through_serde() {
+        // Default (false) roundtrip — serialized shape should contain
+        // "tor_enabled":false and re-parse into the same value.
+        let req = minimal_business_request(false);
+        let json = serde_json::to_string(&req).unwrap();
+        assert!(json.contains("\"tor_enabled\":false"));
+        let back: OsintBusinessRequest = serde_json::from_str(&json).unwrap();
+        assert!(!back.tor_enabled);
+
+        // Explicit true survives the roundtrip.
+        let req_on = minimal_business_request(true);
+        let json_on = serde_json::to_string(&req_on).unwrap();
+        assert!(json_on.contains("\"tor_enabled\":true"));
+        let back_on: OsintBusinessRequest = serde_json::from_str(&json_on).unwrap();
+        assert!(back_on.tor_enabled);
+    }
+
+    #[test]
+    fn osint_business_request_tor_enabled_defaults_when_missing_from_input() {
+        // A legacy client that doesn't know about tor_enabled yet may omit
+        // the field entirely. #[serde(default)] must kick in and default to
+        // false rather than erroring out.
+        let legacy_json = r#"{
+            "case_id": "CASE-001",
+            "business": {
+                "name": "Acme Corp",
+                "industry": null,
+                "notes": null,
+                "identifiers": []
+            },
+            "tools_requested": ["whois"],
+            "discretion_allowed": true
+        }"#;
+        let parsed: OsintBusinessRequest = serde_json::from_str(legacy_json).unwrap();
+        assert!(
+            !parsed.tor_enabled,
+            "missing tor_enabled field must default to false, not error"
+        );
+    }
+
+    #[test]
+    fn osint_business_timeout_tier_reuses_same_constants_as_person() {
+        // Business OSINT uses the same TIMEOUT_OSINT / TIMEOUT_OSINT_DEEP
+        // constants as person OSINT — no new constant needed. This test
+        // asserts the invariant so a future refactor can't accidentally
+        // give businesses a different (smaller) budget.
+        //
+        // Structural check: TIMEOUT_OSINT_DEEP > TIMEOUT_OSINT and >= 2x.
+        assert!(
+            TIMEOUT_OSINT_DEEP > TIMEOUT_OSINT,
+            "business deep-search timeout tier must exceed the standard tier"
+        );
+        assert!(
+            TIMEOUT_OSINT_DEEP >= TIMEOUT_OSINT * 2,
+            "business deep-search tier should be >= 2x the standard tier"
+        );
     }
 }

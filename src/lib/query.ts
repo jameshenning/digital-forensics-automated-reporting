@@ -97,6 +97,12 @@ export const queryKeys = {
       ["person-identifiers", "list", entityId] as const,
   },
 
+  /** Business identifier query keys (migration 0005) */
+  businessIdentifiers: {
+    listForEntity: (entityId: number) =>
+      ["business-identifiers", "list", entityId] as const,
+  },
+
   /** Link query keys (Phase 4) */
   links: {
     listForCase: (caseId: string) =>

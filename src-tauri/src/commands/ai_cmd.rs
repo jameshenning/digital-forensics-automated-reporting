@@ -15,13 +15,15 @@ use tracing::{error, info, warn};
 
 use crate::audit;
 use crate::auth::session::require_session;
-use crate::db::{cases, custody, entities, evidence, hashes, tools, analysis, person_identifiers};
+use crate::db::{cases, custody, entities, evidence, hashes, tools, analysis, person_identifiers, business_identifiers};
 use crate::db::entities::Entity;
 use crate::db::person_identifiers::PersonIdentifier;
+use crate::db::business_identifiers::BusinessIdentifier;
 use crate::agent_zero::{
     AgentZeroClient, CasePayload, CaseSummary, ClassificationResult,
     ForensicAnalysisResult, OsintPersonIdentifier, OsintPersonPayload, OsintPersonRequest,
-    OsintPersonResponse,
+    OsintPersonResponse, OsintBusinessIdentifier, OsintBusinessPayload, OsintBusinessRequest,
+    OsintBusinessResponse,
 };
 use crate::db::tools::ToolInput;
 use tokio::sync::RwLockReadGuard;
@@ -265,6 +267,11 @@ const DEFAULT_OSINT_TOOLS: &[&str] =
 /// Anything above this gets truncated after dedup and a `warn!` is emitted.
 const MAX_IDENTIFIERS_PER_RUN: usize = 50;
 
+/// Business OSINT tool set. `whois` + `subfinder` handle domain recon,
+/// theHarvester + spiderfoot handle email/metadata/brand enumeration.
+const DEFAULT_BUSINESS_OSINT_TOOLS: &[&str] =
+    &["whois", "subfinder", "theharvester", "spiderfoot"];
+
 /// Result of `build_osint_payload`. Carries the payload and the
 /// pre-cap deduped count so the caller can tell truncation apart from a
 /// merely-large-input-that-deduped-down-to-OK. Avoids the footgun where
@@ -376,6 +383,91 @@ pub fn build_osint_payload(
     };
 
     BuildPayloadResult {
+        payload,
+        deduped_count,
+    }
+}
+
+/// Result of `build_business_osint_payload`. Carries the payload and the
+/// pre-cap deduped count so the caller can tell truncation apart from a
+/// merely-large-input-that-deduped-down-to-OK.
+///
+/// Public (not `pub(crate)`) because integration tests in phase4 exercise
+/// the full Pass 1 → Pass 2 chain against a real DB pool.
+pub struct BuildBusinessPayloadResult {
+    pub payload: OsintBusinessPayload,
+    /// Number of distinct identifiers after dedup, BEFORE the cap was applied.
+    /// If this is greater than `MAX_IDENTIFIERS_PER_RUN`, truncation happened.
+    pub deduped_count: usize,
+}
+
+/// Build an OSINT request payload from a business entity and its full list
+/// of active identifiers (migration 0005). Pure function — no I/O, no
+/// state — so it can be unit-tested independently.
+///
+/// Dedup semantics: two identifiers are considered duplicates when their
+/// `(kind, trim(lowercase(value)), trim(lowercase(platform)))` tuples match.
+/// Platform is part of the key because the same email registered on two
+/// providers is genuinely two pieces of OSINT signal.
+///
+/// NO legacy single-value fallback — businesses have no entity.email/phone/
+/// username columns, so everything comes exclusively from the identifier batch.
+/// Callers should not be surprised if the payload has an empty identifiers
+/// array when no identifiers have been recorded for this entity.
+///
+/// Returns the payload + a `deduped_count` that represents the number of
+/// distinct identifiers BEFORE the `MAX_IDENTIFIERS_PER_RUN` cap was applied.
+/// `payload.identifiers.len()` is the POST-cap count. When they differ,
+/// truncation happened.
+pub fn build_business_osint_payload(
+    entity: &Entity,
+    identifiers: &[BusinessIdentifier],
+) -> BuildBusinessPayloadResult {
+    use std::collections::HashSet;
+
+    // Dedup pass — preserves first-seen order. Key = (kind, lowercased+trimmed
+    // value, lowercased+trimmed platform-or-None). See build_osint_payload for
+    // full rationale on the dedup semantics.
+    let mut seen: HashSet<(String, String, Option<String>)> = HashSet::new();
+    let mut deduped: Vec<OsintBusinessIdentifier> = Vec::with_capacity(identifiers.len());
+    for id in identifiers {
+        // Only include active rows — defensive, list_for_entity already filters.
+        if id.is_deleted != 0 {
+            continue;
+        }
+        let plat_key = id
+            .platform
+            .as_deref()
+            .map(|p| p.trim().to_lowercase())
+            .filter(|p| !p.is_empty());
+        let key = (id.kind.clone(), id.value.trim().to_lowercase(), plat_key);
+        if !seen.insert(key) {
+            continue;
+        }
+        deduped.push(OsintBusinessIdentifier {
+            kind: id.kind.clone(),
+            value: id.value.trim().to_string(),
+            platform: id.platform.clone(),
+        });
+    }
+
+    // Capture the post-dedup, pre-cap count so callers can correctly detect
+    // truncation (vs. "large raw input that deduped below the cap").
+    let deduped_count = deduped.len();
+
+    // Safety cap — see MAX_IDENTIFIERS_PER_RUN. First-seen wins when truncating.
+    if deduped.len() > MAX_IDENTIFIERS_PER_RUN {
+        deduped.truncate(MAX_IDENTIFIERS_PER_RUN);
+    }
+
+    let payload = OsintBusinessPayload {
+        name: entity.display_name.clone(),
+        industry: entity.organizational_rank.clone(),
+        notes: entity.notes.clone(),
+        identifiers: deduped,
+    };
+
+    BuildBusinessPayloadResult {
         payload,
         deduped_count,
     }
@@ -680,6 +772,293 @@ pub async fn ai_osint_person(
     // Augment the upstream `notes` with local context so the frontend can
     // render a single unambiguous status line. Preserves whatever Agent Zero
     // returned and prefixes our own observations when relevant.
+    let mut note_fragments: Vec<String> = Vec::new();
+    if name_only_run {
+        note_fragments
+            .push("No identifiers recorded — name-only submission.".to_string());
+    }
+    if truncated {
+        note_fragments.push(format!(
+            "Batch truncated: {deduped_count} distinct identifiers, {identifiers_submitted} submitted (cap {MAX_IDENTIFIERS_PER_RUN})."
+        ));
+    }
+    if tor_enabled {
+        note_fragments.push("Dark-web pass: active.".to_string());
+    }
+    if let Some(upstream) = response.notes.as_deref() {
+        if !upstream.is_empty() {
+            note_fragments.push(upstream.to_string());
+        }
+    }
+    let notes = if note_fragments.is_empty() {
+        None
+    } else {
+        Some(note_fragments.join(" "))
+    };
+
+    Ok(OsintRunSummary {
+        status: response.status,
+        identifiers_submitted,
+        tools_run: response.runs.len(),
+        tool_usage_rows_inserted: inserted,
+        notes,
+    })
+}
+
+// ─── ai_osint_business (Business OSINT, migration 0005) ──────────────────────
+
+/// Orchestrate an OSINT run for a business entity.
+///
+/// Flow:
+/// 1. Validate session
+/// 2. Fetch the entity, verify entity_type = "business"
+/// 3. Check `shown_ai_osint_consent` (same consent gate as persons — one
+///    acknowledgment covers both entity types)
+/// 4. Build OsintBusinessRequest from the business's known fields
+/// 5. POST to Agent Zero `dfars_osint_business` (900s timeout, 512 KiB cap)
+/// 6. For every successful run returned, insert a `tool_usage` row
+/// 7. Append findings into the entity's `metadata_json.osint_findings[]`
+///    array via a direct atomic UPDATE (json_set)
+/// 8. Audit-log AI_OSINT_BUSINESS_CALLED with the tool count
+/// 9. Return a summary to the frontend
+///
+/// HIGH DATA SENSITIVITY — business data (name, domain, identifiers) leaves
+/// the machine to external OSINT sources. Caller must ensure the user has
+/// acknowledged the OSINT consent banner before calling.
+#[tauri::command(rename_all = "snake_case")]
+pub async fn ai_osint_business(
+    token: String,
+    entity_id: i64,
+    state: State<'_, Arc<AppState>>,
+) -> Result<OsintRunSummary, AppError> {
+    let session = require_session(&state, &token)?;
+
+    // Same consent gate as persons — runtime flag reflects in-session
+    // acknowledgment. One acknowledgment covers both entity types.
+    if !state.osint_consent_granted() {
+        return Err(AppError::AiOsintConsentRequired);
+    }
+
+    // Fetch the entity and validate it's a business.
+    let entity = entities::get_entity(&state.db.forensics, entity_id).await?;
+    if entity.is_deleted != 0 {
+        return Err(AppError::EntityNotFound { entity_id });
+    }
+    if entity.entity_type != "business" {
+        return Err(AppError::EntityNotABusiness {
+            entity_id,
+            entity_type: entity.entity_type.clone(),
+        });
+    }
+
+    // Fetch the full multi-valued identifier list for this business
+    // (migration 0005). Active rows only — list_for_entity already filters.
+    let identifiers =
+        business_identifiers::list_for_entity(&state.db.forensics, entity_id).await?;
+
+    // Build the OSINT request payload from the business's known fields + the
+    // deduped identifier batch. Dedup lives inside `build_business_osint_payload`.
+    let BuildBusinessPayloadResult {
+        payload,
+        deduped_count,
+    } = build_business_osint_payload(&entity, &identifiers);
+    let identifiers_submitted = payload.identifiers.len();
+
+    // Truncation is exactly "deduped count exceeded the cap".
+    let truncated = deduped_count > MAX_IDENTIFIERS_PER_RUN;
+    if truncated {
+        tracing::warn!(
+            username = %session.username,
+            entity_id = entity_id,
+            deduped_count,
+            submitted = identifiers_submitted,
+            cap = MAX_IDENTIFIERS_PER_RUN,
+            "Business OSINT batch truncated — too many distinct identifiers for a single run"
+        );
+    }
+
+    // Zero-identifier runs are intentionally allowed (Agent Zero can still
+    // run whois/spiderfoot on the display_name alone), but flag them so
+    // the investigator understands the submission is name-only.
+    let name_only_run = identifiers_submitted == 0;
+    if name_only_run {
+        tracing::warn!(
+            username = %session.username,
+            entity_id = entity_id,
+            "Business OSINT run has no identifiers — name-only submission"
+        );
+    }
+
+    // Read `tor_enabled` from live config.
+    let tor_enabled = state.config.tor_enabled;
+
+    let request = OsintBusinessRequest {
+        case_id: entity.case_id.clone(),
+        business: payload,
+        tools_requested: DEFAULT_BUSINESS_OSINT_TOOLS.iter().map(|s| s.to_string()).collect(),
+        discretion_allowed: true,
+        tor_enabled,
+    };
+
+    // Call Agent Zero.
+    let az: RwLockReadGuard<'_, Option<AgentZeroClient>> = state.agent_zero.client.read().await;
+    let client = az.as_ref().ok_or(AppError::AgentZeroNotConfigured)?;
+    let response: OsintBusinessResponse = client.osint_business(&request).await?;
+
+    // Drop the read guard before we take async actions that might re-enter
+    // state.agent_zero (avoids lock contention).
+    drop(az);
+
+    // Tor preflight failure sentinel status handling — mirrors ai_osint_person
+    // exactly. Unknown status strings are also rejected to prevent silent
+    // fall-through with zero rows. (Finalization code-review agent finding.)
+    match response.status.as_str() {
+        "tor_unavailable" => {
+            warn!(
+                username = %session.username,
+                entity_id = entity_id,
+                upstream_notes = ?response.notes,
+                "Agent Zero reported tor_unavailable for business OSINT — user has \
+                 tor_enabled but the container daemon is not reachable"
+            );
+            return Err(AppError::TorUnavailable);
+        }
+        "success" | "partial" | "failed" => {
+            // expected status values — fall through to normal processing
+        }
+        other => {
+            error!(
+                username = %session.username,
+                entity_id = entity_id,
+                unknown_status = %other,
+                upstream_notes = ?response.notes,
+                runs_count = response.runs.len(),
+                "Agent Zero returned an unrecognized status string for business OSINT — \
+                 refusing to insert any tool_usage rows until the plugin contract is understood"
+            );
+            return Err(AppError::Internal(format!(
+                "Agent Zero returned unrecognized status '{other}'. Verify the \
+                 _dfars_integration plugin version matches this build of DFARS Desktop."
+            )));
+        }
+    }
+
+    // Insert a tool_usage row for every successful run.
+    let mut inserted = 0usize;
+    for run in &response.runs {
+        if !run.success {
+            continue;
+        }
+        let parsed_dt = run.execution_datetime.as_ref().and_then(|s| {
+            chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S")
+                .ok()
+                .or_else(|| {
+                    chrono::DateTime::parse_from_rfc3339(s)
+                        .ok()
+                        .map(|dt| dt.naive_utc())
+                })
+        });
+
+        let tool_input = ToolInput {
+            evidence_id: None, // OSINT runs are entity-scoped, not evidence-scoped
+            tool_name: run.tool_name.clone(),
+            version: run.version.clone(),
+            purpose: format!(
+                "Business OSINT via Agent Zero for entity '{}' — {}",
+                entity.display_name, run.findings_summary
+            ),
+            command_used: run.command_executed.clone(),
+            input_file: Some(format!(
+                "Business entity_id={} ({})",
+                entity.entity_id, entity.display_name
+            )),
+            output_file: run.output_file_stored_at.clone(),
+            execution_datetime: parsed_dt,
+            operator: format!("Agent Zero ({})", run.tool_name),
+            input_sha256: None,
+            output_sha256: None,
+            environment_notes: Some(format!(
+                "Run inside Agent Zero container; tool {} executed automatically as part of dfars_osint_business orchestration",
+                run.tool_name
+            )),
+            reproduction_notes: run.raw_output_truncated.clone(),
+        };
+
+        if let Err(e) = tools::add_tool(&state.db.forensics, &entity.case_id, &tool_input).await {
+            error!(
+                username = %session.username,
+                entity_id = entity_id,
+                tool_name = %run.tool_name,
+                error = ?e,
+                "failed to insert tool_usage row for business OSINT run"
+            );
+            continue;
+        }
+        inserted += 1;
+    }
+
+    // Atomic json_set UPDATE on metadata_json.osint_findings — mirrors the
+    // pattern from ai_osint_person to avoid the concurrent-write race.
+    let new_findings: Vec<serde_json::Value> = response
+        .runs
+        .iter()
+        .filter(|r| r.success)
+        .map(|r| {
+            serde_json::json!({
+                "tool_name": r.tool_name,
+                "findings_summary": r.findings_summary,
+                "execution_datetime": r.execution_datetime,
+            })
+        })
+        .collect();
+    let new_findings_json = serde_json::Value::Array(new_findings).to_string();
+
+    sqlx::query(
+        r#"
+        UPDATE entities
+        SET metadata_json = json_set(
+                COALESCE(metadata_json, '{}'),
+                '$.osint_findings',
+                json(?)
+            ),
+            updated_at = CURRENT_TIMESTAMP
+        WHERE entity_id = ?
+        "#,
+    )
+    .bind(&new_findings_json)
+    .bind(entity_id)
+    .execute(&state.db.forensics)
+    .await
+    .map_err(AppError::from)?;
+
+    // Audit + structured log. `display_name` intentionally NOT interpolated —
+    // entity_id is the stable handle; name in audit exports is a PII surface.
+    info!(
+        username = %session.username,
+        entity_id = entity_id,
+        case_id = %entity.case_id,
+        action = audit::AI_OSINT_BUSINESS_CALLED,
+        identifiers_submitted = identifiers_submitted,
+        tools_run = response.runs.len(),
+        tool_usage_rows_inserted = inserted,
+        status = %response.status,
+        "ai_osint_business succeeded"
+    );
+    audit::log_case(
+        &entity.case_id,
+        &format!("user:{}", session.username),
+        audit::AI_OSINT_BUSINESS_CALLED,
+        &format!(
+            "entity_id={} identifiers_submitted={} tools_run={} rows_inserted={} status={}",
+            entity_id,
+            identifiers_submitted,
+            response.runs.len(),
+            inserted,
+            response.status
+        ),
+    );
+
+    // Augment the upstream `notes` with local context.
     let mut note_fragments: Vec<String> = Vec::new();
     if name_only_run {
         note_fragments
@@ -1032,5 +1411,211 @@ mod tests {
         let payload = payload_from(&entity, &ids);
         let kinds: Vec<&str> = payload.identifiers.iter().map(|i| i.kind.as_str()).collect();
         assert_eq!(kinds, vec!["url", "email", "handle"]);
+    }
+
+    // ─── build_business_osint_payload unit tests ─────────────────────────────
+
+    fn make_business_entity(overrides: impl FnOnce(&mut Entity)) -> Entity {
+        let mut e = Entity {
+            entity_id: 10,
+            case_id: "CASE-BIZ-001".into(),
+            entity_type: "business".into(),
+            display_name: "Acme Corp".into(),
+            subtype: None,
+            organizational_rank: Some("Technology".into()),
+            parent_entity_id: None,
+            notes: Some("Known fraud front".into()),
+            metadata_json: None,
+            is_deleted: 0,
+            created_at: "2026-04-15 00:00:00".into(),
+            updated_at: "2026-04-15 00:00:00".into(),
+            photo_path: None,
+            email: None,
+            phone: None,
+            username: None,
+            employer: None,
+            dob: None,
+        };
+        overrides(&mut e);
+        e
+    }
+
+    fn mk_biz_ident(
+        id: i64,
+        kind: &str,
+        value: &str,
+        platform: Option<&str>,
+    ) -> BusinessIdentifier {
+        BusinessIdentifier {
+            identifier_id: id,
+            entity_id: 10,
+            kind: kind.into(),
+            value: value.into(),
+            platform: platform.map(|s| s.into()),
+            notes: None,
+            is_deleted: 0,
+            created_at: "2026-04-15 00:00:00".into(),
+            updated_at: "2026-04-15 00:00:00".into(),
+        }
+    }
+
+    #[test]
+    fn build_business_payload_empty_identifiers_uses_entity_fields() {
+        // With no identifiers, payload should still carry name, industry, notes.
+        let entity = make_business_entity(|_| {});
+        let result = build_business_osint_payload(&entity, &[]);
+        assert_eq!(result.payload.name, "Acme Corp");
+        assert_eq!(result.payload.industry.as_deref(), Some("Technology"));
+        assert_eq!(result.payload.notes.as_deref(), Some("Known fraud front"));
+        assert!(result.payload.identifiers.is_empty());
+        assert_eq!(result.deduped_count, 0);
+    }
+
+    #[test]
+    fn build_business_payload_dedup_same_platform_case_insensitive_with_trim() {
+        // Three rows share (kind=domain, lowered value, lowered platform=registrar)
+        // so they collapse to one. First-seen wins.
+        let entity = make_business_entity(|_| {});
+        let ids = vec![
+            mk_biz_ident(1, "domain", "Acme.com", Some("registrar")),
+            mk_biz_ident(2, "domain", "acme.com", Some("Registrar")),
+            mk_biz_ident(3, "domain", "  ACME.COM  ", Some("  REGISTRAR  ")),
+            mk_biz_ident(4, "domain", "acme.org", None),
+        ];
+        let result = build_business_osint_payload(&entity, &ids);
+        assert_eq!(
+            result.payload.identifiers.len(),
+            2,
+            "three case/whitespace-variants on the same platform must collapse"
+        );
+        assert_eq!(result.payload.identifiers[0].value, "Acme.com");
+        assert_eq!(result.payload.identifiers[0].platform.as_deref(), Some("registrar"));
+        assert_eq!(result.payload.identifiers[1].value, "acme.org");
+    }
+
+    #[test]
+    fn build_business_payload_keeps_same_value_across_different_platforms() {
+        // Same domain registered on two different providers is genuine signal.
+        let entity = make_business_entity(|_| {});
+        let ids = vec![
+            mk_biz_ident(1, "domain", "acme.com", Some("godaddy")),
+            mk_biz_ident(2, "domain", "acme.com", Some("namecheap")),
+            mk_biz_ident(3, "domain", "acme.com", None),
+        ];
+        let result = build_business_osint_payload(&entity, &ids);
+        assert_eq!(result.payload.identifiers.len(), 3);
+        let platforms: Vec<Option<&str>> = result
+            .payload
+            .identifiers
+            .iter()
+            .map(|i| i.platform.as_deref())
+            .collect();
+        assert_eq!(platforms, vec![Some("godaddy"), Some("namecheap"), None]);
+    }
+
+    #[test]
+    fn build_business_payload_truncates_over_cap_and_reports_deduped_count() {
+        let entity = make_business_entity(|_| {});
+        let ids: Vec<BusinessIdentifier> = (0..(MAX_IDENTIFIERS_PER_RUN + 10))
+            .map(|i| mk_biz_ident(i as i64, "domain", &format!("d{i}.com"), None))
+            .collect();
+        let result = build_business_osint_payload(&entity, &ids);
+        assert_eq!(result.payload.identifiers.len(), MAX_IDENTIFIERS_PER_RUN);
+        assert_eq!(result.deduped_count, MAX_IDENTIFIERS_PER_RUN + 10);
+        assert_eq!(result.payload.identifiers[0].value, "d0.com");
+        assert_eq!(
+            result.payload.identifiers[MAX_IDENTIFIERS_PER_RUN - 1].value,
+            format!("d{}.com", MAX_IDENTIFIERS_PER_RUN - 1)
+        );
+        assert!(result.deduped_count > MAX_IDENTIFIERS_PER_RUN);
+    }
+
+    #[test]
+    fn build_business_payload_large_input_that_dedups_under_cap_is_not_truncated() {
+        let entity = make_business_entity(|_| {});
+        let distinct = MAX_IDENTIFIERS_PER_RUN - 5;
+        let mut ids: Vec<BusinessIdentifier> = Vec::new();
+        for i in 0..distinct {
+            let v = format!("biz{i}.com");
+            ids.push(mk_biz_ident((i as i64) * 2, "domain", &v, Some("registrar")));
+            ids.push(mk_biz_ident(
+                (i as i64) * 2 + 1,
+                "domain",
+                &v.to_uppercase(),
+                Some("Registrar"),
+            ));
+        }
+        let result = build_business_osint_payload(&entity, &ids);
+        assert_eq!(result.deduped_count, distinct);
+        assert_eq!(result.payload.identifiers.len(), distinct);
+        assert!(
+            result.deduped_count <= MAX_IDENTIFIERS_PER_RUN,
+            "a raw list that dedupes under the cap must NOT report truncation"
+        );
+    }
+
+    #[test]
+    fn build_business_payload_empty_both_no_panic() {
+        let entity = make_business_entity(|e| {
+            e.organizational_rank = None;
+            e.notes = None;
+        });
+        let result = build_business_osint_payload(&entity, &[]);
+        assert!(result.payload.industry.is_none());
+        assert!(result.payload.notes.is_none());
+        assert!(result.payload.identifiers.is_empty());
+        assert_eq!(result.payload.name, "Acme Corp");
+    }
+
+    #[test]
+    fn build_business_payload_whitespace_value_roundtrip() {
+        // Whitespace-only values should be trimmed to empty-string (same
+        // permissive behavior as the person version, documented for awareness).
+        let entity = make_business_entity(|_| {});
+        let ids = vec![
+            mk_biz_ident(1, "domain", "   ", None),
+            mk_biz_ident(2, "domain", "  ", None),
+        ];
+        let result = build_business_osint_payload(&entity, &ids);
+        // Both map to key (domain, "", None); first-seen wins.
+        assert_eq!(result.payload.identifiers.len(), 1);
+        assert_eq!(result.payload.identifiers[0].value, "");
+    }
+
+    #[test]
+    fn build_business_payload_soft_delete_filtered_defensively() {
+        let entity = make_business_entity(|_| {});
+        let mut deleted = mk_biz_ident(1, "domain", "ghost.com", None);
+        deleted.is_deleted = 1;
+        let ids = vec![deleted, mk_biz_ident(2, "domain", "live.com", None)];
+        let result = build_business_osint_payload(&entity, &ids);
+        assert_eq!(result.payload.identifiers.len(), 1);
+        assert_eq!(result.payload.identifiers[0].value, "live.com");
+    }
+
+    #[test]
+    fn build_business_payload_preserves_first_seen_order() {
+        let entity = make_business_entity(|_| {});
+        let ids = vec![
+            mk_biz_ident(1, "url", "https://acme.com", None),
+            mk_biz_ident(2, "domain", "acme.com", None),
+            mk_biz_ident(3, "email", "info@acme.com", None),
+            mk_biz_ident(4, "phone", "+15555551234", None),
+        ];
+        let result = build_business_osint_payload(&entity, &ids);
+        let kinds: Vec<&str> = result.payload.identifiers.iter().map(|i| i.kind.as_str()).collect();
+        assert_eq!(kinds, vec!["url", "domain", "email", "phone"]);
+    }
+
+    #[test]
+    fn build_business_payload_industry_from_organizational_rank() {
+        // organizational_rank is repurposed as the "industry" field for
+        // businesses. This test pins the mapping so a rename of the entity
+        // field would force a test review.
+        let entity = make_business_entity(|e| {
+            e.organizational_rank = Some("Finance".into());
+        });
+        let result = build_business_osint_payload(&entity, &[]);
+        assert_eq!(result.payload.industry.as_deref(), Some("Finance"));
     }
 }

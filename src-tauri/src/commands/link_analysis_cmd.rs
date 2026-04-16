@@ -26,6 +26,7 @@ use crate::{
     audit,
     auth::session::require_session,
     db::{
+        business_identifiers::{BusinessIdentifier, BusinessIdentifierInput},
         entities::{Entity, EntityInput},
         events::{CaseEvent, EventInput},
         graph::{GraphFilter, GraphPayload, TimelineFilter, TimelinePayload},
@@ -49,6 +50,9 @@ const EVENT_DELETED: &str = "EVENT_DELETED";
 const PERSON_IDENTIFIER_ADDED: &str = "PERSON_IDENTIFIER_ADDED";
 const PERSON_IDENTIFIER_UPDATED: &str = "PERSON_IDENTIFIER_UPDATED";
 const PERSON_IDENTIFIER_DELETED: &str = "PERSON_IDENTIFIER_DELETED";
+const BUSINESS_IDENTIFIER_ADDED: &str = "BUSINESS_IDENTIFIER_ADDED";
+const BUSINESS_IDENTIFIER_UPDATED: &str = "BUSINESS_IDENTIFIER_UPDATED";
+const BUSINESS_IDENTIFIER_DELETED: &str = "BUSINESS_IDENTIFIER_DELETED";
 
 // ─── Entity commands ──────────────────────────────────────────────────────────
 
@@ -571,6 +575,157 @@ pub async fn person_identifier_delete(
         &entity.case_id,
         &session.username,
         PERSON_IDENTIFIER_DELETED,
+        &format!(
+            "identifier_id={} entity_id={} kind={:?}",
+            identifier_id, existing.entity_id, existing.kind
+        ),
+    );
+
+    Ok(())
+}
+
+// ─── Business identifier commands (migration 0005) ────────────────────────────
+
+/// Add a new identifier (domain / registration / ein / email / phone / address /
+/// social / url) to a business entity. Validates kind + value + parent-entity-is-business.
+/// Logs `BUSINESS_IDENTIFIER_ADDED` to the case audit trail.
+///
+/// Fetches the parent entity BEFORE calling `add_identifier` so the audit
+/// log's `case_id` is already cached by the time the insert runs.
+#[tauri::command(rename_all = "snake_case")]
+pub async fn business_identifier_add(
+    token: String,
+    entity_id: i64,
+    input: BusinessIdentifierInput,
+    state: State<'_, Arc<AppState>>,
+) -> Result<BusinessIdentifier, AppError> {
+    // MUST-DO 3 — session guard first
+    let session = require_session(&state, &token)?;
+
+    // Fetch the parent entity first so we have `case_id` cached for the
+    // audit log. `add_identifier` will re-verify the parent is a business.
+    let entity = crate::db::entities::get_entity(&state.db.forensics, entity_id).await?;
+
+    let identifier =
+        crate::db::business_identifiers::add_identifier(&state.db.forensics, entity_id, &input)
+            .await?;
+
+    info!(
+        username = %session.username,
+        entity_id = %entity_id,
+        identifier_id = %identifier.identifier_id,
+        kind = %identifier.kind,
+        "business identifier added"
+    );
+    audit::log_case(
+        &entity.case_id,
+        &session.username,
+        BUSINESS_IDENTIFIER_ADDED,
+        &format!(
+            "identifier_id={} entity_id={} kind={:?} platform={:?}",
+            identifier.identifier_id,
+            entity_id,
+            identifier.kind,
+            identifier.platform.as_deref().unwrap_or(""),
+        ),
+    );
+
+    Ok(identifier)
+}
+
+/// List all active identifiers for a business entity (ordered by kind, created_at).
+#[tauri::command(rename_all = "snake_case")]
+pub async fn business_identifier_list(
+    token: String,
+    entity_id: i64,
+    state: State<'_, Arc<AppState>>,
+) -> Result<Vec<BusinessIdentifier>, AppError> {
+    // MUST-DO 3 — session guard first
+    let _session = require_session(&state, &token)?;
+
+    crate::db::business_identifiers::list_for_entity(&state.db.forensics, entity_id).await
+}
+
+/// Update mutable fields of an existing business identifier.
+/// Logs `BUSINESS_IDENTIFIER_UPDATED` to the case audit trail.
+///
+/// Fetches the current identifier + parent entity BEFORE calling
+/// `update_identifier` so `case_id` is cached for the audit log before any
+/// mutation happens.
+#[tauri::command(rename_all = "snake_case")]
+pub async fn business_identifier_update(
+    token: String,
+    identifier_id: i64,
+    input: BusinessIdentifierInput,
+    state: State<'_, Arc<AppState>>,
+) -> Result<BusinessIdentifier, AppError> {
+    // MUST-DO 3 — session guard first
+    let session = require_session(&state, &token)?;
+
+    // Fetch the current row to find the parent entity_id (identifiers are
+    // not re-homeable between entities).
+    let existing =
+        crate::db::business_identifiers::get_identifier(&state.db.forensics, identifier_id).await?;
+    let entity =
+        crate::db::entities::get_entity(&state.db.forensics, existing.entity_id).await?;
+
+    let identifier = crate::db::business_identifiers::update_identifier(
+        &state.db.forensics,
+        identifier_id,
+        &input,
+    )
+    .await?;
+
+    info!(
+        username = %session.username,
+        identifier_id = %identifier_id,
+        "business identifier updated"
+    );
+    audit::log_case(
+        &entity.case_id,
+        &session.username,
+        BUSINESS_IDENTIFIER_UPDATED,
+        &format!(
+            "identifier_id={} entity_id={} kind={:?} platform={:?}",
+            identifier_id,
+            identifier.entity_id,
+            identifier.kind,
+            identifier.platform.as_deref().unwrap_or(""),
+        ),
+    );
+
+    Ok(identifier)
+}
+
+/// Soft-delete a business identifier.
+/// Logs `BUSINESS_IDENTIFIER_DELETED` to the case audit trail.
+#[tauri::command(rename_all = "snake_case")]
+pub async fn business_identifier_delete(
+    token: String,
+    identifier_id: i64,
+    state: State<'_, Arc<AppState>>,
+) -> Result<(), AppError> {
+    // MUST-DO 3 — session guard first
+    let session = require_session(&state, &token)?;
+
+    // Fetch first so we can include kind/entity in the audit log.
+    let existing =
+        crate::db::business_identifiers::get_identifier(&state.db.forensics, identifier_id).await?;
+    let entity =
+        crate::db::entities::get_entity(&state.db.forensics, existing.entity_id).await?;
+
+    crate::db::business_identifiers::soft_delete(&state.db.forensics, identifier_id).await?;
+
+    info!(
+        username = %session.username,
+        identifier_id = %identifier_id,
+        entity_id = %existing.entity_id,
+        "business identifier soft-deleted"
+    );
+    audit::log_case(
+        &entity.case_id,
+        &session.username,
+        BUSINESS_IDENTIFIER_DELETED,
         &format!(
             "identifier_id={} entity_id={} kind={:?}",
             identifier_id, existing.entity_id, existing.kind
