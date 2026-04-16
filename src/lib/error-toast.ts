@@ -178,3 +178,31 @@ export function toastError(err: unknown): void {
 export function toastSuccess(message: string): void {
   toast.success(message);
 }
+
+/**
+ * Extract a plain-string message from an AppError / unknown error.
+ *
+ * Handles the awkward `AppError::ValidationError { field, message }` case
+ * where the `message` field is itself an object `{ field, message }` due to
+ * the Rust-side `#[serde(tag="code", content="message")]` annotation. If
+ * rendered directly into JSX this object throws React error #31 ("Objects
+ * are not valid as a React child (found: object with keys {field, message})").
+ * Use this helper anywhere a Rust error needs to land inside UI text.
+ */
+export function errorToMessage(err: unknown, fallback = "Operation failed"): string {
+  const appErr = err as Partial<AppError>;
+  // AppErrorCode → canonical user-facing message wins when we have it.
+  if (appErr?.code && appErr.code in ERROR_MESSAGES) {
+    return ERROR_MESSAGES[appErr.code];
+  }
+  // ValidationError's message field is { field, message } per the Rust
+  // serde tag/content encoding; flatten to "field: message".
+  const m = appErr?.message as unknown;
+  if (m && typeof m === "object" && "field" in m && "message" in m) {
+    const v = m as { field: unknown; message: unknown };
+    return `${String(v.field)}: ${String(v.message)}`;
+  }
+  if (typeof m === "string" && m.length > 0) return m;
+  if (err instanceof Error) return err.message;
+  return fallback;
+}

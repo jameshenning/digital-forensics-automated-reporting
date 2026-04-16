@@ -99,7 +99,10 @@ pub async fn settings_get_agent_zero(
     state: State<'_, Arc<AppState>>,
 ) -> Result<AgentZeroSettings, AppError> {
     require_session(&state, &token)?;
-    let cfg = &state.config;
+    // Re-read from disk so values saved earlier this session are visible
+    // in the form after the query invalidates.  See `fresh_config`.
+    let cfg = fresh_config(&state);
+    let cfg = &cfg;
     let api_key_set = cfg.agent_zero_api_key_encrypted.is_some();
     let is_configured = cfg.agent_zero_url.is_some() && api_key_set;
     Ok(AgentZeroSettings {
@@ -208,7 +211,9 @@ pub async fn settings_get_smtp(
     state: State<'_, Arc<AppState>>,
 ) -> Result<SmtpSettings, AppError> {
     require_session(&state, &token)?;
-    let cfg = &state.config;
+    // Re-read from disk so values saved earlier this session are visible.
+    let cfg = fresh_config(&state);
+    let cfg = &cfg;
     Ok(SmtpSettings {
         host: cfg.smtp_host.clone(),
         port: cfg.smtp_port,
@@ -333,8 +338,20 @@ pub async fn settings_acknowledge_osint_consent(
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
+/// Read the current config from disk rather than `state.config`.
+///
+/// `state.config` is a plain AppConfig (not an RwLock) — the documented
+/// staleness gap noted in state.rs. Without re-reading, a user who clicks
+/// Save and then Test within the same app session would hit the test path
+/// with stale in-memory values (usually empty), producing a confusing
+/// "host not configured" error. Re-reading from disk is cheap (config.json
+/// is ~1 KiB) and ensures settings-handler consistency within a session.
+fn fresh_config(state: &AppState) -> AppConfig {
+    config::load(&state.config_path).unwrap_or_else(|_| state.config.clone())
+}
+
 fn build_smtp_config(state: &AppState) -> Result<SmtpConfig, AppError> {
-    let cfg = &state.config;
+    let cfg = fresh_config(state);
     let host = cfg.smtp_host.clone().ok_or_else(|| AppError::ValidationError {
         field: "smtp_host".into(),
         message: "SMTP host not configured".into(),

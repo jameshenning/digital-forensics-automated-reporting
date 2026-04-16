@@ -46,7 +46,7 @@ import {
 import { getToken, useSession } from "@/lib/session";
 import { SettingsHeader } from "@/components/settings-header";
 import { queryKeys } from "@/lib/query";
-import { toastError, toastSuccess } from "@/lib/error-toast";
+import { errorToMessage, toastError, toastSuccess } from "@/lib/error-toast";
 import { agentZeroSchema, type AgentZeroFormValues } from "@/lib/agent-zero-schema";
 import { smtpSchema, type SmtpFormValues } from "@/lib/smtp-schema";
 
@@ -147,8 +147,10 @@ function AgentZeroSection() {
       setTestResult({ ok: true, plugin_version: result.plugin_version });
     },
     onError: (err) => {
-      const msg = (err as Partial<{ message: string }>)?.message ?? "Connection failed";
-      setTestResult({ ok: false, message: msg });
+      setTestResult({
+        ok: false,
+        message: errorToMessage(err, "Connection failed"),
+      });
     },
   });
 
@@ -579,8 +581,10 @@ function SmtpSection() {
       setTestResult({ ok: true });
     },
     onError: (err) => {
-      const msg = (err as Partial<{ message: string }>)?.message ?? "Send failed";
-      setTestResult({ ok: false, message: msg });
+      setTestResult({
+        ok: false,
+        message: errorToMessage(err, "Send failed"),
+      });
     },
   });
 
