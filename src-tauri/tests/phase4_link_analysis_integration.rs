@@ -48,7 +48,8 @@ use dfars_desktop_lib::{
         },
         cases::{CaseInput, create_case},
         custody::{CustodyInput, add_custody},
-        entities::{EntityInput, add_entity, get_entity, list_for_case as entity_list_for_case,
+        entities::{EntityInput, add_entity, get_entity, list_employers_for_person,
+                   list_for_case as entity_list_for_case,
                    soft_delete as entity_soft_delete, update_entity},
         person_identifiers::{
             PersonIdentifierInput, add_identifier, get_identifier,
@@ -62,6 +63,7 @@ use dfars_desktop_lib::{
         hashes::{HashInput, add_hash},
         links::{LinkInput, add_link, list_for_case as link_list_for_case,
                 soft_delete as link_soft_delete},
+        person_employers::set_person_employers,
         tools::{ToolInput, add_tool},
     },
     error::AppError,
@@ -2298,6 +2300,70 @@ async fn test_business_pass1_to_pass2_identifier_flow_end_to_end() {
     assert_eq!(payload.identifiers[3].value, "DE-12345678");
 }
 
+// ─── Person employer commands (employer combobox feature) ─────────────────────
+
+/// End-to-end: seed a case + one person + two businesses, call
+/// set_person_employers with both business ids + one free-text name, then
+/// assert links, new business entity, and rollup string.
+#[tokio::test]
+async fn test_person_employers_set_end_to_end() {
+    let (_, pool) = make_state().await;
+    let case_id = make_case(&pool, "EMPLOYERS-E2E").await;
+
+    let person_id = make_entity(&pool, &case_id, "Alice Smith", "person").await;
+    let biz1 = make_entity(&pool, &case_id, "Acme Corp", "business").await;
+    let biz2 = make_entity(&pool, &case_id, "Beta LLC", "business").await;
+
+    let result = set_person_employers(
+        &pool,
+        person_id,
+        &[biz1, biz2],
+        &["Gamma Inc".to_string()],
+    )
+    .await
+    .expect("set_person_employers should succeed");
+
+    // Three employers total
+    assert_eq!(result.len(), 3);
+
+    // All three entity_links with label='employs' are active
+    let link_count: (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM entity_links \
+         WHERE link_label='employs' AND is_deleted=0 \
+           AND target_type='entity' AND target_id=CAST(? AS TEXT)",
+    )
+    .bind(person_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(link_count.0, 3);
+
+    // Gamma Inc business entity exists in the case
+    let gamma: (String, String) = sqlx::query_as(
+        "SELECT case_id, entity_type FROM entities WHERE display_name='Gamma Inc' AND is_deleted=0",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(gamma.0, case_id);
+    assert_eq!(gamma.1, "business");
+
+    // employer rollup is sorted alphabetically
+    let employer: (Option<String>,) =
+        sqlx::query_as("SELECT employer FROM entities WHERE entity_id=?")
+            .bind(person_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(employer.0.as_deref(), Some("Acme Corp, Beta LLC, Gamma Inc"));
+
+    // list_employers_for_person returns the same 3 pairs
+    let listed = list_employers_for_person(&pool, person_id)
+        .await
+        .expect("list_employers_for_person should succeed");
+    assert_eq!(listed.len(), 3);
+}
+
 /// grep-guard: ai_osint_business must carry rename_all = "snake_case" and
 /// require_session must appear before osint_consent_granted in the command body.
 #[test]
@@ -2332,4 +2398,33 @@ fn test_ai_osint_business_has_rename_all_and_session_guard_before_consent_check(
         "require_session (SEC-1 gate) must appear BEFORE osint_consent_granted in \
          ai_osint_business — SEC-1 non-negotiable"
     );
+}
+
+/// grep-guard: person_employers_set and person_employers_list must carry the
+/// `#[tauri::command(rename_all = "snake_case")]` attribute, or multi-word
+/// parameters like `entity_id` / `existing_business_ids` / `new_business_names`
+/// silently deserialize as zero/empty in Tauri v2 (camelCase auto-convert trap).
+#[test]
+fn test_person_employer_commands_have_rename_all_snake_case() {
+    let source = include_str!("../src/commands/link_analysis_cmd.rs");
+    let expected_attr = "#[tauri::command(rename_all = \"snake_case\")]";
+
+    for cmd in [
+        "pub async fn person_employers_set",
+        "pub async fn person_employers_list",
+    ] {
+        let cmd_idx = source.find(cmd).unwrap_or_else(|| {
+            panic!(
+                "could not locate `{cmd}` in link_analysis_cmd.rs — did it get renamed or moved?"
+            )
+        });
+        let window_start = cmd_idx.saturating_sub(400);
+        let preamble = &source[window_start..cmd_idx];
+        assert!(
+            preamble.contains(expected_attr),
+            "{cmd} is missing {expected_attr} — this will silently break the \
+             Tauri v2 camelCase-to-snake_case parameter binding and the frontend \
+             call will pass NULL for every multi-word argument."
+        );
+    }
 }

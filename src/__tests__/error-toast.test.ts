@@ -77,6 +77,9 @@ const ERROR_CODES: AppErrorCode[] = [
   // Businesses — identifiers (migration 0005)
   "EntityNotABusiness",
   "BusinessIdentifierNotFound",
+  // Businesses — logo upload (migration 0005)
+  "BusinessLogoTooLarge",
+  "BusinessLogoNotAnImage",
   // Dark-web OSINT — Tor preflight failure
   "TorUnavailable",
 ];

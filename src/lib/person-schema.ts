@@ -55,10 +55,24 @@ export const personFormSchema = z.object({
     .string()
     .max(100, "Username must be at most 100 characters")
     .optional(),
-  employer: z
-    .string()
-    .max(200, "Employer must be at most 200 characters")
-    .optional(),
+  employers: z
+    .object({
+      selectedBusinessIds: z.array(z.number().int()),
+      newBusinessNames: z
+        .array(
+          z
+            .string()
+            .min(1, "Name cannot be blank")
+            .max(200, "Name must be at most 200 characters")
+            .refine((v) => !v.trim().startsWith("-"), {
+              message: "Name cannot start with '-' (argv-injection safety)",
+            })
+            .refine((v) => v.trim().length > 0, {
+              message: "Name cannot be blank",
+            }),
+        ),
+    })
+    .default({ selectedBusinessIds: [], newBusinessNames: [] }),
   dob: z
     .string()
     .optional()

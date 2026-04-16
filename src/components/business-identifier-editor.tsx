@@ -411,12 +411,34 @@ function IdentifierFormRow({
   const kindValue = form.watch("kind");
   const placeholder = KIND_META[kindValue as BusinessIdentifierKind]?.placeholder ?? "";
 
+  // HTML doesn't allow nested <form> elements. This row is rendered inside
+  // the outer BusinessForm's <form>, so we use a <div> here and trigger
+  // submit explicitly via the Save button's onClick. A nested <form>
+  // silently bubbles its submit event up to the outer form, which causes
+  // the business form to close without saving the identifier AND without
+  // persisting whatever text the user just typed into other business
+  // fields. Found via user-reported regression 2026-04-16.
+  const triggerSubmit = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    void form.handleSubmit(onSubmit)();
+  };
+
   return (
     <Form {...form}>
-      <form
-        onSubmit={form.handleSubmit(onSubmit)}
+      <div
         className="rounded-md border bg-muted/40 p-3 space-y-3"
-        noValidate
+        onKeyDown={(e) => {
+          // Capture Enter-key submit inside inputs so it doesn't bubble up
+          // to the outer form either.
+          if (e.key === "Enter" && e.target !== e.currentTarget) {
+            const tag = (e.target as HTMLElement).tagName;
+            if (tag === "INPUT") {
+              e.preventDefault();
+              void form.handleSubmit(onSubmit)();
+            }
+          }
+        }}
       >
         <div className="grid grid-cols-1 gap-2 sm:grid-cols-[160px_1fr]">
           <FormField
@@ -510,11 +532,16 @@ function IdentifierFormRow({
           >
             Cancel
           </Button>
-          <Button type="submit" size="sm" disabled={isPending}>
+          <Button
+            type="button"
+            size="sm"
+            disabled={isPending}
+            onClick={triggerSubmit}
+          >
             {isPending ? "Saving…" : "Save"}
           </Button>
         </div>
-      </form>
+      </div>
     </Form>
   );
 }

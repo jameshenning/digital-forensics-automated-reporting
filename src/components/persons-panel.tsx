@@ -24,6 +24,7 @@ import {
   entityAdd,
   entityUpdate,
   entityDelete,
+  personEmployersSet,
   personPhotoUpload,
   personPhotoDelete,
   aiOsintPerson,
@@ -76,7 +77,9 @@ function formToInput(values: PersonFormValues): EntityInput {
     email: values.email?.trim() || null,
     phone: values.phone?.trim() || null,
     username: values.username?.trim() || null,
-    employer: values.employer?.trim() || null,
+    // employer column is now a display-only rollup managed by person_employers_set;
+    // pass null here so the entity update doesn't clobber it.
+    employer: null,
     dob: values.dob?.trim() || null,
   };
 }
@@ -89,7 +92,9 @@ function personToFormValues(person: Entity): Partial<PersonFormValues> {
     email: person.email ?? "",
     phone: person.phone ?? "",
     username: person.username ?? "",
-    employer: person.employer ?? "",
+    // employers is loaded async by PersonForm via personEmployersList;
+    // start with empty arrays and let the useEffect in PersonForm seed them.
+    employers: { selectedBusinessIds: [], newBusinessNames: [] },
     dob: person.dob ?? "",
     notes: person.notes ?? "",
   };
@@ -136,19 +141,38 @@ export function PersonsPanel({ caseId }: PersonsPanelProps) {
     enabled: !!token,
   });
 
-  const invalidatePersons = React.useCallback(() => {
-    void queryClient.invalidateQueries({
-      queryKey: queryKeys.entities.listForCase(caseId),
-    });
-  }, [queryClient, caseId]);
+  const invalidatePersons = React.useCallback(
+    (entity_id?: number) => {
+      void queryClient.invalidateQueries({
+        queryKey: queryKeys.entities.listForCase(caseId),
+      });
+      void queryClient.invalidateQueries({
+        queryKey: queryKeys.links.listForCase(caseId),
+      });
+      if (entity_id !== undefined) {
+        void queryClient.invalidateQueries({
+          queryKey: queryKeys.personEmployers.listForPerson(entity_id),
+        });
+      }
+    },
+    [queryClient, caseId],
+  );
 
-  // Add mutation — creates the entity, then uploads the photo if one was picked.
+  // Add mutation — creates entity, sets employers, then uploads photo.
   const addMutation = useMutation({
     mutationFn: async (args: {
       input: EntityInput;
+      employers: { selectedBusinessIds: number[]; newBusinessNames: string[] };
       pickedPhotoPath: string | null;
     }) => {
       const created = await entityAdd({ token, case_id: caseId, input: args.input });
+      // Set employer links immediately after the entity exists.
+      await personEmployersSet({
+        token,
+        entity_id: created.entity_id,
+        existing_business_ids: args.employers.selectedBusinessIds,
+        new_business_names: args.employers.newBusinessNames,
+      });
       if (args.pickedPhotoPath) {
         await personPhotoUpload({
           token,
@@ -158,19 +182,20 @@ export function PersonsPanel({ caseId }: PersonsPanelProps) {
       }
       return created;
     },
-    onSuccess: () => {
-      invalidatePersons();
+    onSuccess: (created) => {
+      invalidatePersons(created.entity_id);
       setAddOpen(false);
       toastSuccess("Person added.");
     },
     onError: toastError,
   });
 
-  // Edit mutation — updates fields, then replaces photo if a new one was picked.
+  // Edit mutation — updates entity fields, sets employers, then replaces photo.
   const updateMutation = useMutation({
     mutationFn: async (args: {
       entity_id: number;
       input: EntityInput;
+      employers: { selectedBusinessIds: number[]; newBusinessNames: string[] };
       pickedPhotoPath: string | null;
     }) => {
       const updated = await entityUpdate({
@@ -178,6 +203,12 @@ export function PersonsPanel({ caseId }: PersonsPanelProps) {
         case_id: caseId,
         entity_id: args.entity_id,
         input: args.input,
+      });
+      await personEmployersSet({
+        token,
+        entity_id: args.entity_id,
+        existing_business_ids: args.employers.selectedBusinessIds,
+        new_business_names: args.employers.newBusinessNames,
       });
       if (args.pickedPhotoPath) {
         await personPhotoUpload({
@@ -188,8 +219,8 @@ export function PersonsPanel({ caseId }: PersonsPanelProps) {
       }
       return updated;
     },
-    onSuccess: () => {
-      invalidatePersons();
+    onSuccess: (updated) => {
+      invalidatePersons(updated.entity_id);
       setEditPerson(null);
       toastSuccess("Person updated.");
     },
@@ -216,6 +247,14 @@ export function PersonsPanel({ caseId }: PersonsPanelProps) {
     },
     onError: toastError,
   });
+
+  // Convenience: extract employers from form values.
+  function extractEmployers(values: PersonFormValues) {
+    return {
+      selectedBusinessIds: values.employers?.selectedBusinessIds ?? [],
+      newBusinessNames: values.employers?.newBusinessNames ?? [],
+    };
+  }
 
   // OSINT mutation — runs Agent Zero orchestration and refreshes both the
   // persons list (for metadata_json.osint_findings) and the tools tab query.
@@ -344,10 +383,12 @@ export function PersonsPanel({ caseId }: PersonsPanelProps) {
             <DialogTitle>Add a person</DialogTitle>
           </DialogHeader>
           <PersonForm
+            caseId={caseId}
             isPending={addMutation.isPending}
             onSubmit={(values, pickedPhotoPath) =>
               addMutation.mutate({
                 input: formToInput(values),
+                employers: extractEmployers(values),
                 pickedPhotoPath,
               })
             }
@@ -371,11 +412,13 @@ export function PersonsPanel({ caseId }: PersonsPanelProps) {
               defaultValues={personToFormValues(editPerson)}
               currentPhotoPath={editPerson.photo_path}
               entityId={editPerson.entity_id}
+              caseId={caseId}
               isPending={updateMutation.isPending}
               onSubmit={(values, pickedPhotoPath) =>
                 updateMutation.mutate({
                   entity_id: editPerson.entity_id,
                   input: formToInput(values),
+                  employers: extractEmployers(values),
                   pickedPhotoPath,
                 })
               }

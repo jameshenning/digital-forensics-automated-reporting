@@ -97,6 +97,12 @@ export const queryKeys = {
       ["person-identifiers", "list", entityId] as const,
   },
 
+  /** Person employer query keys (employer combobox feature) */
+  personEmployers: {
+    listForPerson: (entityId: number) =>
+      ["person-employers", "list", entityId] as const,
+  },
+
   /** Business identifier query keys (migration 0005) */
   businessIdentifiers: {
     listForEntity: (entityId: number) =>

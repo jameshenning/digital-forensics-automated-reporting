@@ -11,14 +11,13 @@
  *     spiderfoot clearnet plus dark-web tools when tor_enabled. Reuses the
  *     shared OSINT consent gate (scope="osint") so one acknowledgment covers
  *     both person and business OSINT.
- *
- * No photo support for businesses — the BusinessCard shows a Building2 icon.
+ *   - Logo upload (migration 0005) — BusinessForm returns a pickedLogoPath;
+ *     the panel uploads it via businessLogoUpload after entity create/update.
+ *     BusinessCard shows a "Clear logo" button that calls businessLogoDelete.
  */
 
 import React from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { useForm } from "react-hook-form";
-import { zodResolver } from "@hookform/resolvers/zod";
 import { Plus, AlertCircle, Building2 } from "lucide-react";
 
 import {
@@ -27,6 +26,8 @@ import {
   entityUpdate,
   entityDelete,
   aiOsintBusiness,
+  businessLogoUpload,
+  businessLogoDelete,
   settingsGetAgentZero,
   type Entity,
   type EntityInput,
@@ -35,25 +36,14 @@ import {
 import { getToken } from "@/lib/session";
 import { queryKeys } from "@/lib/query";
 import { toastError, toastSuccess } from "@/lib/error-toast";
-import { businessFormSchema, type BusinessFormValues } from "@/lib/business-schema";
+import { type BusinessFormValues } from "@/lib/business-schema";
 
 import { BusinessCard } from "@/components/business-card";
-import { BusinessIdentifierEditor } from "@/components/business-identifier-editor";
+import { BusinessForm } from "@/components/business-form";
 import { AiConsentDialog } from "@/components/ai-consent-dialog";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import {
-  Form,
-  FormControl,
-  FormDescription,
-  FormField,
-  FormItem,
-  FormLabel,
-  FormMessage,
-} from "@/components/ui/form";
 import {
   Dialog,
   DialogContent,
@@ -99,114 +89,6 @@ function businessToFormValues(business: Entity): Partial<BusinessFormValues> {
     organizational_rank: business.organizational_rank ?? "",
     notes: business.notes ?? "",
   };
-}
-
-// ---------------------------------------------------------------------------
-// BusinessForm — add/edit a business entity
-// ---------------------------------------------------------------------------
-
-interface BusinessFormProps {
-  defaultValues?: Partial<BusinessFormValues>;
-  entityId?: number | null;
-  isPending: boolean;
-  onSubmit: (values: BusinessFormValues) => void;
-  onCancel: () => void;
-  submitLabel?: string;
-}
-
-function BusinessForm({
-  defaultValues,
-  entityId = null,
-  isPending,
-  onSubmit,
-  onCancel,
-  submitLabel = "Save",
-}: BusinessFormProps) {
-  const form = useForm<BusinessFormValues>({
-    resolver: zodResolver(businessFormSchema),
-    defaultValues: {
-      display_name: "",
-      organizational_rank: "",
-      notes: "",
-      ...defaultValues,
-    },
-  });
-
-  return (
-    <Form {...form}>
-      <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4" noValidate>
-        <FormField
-          control={form.control}
-          name="display_name"
-          render={({ field }) => (
-            <FormItem>
-              <FormLabel>Business / Organization Name</FormLabel>
-              <FormControl>
-                <Input placeholder="Acme Corporation" {...field} />
-              </FormControl>
-              <FormMessage />
-            </FormItem>
-          )}
-        />
-
-        <FormField
-          control={form.control}
-          name="organizational_rank"
-          render={({ field }) => (
-            <FormItem>
-              <FormLabel>Industry / Sector</FormLabel>
-              <FormControl>
-                <Input placeholder="e.g. Technology, Finance, Healthcare" {...field} />
-              </FormControl>
-              <FormDescription className="text-xs">
-                Optional. Used as an industry or sector badge on the card.
-              </FormDescription>
-              <FormMessage />
-            </FormItem>
-          )}
-        />
-
-        <FormField
-          control={form.control}
-          name="notes"
-          render={({ field }) => (
-            <FormItem>
-              <FormLabel>Notes</FormLabel>
-              <FormControl>
-                <Textarea
-                  placeholder="Known associates, operational details, case relevance..."
-                  rows={3}
-                  {...field}
-                />
-              </FormControl>
-              <FormMessage />
-            </FormItem>
-          )}
-        />
-
-        {/* Business identifiers — editor handles its own null case with an
-            informational hint ("Save the business first ..."), so one
-            unconditional render covers both add and edit modes. */}
-        <div className="pt-2 border-t">
-          <BusinessIdentifierEditor entityId={entityId ?? null} />
-        </div>
-
-        <div className="flex justify-end gap-2 pt-2">
-          <Button
-            type="button"
-            variant="ghost"
-            onClick={onCancel}
-            disabled={isPending}
-          >
-            Cancel
-          </Button>
-          <Button type="submit" disabled={isPending}>
-            {isPending ? "Saving…" : submitLabel}
-          </Button>
-        </div>
-      </form>
-    </Form>
-  );
 }
 
 // ---------------------------------------------------------------------------
@@ -257,8 +139,20 @@ export function BusinessesPanel({ caseId }: BusinessesPanelProps) {
   }, [queryClient, caseId]);
 
   const addMutation = useMutation({
-    mutationFn: (input: EntityInput) =>
-      entityAdd({ token, case_id: caseId, input }),
+    mutationFn: async (args: {
+      input: EntityInput;
+      pickedLogoPath: string | null;
+    }) => {
+      const created = await entityAdd({ token, case_id: caseId, input: args.input });
+      if (args.pickedLogoPath) {
+        await businessLogoUpload({
+          token,
+          entity_id: created.entity_id,
+          source_path: args.pickedLogoPath,
+        });
+      }
+      return created;
+    },
     onSuccess: () => {
       invalidateBusinesses();
       setAddOpen(false);
@@ -268,12 +162,40 @@ export function BusinessesPanel({ caseId }: BusinessesPanelProps) {
   });
 
   const updateMutation = useMutation({
-    mutationFn: (args: { entity_id: number; input: EntityInput }) =>
-      entityUpdate({ token, case_id: caseId, entity_id: args.entity_id, input: args.input }),
+    mutationFn: async (args: {
+      entity_id: number;
+      input: EntityInput;
+      pickedLogoPath: string | null;
+    }) => {
+      const updated = await entityUpdate({
+        token,
+        case_id: caseId,
+        entity_id: args.entity_id,
+        input: args.input,
+      });
+      if (args.pickedLogoPath) {
+        await businessLogoUpload({
+          token,
+          entity_id: args.entity_id,
+          source_path: args.pickedLogoPath,
+        });
+      }
+      return updated;
+    },
     onSuccess: () => {
       invalidateBusinesses();
       setEditBusiness(null);
       toastSuccess("Business updated.");
+    },
+    onError: toastError,
+  });
+
+  const clearLogoMutation = useMutation({
+    mutationFn: (entity_id: number) =>
+      businessLogoDelete({ token, entity_id }),
+    onSuccess: () => {
+      invalidateBusinesses();
+      toastSuccess("Logo cleared.");
     },
     onError: toastError,
   });
@@ -400,6 +322,7 @@ export function BusinessesPanel({ caseId }: BusinessesPanelProps) {
               onEdit={() => setEditBusiness(b)}
               onDelete={() => setDeleteBusiness(b)}
               onRunOsint={() => handleRunOsint(b.entity_id)}
+              onClearLogo={() => clearLogoMutation.mutate(b.entity_id)}
               osintPending={osintBusinessId === b.entity_id}
             />
           ))}
@@ -414,7 +337,9 @@ export function BusinessesPanel({ caseId }: BusinessesPanelProps) {
           </DialogHeader>
           <BusinessForm
             isPending={addMutation.isPending}
-            onSubmit={(values) => addMutation.mutate(formToInput(values))}
+            onSubmit={(values, pickedLogoPath) =>
+              addMutation.mutate({ input: formToInput(values), pickedLogoPath })
+            }
             onCancel={() => setAddOpen(false)}
             submitLabel="Add business"
           />
@@ -433,12 +358,14 @@ export function BusinessesPanel({ caseId }: BusinessesPanelProps) {
           {editBusiness && (
             <BusinessForm
               defaultValues={businessToFormValues(editBusiness)}
+              currentLogoPath={editBusiness.photo_path}
               entityId={editBusiness.entity_id}
               isPending={updateMutation.isPending}
-              onSubmit={(values) =>
+              onSubmit={(values, pickedLogoPath) =>
                 updateMutation.mutate({
                   entity_id: editBusiness.entity_id,
                   input: formToInput(values),
+                  pickedLogoPath,
                 })
               }
               onCancel={() => setEditBusiness(null)}

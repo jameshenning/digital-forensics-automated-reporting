@@ -31,6 +31,7 @@ use crate::{
         events::{CaseEvent, EventInput},
         graph::{GraphFilter, GraphPayload, TimelineFilter, TimelinePayload},
         links::{Link, LinkInput},
+        person_employers,
         person_identifiers::{PersonIdentifier, PersonIdentifierInput},
     },
     error::AppError,
@@ -733,4 +734,93 @@ pub async fn business_identifier_delete(
     );
 
     Ok(())
+}
+
+// ─── Person employer commands ─────────────────────────────────────────────────
+
+const PERSON_EMPLOYERS_SET: &str = "PERSON_EMPLOYERS_SET";
+
+/// DTO returned by the employer commands.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct PersonEmployerDto {
+    pub business_entity_id: i64,
+    pub display_name: String,
+}
+
+/// Atomically set the complete list of employers for a person. Replaces any
+/// prior "employs" entity_links and auto-creates stub business entities for
+/// free-text names. See `db::person_employers::set_person_employers` for
+/// full semantics.
+///
+/// Returns the final `(business_entity_id, display_name)` list.
+#[tauri::command(rename_all = "snake_case")]
+pub async fn person_employers_set(
+    token: String,
+    entity_id: i64,
+    existing_business_ids: Vec<i64>,
+    new_business_names: Vec<String>,
+    state: State<'_, Arc<AppState>>,
+) -> Result<Vec<PersonEmployerDto>, AppError> {
+    let session = require_session(&state, &token)?;
+
+    // Fetch entity for case_id (audit log key) before the mutation.
+    let entity = crate::db::entities::get_entity(&state.db.forensics, entity_id).await?;
+
+    let pairs = person_employers::set_person_employers(
+        &state.db.forensics,
+        entity_id,
+        &existing_business_ids,
+        &new_business_names,
+    )
+    .await?;
+
+    info!(
+        username = %session.username,
+        entity_id = entity_id,
+        employers_count = pairs.len(),
+        existing_count = existing_business_ids.len(),
+        new_count = new_business_names.len(),
+        "person employers set"
+    );
+    audit::log_case(
+        &entity.case_id,
+        &session.username,
+        PERSON_EMPLOYERS_SET,
+        &format!(
+            "entity_id={} employers_count={} existing={} new={}",
+            entity_id,
+            pairs.len(),
+            existing_business_ids.len(),
+            new_business_names.len()
+        ),
+    );
+
+    Ok(pairs
+        .into_iter()
+        .map(|(id, name)| PersonEmployerDto {
+            business_entity_id: id,
+            display_name: name,
+        })
+        .collect())
+}
+
+/// Read the current employer list for a person from active entity_links.
+#[tauri::command(rename_all = "snake_case")]
+pub async fn person_employers_list(
+    token: String,
+    entity_id: i64,
+    state: State<'_, Arc<AppState>>,
+) -> Result<Vec<PersonEmployerDto>, AppError> {
+    let _session = require_session(&state, &token)?;
+
+    let pairs =
+        crate::db::entities::list_employers_for_person(&state.db.forensics, entity_id).await?;
+
+    Ok(pairs
+        .into_iter()
+        .map(|(id, name)| PersonEmployerDto {
+            business_entity_id: id,
+            display_name: name,
+        })
+        .collect())
 }

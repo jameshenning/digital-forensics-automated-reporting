@@ -74,6 +74,9 @@ export type AppErrorCode =
   // Businesses — identifiers (migration 0005)
   | "EntityNotABusiness"
   | "BusinessIdentifierNotFound"
+  // Businesses — logo upload (migration 0005)
+  | "BusinessLogoTooLarge"
+  | "BusinessLogoNotAnImage"
   // Dark-web OSINT — Agent Zero Tor preflight failure
   | "TorUnavailable";
 
@@ -854,6 +857,46 @@ export function personPhotoDelete(args: {
 }
 
 // ---------------------------------------------------------------------------
+// Business logo upload (migration 0005)
+// ---------------------------------------------------------------------------
+
+/**
+ * Upload a logo for a business entity. Returns the stored absolute path,
+ * which is the new `entity.photo_path`. Render it in the WebView via
+ * `convertFileSrc(path)` from `@tauri-apps/api/core`.
+ *
+ * Validation:
+ *  - entity must exist and have `entity_type === "business"`
+ *  - size <= 10 MiB
+ *  - magic bytes must identify JPEG / PNG / GIF / WebP / BMP / TIFF
+ *
+ * Errors to handle:
+ *  - BusinessLogoTooLarge — file exceeds 10 MiB
+ *  - BusinessLogoNotAnImage — magic-byte sniff failed
+ *  - EntityNotABusiness — the entity_id does not refer to a business entity
+ *  - EntityNotFound — no such entity
+ *  - InvalidFilename — path-component sanitization rejected the source filename
+ */
+export function businessLogoUpload(args: {
+  token: string;
+  entity_id: number;
+  source_path: string;
+}): Promise<string> {
+  return invoke<string>("business_logo_upload", args);
+}
+
+/**
+ * Delete the business logo file from disk and clear `entity.photo_path`.
+ * Idempotent — safe to call on a business that already has no logo.
+ */
+export function businessLogoDelete(args: {
+  token: string;
+  entity_id: number;
+}): Promise<void> {
+  return invoke<void>("business_logo_delete", args);
+}
+
+// ---------------------------------------------------------------------------
 // SHA-256 utility (Reproducibility feature — Tool form Compute Hash button)
 // ---------------------------------------------------------------------------
 
@@ -1370,6 +1413,41 @@ export function businessIdentifierDelete(args: {
   identifier_id: number;
 }): Promise<void> {
   return invoke<void>("business_identifier_delete", args);
+}
+
+// ---------------------------------------------------------------------------
+// Person employers (employer combobox feature)
+// ---------------------------------------------------------------------------
+
+/** A single employer entry — maps 1:1 to PersonEmployerDto on the Rust side. */
+export interface PersonEmployer {
+  business_entity_id: number;
+  display_name: string;
+}
+
+/** List the current employers for a person (from active employs entity_links). */
+export function personEmployersList(args: {
+  token: string;
+  entity_id: number;
+}): Promise<PersonEmployer[]> {
+  return invoke<PersonEmployer[]>("person_employers_list", args);
+}
+
+/**
+ * Atomically set the full employer list for a person.
+ *
+ * - `existing_business_ids`: IDs of business entities already in the case to link.
+ * - `new_business_names`: free-text names that will become new stub business entities.
+ *
+ * Returns the final (business_entity_id, display_name) list after the write.
+ */
+export function personEmployersSet(args: {
+  token: string;
+  entity_id: number;
+  existing_business_ids: number[];
+  new_business_names: string[];
+}): Promise<PersonEmployer[]> {
+  return invoke<PersonEmployer[]>("person_employers_set", args);
 }
 
 // ---------------------------------------------------------------------------

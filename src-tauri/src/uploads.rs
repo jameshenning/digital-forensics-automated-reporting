@@ -996,6 +996,139 @@ pub fn delete_person_photo(photo_path: &str) -> Result<(), AppError> {
     Ok(())
 }
 
+// ─── Business logo upload (migration 0005) ───────────────────────────────────
+//
+// Parallel to the person photo pipeline. Same size cap, same MIME allowlist,
+// same path-traversal / filename sanitization. Lives at
+// %APPDATA%\DFARS\business_logos\<case_id>\<entity_id>_<name>.
+
+/// Hard upper bound for a business logo — 10 MiB, same as person photos.
+pub const MAX_BUSINESS_LOGO_BYTES: u64 = 10 * 1024 * 1024;
+
+/// Resolve the business-logo storage root for a case.
+///   `<appdata>/DFARS/business_logos/<case_id>/`
+/// No `evidence_drive_path` fallback — logos always live under appdata so
+/// they don't pollute the evidence tree or the OneDrive guard path.
+pub fn resolve_business_logo_root(appdata: &Path, case_id: &str) -> PathBuf {
+    appdata
+        .join("DFARS")
+        .join("business_logos")
+        .join(sanitize_name_for_disk(case_id))
+}
+
+/// Upload a business logo from `source_path` into the business-logo tree and
+/// return the absolute stored path. Caller is responsible for updating the
+/// `entities.photo_path` column with this path.
+///
+/// Validation:
+///  - `source_path` must name a readable file
+///  - size <= 10 MiB
+///  - magic bytes must identify one of ALLOWED_PHOTO_MIME
+///  - filename sanitization (Path::file_name, Unicode NFC, forbidden chars,
+///    200-byte limit) via the existing `sanitize_filename` helper
+///
+/// The on-disk filename is `<entity_id>_<sanitized_stem>.<ext>` so the same
+/// entity always lands at the same slot and re-upload overwrites.
+pub fn upload_business_logo(
+    source_path: &str,
+    case_id: &str,
+    entity_id: i64,
+    appdata: &Path,
+) -> Result<PathBuf, AppError> {
+    let source = Path::new(source_path);
+
+    // Size + existence check up front
+    let metadata = std::fs::metadata(source).map_err(AppError::from)?;
+    let size = metadata.len();
+    if size > MAX_BUSINESS_LOGO_BYTES {
+        return Err(AppError::BusinessLogoTooLarge {
+            size,
+            limit: MAX_BUSINESS_LOGO_BYTES,
+        });
+    }
+
+    // Magic-byte MIME sniff — rejects non-images even if extension lies
+    let sniffed = sniff_mime(source).unwrap_or_else(|| "application/octet-stream".to_string());
+    if !ALLOWED_PHOTO_MIME.iter().any(|m| *m == sniffed) {
+        return Err(AppError::BusinessLogoNotAnImage { detected: sniffed });
+    }
+
+    // Sanitize filename (reject path traversal, control chars, >200 bytes)
+    let original_filename = sanitize_filename(source)?;
+
+    // Split into stem + ext to build the on-disk name
+    let sanitized_full = sanitize_name_for_disk(&original_filename);
+    let (stem, ext) = match sanitized_full.rfind('.') {
+        Some(i) => (&sanitized_full[..i], &sanitized_full[i + 1..]),
+        None => (sanitized_full.as_str(), ""),
+    };
+    let on_disk_name = if ext.is_empty() {
+        format!("{entity_id}_{stem}")
+    } else {
+        format!("{entity_id}_{stem}.{ext}")
+    };
+
+    // Create the directory tree
+    let storage_dir = resolve_business_logo_root(appdata, case_id);
+    std::fs::create_dir_all(&storage_dir).map_err(AppError::from)?;
+
+    // Canonicalize the parent and verify the on-disk name doesn't escape it
+    let canonical_dir = std::fs::canonicalize(&storage_dir).map_err(AppError::from)?;
+    let target = canonical_dir.join(&on_disk_name);
+    if !target.starts_with(&canonical_dir) {
+        return Err(AppError::PathTraversalBlocked {
+            attempted_path: target.display().to_string(),
+        });
+    }
+
+    // Clean up any previous logo for the same entity before writing the new
+    // one. Different extension = different filename, so re-upload of a JPG
+    // when the old file was a PNG would leave the PNG orphaned. Best-effort
+    // cleanup removes any `<entity_id>_*` file in the directory first.
+    if let Ok(entries) = std::fs::read_dir(&canonical_dir) {
+        for entry in entries.flatten() {
+            if let Some(name) = entry.file_name().to_str() {
+                if name.starts_with(&format!("{entity_id}_")) && name != on_disk_name {
+                    let _ = std::fs::remove_file(entry.path());
+                }
+            }
+        }
+    }
+
+    // Copy source → target. std::fs::copy is sufficient — no streaming hash,
+    // no multi-pass TOCTOU defense; a logo mutation during the 10 MiB copy
+    // is a non-threat for this use case.
+    std::fs::copy(source, &target).map_err(AppError::from)?;
+
+    tracing::info!(
+        case_id = %case_id,
+        entity_id = %entity_id,
+        size_bytes = %size,
+        mime = %sniffed,
+        "business logo uploaded"
+    );
+
+    // On Windows, `std::fs::canonicalize` returns paths with the `\\?\`
+    // verbatim-prefix. Tauri's asset-protocol scope matcher does not handle
+    // that form — `convertFileSrc()` produces URLs whose scope check fails
+    // against `$HOME/AppData/Roaming/DFARS/business_logos/**`, so `<img>`
+    // tags fail to load even though the file is on disk. Strip the prefix
+    // before returning so the stored path matches the scope.
+    Ok(strip_verbatim_prefix(target))
+}
+
+/// Delete a business logo file from disk. Best-effort — returns Ok even if
+/// the file doesn't exist (so repeated deletes are idempotent). Caller is
+/// responsible for nulling the `entities.photo_path` column.
+pub fn delete_business_logo(logo_path: &str) -> Result<(), AppError> {
+    let path = Path::new(logo_path);
+    if path.exists() {
+        std::fs::remove_file(path).map_err(AppError::from)?;
+        tracing::info!(path = %logo_path, "business logo deleted");
+    }
+    Ok(())
+}
+
 // ─── hex encoding helper (avoid pulling in a separate crate) ──────────────────
 
 mod hex {

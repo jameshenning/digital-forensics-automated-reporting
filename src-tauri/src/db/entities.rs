@@ -443,6 +443,35 @@ pub async fn soft_delete(pool: &SqlitePool, entity_id: i64) -> Result<(), AppErr
     Ok(())
 }
 
+/// Return `(entity_id, display_name)` pairs for every active business entity
+/// that currently "employs" the given person (via a non-deleted entity_link
+/// with `link_label = 'employs'`).  Ordered by `display_name ASC` for stable
+/// rollup strings.
+pub async fn list_employers_for_person(
+    pool: &SqlitePool,
+    person_entity_id: i64,
+) -> Result<Vec<(i64, String)>, AppError> {
+    let rows: Vec<(i64, String)> = sqlx::query_as(
+        r#"
+        SELECT e.entity_id, e.display_name
+        FROM entity_links l
+        JOIN entities e
+          ON e.entity_id = CAST(l.source_id AS INTEGER)
+         AND e.entity_type = 'business'
+         AND e.is_deleted = 0
+        WHERE l.link_label = 'employs'
+          AND l.is_deleted = 0
+          AND l.target_type = 'entity'
+          AND l.target_id = CAST(? AS TEXT)
+        ORDER BY e.display_name ASC
+        "#,
+    )
+    .bind(person_entity_id)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows)
+}
+
 /// Soft-delete all entity_links referencing `entity_id` as source or target.
 /// Runs inside an existing transaction.
 pub(crate) async fn cascade_soft_delete_links(

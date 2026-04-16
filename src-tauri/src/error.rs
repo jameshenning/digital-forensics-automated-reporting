@@ -141,6 +141,14 @@ pub enum AppError {
     #[error("business identifier not found: identifier_id={identifier_id}")]
     BusinessIdentifierNotFound { identifier_id: i64 },
 
+    // ─── Businesses — logo upload ─────────────────────────────────────────
+
+    #[error("business logo too large: size={size} bytes exceeds limit={limit} bytes")]
+    BusinessLogoTooLarge { size: u64, limit: u64 },
+
+    #[error("business logo is not an image: detected={detected}")]
+    BusinessLogoNotAnImage { detected: String },
+
     // ─── Phase 3b: reports ───────────────────────────────────────────────────
 
     #[error("report generation failed: {reason}")]

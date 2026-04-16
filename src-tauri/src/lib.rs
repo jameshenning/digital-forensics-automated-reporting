@@ -39,6 +39,7 @@ use commands::{
     cases_cmd::{case_create, case_delete, case_get, case_update, cases_list},
     drives_cmd::{drive_scan, drives_list},
     files_cmd::{
+        business_logo_delete, business_logo_upload,
         evidence_files_download, evidence_files_list, evidence_files_purge,
         evidence_files_soft_delete, evidence_files_upload,
         file_compute_sha256,
@@ -58,6 +59,7 @@ use commands::{
         entity_add, entity_delete, entity_get, entity_list_for_case, entity_update,
         event_add, event_delete, event_list_for_case, event_update,
         link_add, link_delete, link_list_for_case,
+        person_employers_list, person_employers_set,
         person_identifier_add, person_identifier_delete, person_identifier_list,
         person_identifier_update,
     },
@@ -340,6 +342,9 @@ pub fn run() {
             // Person photo commands (migration 0002 — Persons feature)
             person_photo_upload,
             person_photo_delete,
+            // Business logo (migration 0005)
+            business_logo_upload,
+            business_logo_delete,
             // SHA-256 utility (Reproducibility feature)
             file_compute_sha256,
             // Report commands (Phase 3b)
@@ -363,6 +368,9 @@ pub fn run() {
             // Graph aggregate commands (Phase 4)
             case_graph,
             case_crime_line,
+            // Person employer commands (employer combobox feature)
+            person_employers_set,
+            person_employers_list,
             // Person identifier commands (migration 0004)
             person_identifier_add,
             person_identifier_list,

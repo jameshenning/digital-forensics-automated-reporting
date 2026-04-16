@@ -8,6 +8,7 @@ pub mod evidence_files;
 pub mod graph;
 pub mod hashes;
 pub mod links;
+pub mod person_employers;
 pub mod person_identifiers;
 pub mod business_identifiers;
 pub mod tools;

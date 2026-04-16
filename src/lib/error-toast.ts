@@ -73,6 +73,11 @@ const ERROR_MESSAGES: Record<AppErrorCode, string> = {
     "This entity is not a business. Business identifiers can only be attached to business-type entities.",
   BusinessIdentifierNotFound:
     "Business identifier not found. It may have been deleted — refresh the list and try again.",
+  // Businesses — logo upload (migration 0005)
+  BusinessLogoTooLarge:
+    "Logo exceeds the 10 MiB limit. Please pick a smaller image.",
+  BusinessLogoNotAnImage:
+    "The selected file is not a recognized image (JPEG, PNG, GIF, WebP, BMP, or TIFF). Pick a different file.",
   TorUnavailable:
     "Dark-web OSINT is enabled but the Agent Zero container can't reach the Tor daemon. Verify `tor` and `torsocks` are installed and the `tor` service is running inside the container, then try again. To disable dark-web OSINT entirely, turn off the Tor switch in Settings → Integrations.",
   AiOsintConsentRequired:

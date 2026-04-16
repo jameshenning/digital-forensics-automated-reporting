@@ -12,7 +12,8 @@
  */
 
 import React from "react";
-import { Building2, Globe, Mail, Phone, Pencil, Trash2, Sparkles, Network, Loader2 } from "lucide-react";
+import { Building2, Globe, Mail, Phone, Pencil, Trash2, Sparkles, Network, Loader2, ImageOff } from "lucide-react";
+import { convertFileSrc } from "@tauri-apps/api/core";
 import { useQuery } from "@tanstack/react-query";
 
 import type { Entity } from "@/lib/bindings";
@@ -61,6 +62,7 @@ interface BusinessCardProps {
   onEdit: () => void;
   onDelete: () => void;
   onRunOsint: () => void;
+  onClearLogo: () => void;
   osintPending?: boolean;
 }
 
@@ -68,13 +70,22 @@ interface BusinessCardProps {
 // BusinessCard
 // ---------------------------------------------------------------------------
 
-export function BusinessCard({ business, onEdit, onDelete, onRunOsint, osintPending = false }: BusinessCardProps) {
+export function BusinessCard({ business, onEdit, onDelete, onRunOsint, onClearLogo, osintPending = false }: BusinessCardProps) {
   const token = getToken() ?? "";
 
   const findings = React.useMemo(
     () => parseOsintFindings(business.metadata_json),
     [business.metadata_json],
   );
+
+  const logoSrc = React.useMemo(() => {
+    if (!business.photo_path) return null;
+    try {
+      return convertFileSrc(business.photo_path);
+    } catch {
+      return null;
+    }
+  }, [business.photo_path]);
 
   // Fetch identifiers to extract domain, email, phone for the contact grid.
   const { data: identifiers } = useQuery({
@@ -92,9 +103,17 @@ export function BusinessCard({ business, onEdit, onDelete, onRunOsint, osintPend
       {/* Top: icon + headline */}
       <div className="p-5">
         <div className="flex flex-col sm:flex-row sm:items-start gap-4">
-          {/* Building icon placeholder — no photo for businesses */}
+          {/* Circular logo — falls back to Building2 icon if no logo set */}
           <div className="mx-auto sm:mx-0 h-24 w-24 sm:h-32 sm:w-32 rounded-full overflow-hidden bg-muted border-2 border-border flex items-center justify-center shrink-0">
-            <Building2 className="h-12 w-12 text-muted-foreground" />
+            {logoSrc ? (
+              <img
+                src={logoSrc}
+                alt={business.display_name}
+                className="h-full w-full object-cover"
+              />
+            ) : (
+              <Building2 className="h-12 w-12 text-muted-foreground" />
+            )}
           </div>
 
           {/* Headline + badges */}
@@ -210,6 +229,12 @@ export function BusinessCard({ business, onEdit, onDelete, onRunOsint, osintPend
           <Pencil className="h-4 w-4 mr-1.5" />
           Edit
         </Button>
+        {business.photo_path && (
+          <Button size="sm" variant="ghost" onClick={onClearLogo}>
+            <ImageOff className="h-4 w-4 mr-1.5" />
+            Clear logo
+          </Button>
+        )}
         <div className="ml-auto">
           <Button size="sm" variant="ghost" onClick={onDelete}>
             <Trash2 className="h-4 w-4 mr-1.5" />

@@ -15,14 +15,19 @@
 
 import React from "react";
 import { useForm } from "react-hook-form";
+import { useQuery } from "@tanstack/react-query";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { open as openFilePicker } from "@tauri-apps/plugin-dialog";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { Upload, X, User } from "lucide-react";
 
+import { personEmployersList } from "@/lib/bindings";
+import { getToken } from "@/lib/session";
+import { queryKeys } from "@/lib/query";
 import { PERSON_SUBTYPES } from "@/lib/link-analysis-enums";
 import { personFormSchema, type PersonFormValues } from "@/lib/person-schema";
 
+import { EmployerCombobox } from "@/components/employer-combobox";
 import { PersonIdentifierEditor } from "@/components/person-identifier-editor";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -56,6 +61,8 @@ interface PersonFormProps {
    *  new one. Enables the multi-identifier editor once the parent row
    *  exists. */
   entityId?: number | null;
+  /** Case ID — required by the EmployerCombobox to load business options. */
+  caseId: string;
   isPending: boolean;
   onSubmit: (values: PersonFormValues, pickedPhotoPath: string | null) => void;
   onCancel: () => void;
@@ -70,11 +77,14 @@ export function PersonForm({
   defaultValues,
   currentPhotoPath,
   entityId,
+  caseId,
   isPending,
   onSubmit,
   onCancel,
   submitLabel = "Save Person",
 }: PersonFormProps) {
+  const token = getToken() ?? "";
+
   const form = useForm<PersonFormValues>({
     resolver: zodResolver(personFormSchema),
     defaultValues: {
@@ -84,12 +94,42 @@ export function PersonForm({
       email: "",
       phone: "",
       username: "",
-      employer: "",
+      employers: { selectedBusinessIds: [], newBusinessNames: [] },
       dob: "",
       notes: "",
       ...defaultValues,
     },
   });
+
+  // In edit mode, pre-load the current employer list from entity_links and
+  // initialize the employers field once we have the data.
+  const { data: currentEmployers } = useQuery({
+    queryKey: queryKeys.personEmployers.listForPerson(entityId ?? 0),
+    queryFn: () =>
+      personEmployersList({ token, entity_id: entityId! }),
+    enabled: !!token && !!entityId,
+    staleTime: 30_000,
+  });
+
+  // When the employer list loads, seed the form field if the user hasn't
+  // already interacted with it (defaultValues wins on the first render; this
+  // only fires when the async fetch completes and the field is still at its
+  // initial empty state so we don't clobber user edits).
+  React.useEffect(() => {
+    if (!currentEmployers) return;
+    const current = form.getValues("employers");
+    if (
+      (current?.selectedBusinessIds?.length ?? 0) === 0 &&
+      (current?.newBusinessNames?.length ?? 0) === 0
+    ) {
+      form.setValue("employers", {
+        selectedBusinessIds: currentEmployers.map(
+          (e) => e.business_entity_id,
+        ),
+        newBusinessNames: [],
+      });
+    }
+  }, [currentEmployers, form]);
 
   // Photo picker state — string path if user picked a new photo this session.
   const [pickedPhotoPath, setPickedPhotoPath] = React.useState<string | null>(null);
@@ -257,16 +297,21 @@ export function PersonForm({
           />
         </div>
 
-        {/* Employer + username */}
+        {/* Employer multi-select + username */}
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <FormField
             control={form.control}
-            name="employer"
+            name="employers"
             render={({ field }) => (
               <FormItem>
-                <FormLabel>Employer</FormLabel>
+                <FormLabel>Employer(s)</FormLabel>
                 <FormControl>
-                  <Input placeholder="Company or organization" {...field} />
+                  <EmployerCombobox
+                    caseId={caseId}
+                    value={field.value ?? { selectedBusinessIds: [], newBusinessNames: [] }}
+                    onChange={field.onChange}
+                    disabled={isPending}
+                  />
                 </FormControl>
                 <FormMessage />
               </FormItem>

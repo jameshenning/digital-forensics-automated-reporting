@@ -330,3 +330,92 @@ pub async fn person_photo_delete(
 
     Ok(())
 }
+
+// ─── Business logo upload (migration 0005) ──────────────────────────────────
+
+/// Upload a logo for a business entity. Validates that the entity exists and
+/// is a business, copies the logo into the business-logo tree, and updates the
+/// entity's `photo_path` column. Returns the updated photo_path so the
+/// frontend can render it via `convertFileSrc()`.
+#[tauri::command(rename_all = "snake_case")]
+pub async fn business_logo_upload(
+    token: String,
+    entity_id: i64,
+    source_path: String,
+    state: State<'_, Arc<AppState>>,
+) -> Result<String, AppError> {
+    let session = require_session(&state, &token)?;
+
+    // Verify the entity exists and is a business
+    let entity = entities::get_entity(&state.db.forensics, entity_id).await?;
+    if entity.is_deleted != 0 {
+        return Err(AppError::EntityNotFound { entity_id });
+    }
+    if entity.entity_type != "business" {
+        return Err(AppError::EntityNotABusiness {
+            entity_id,
+            entity_type: entity.entity_type.clone(),
+        });
+    }
+
+    // Copy the logo to the business-logo tree
+    let appdata = appdata_root();
+    let stored_path = uploads::upload_business_logo(&source_path, &entity.case_id, entity_id, &appdata)?;
+    let stored_str = stored_path.to_string_lossy().into_owned();
+
+    // Update the entity row with the new photo_path. We go through a direct
+    // UPDATE because entity_update would also require re-validating all the
+    // other fields — we only want to touch photo_path here.
+    sqlx::query("UPDATE entities SET photo_path = ?, updated_at = CURRENT_TIMESTAMP WHERE entity_id = ?")
+        .bind(&stored_str)
+        .bind(entity_id)
+        .execute(&state.db.forensics)
+        .await
+        .map_err(AppError::from)?;
+
+    info!(
+        username = %session.username,
+        entity_id = entity_id,
+        "business logo uploaded"
+    );
+
+    Ok(stored_str)
+}
+
+/// Delete a business logo file from disk and clear the entity's photo_path
+/// column. Idempotent — no error if the logo was already gone.
+///
+/// NOTE: intentionally does NOT validate entity_type == "business" — if
+/// someone retypes an entity, they should still be able to clear the
+/// orphaned logo path.
+#[tauri::command(rename_all = "snake_case")]
+pub async fn business_logo_delete(
+    token: String,
+    entity_id: i64,
+    state: State<'_, Arc<AppState>>,
+) -> Result<(), AppError> {
+    let session = require_session(&state, &token)?;
+
+    let entity = entities::get_entity(&state.db.forensics, entity_id).await?;
+    if entity.is_deleted != 0 {
+        return Err(AppError::EntityNotFound { entity_id });
+    }
+
+    if let Some(logo_path) = entity.photo_path.as_deref() {
+        uploads::delete_business_logo(logo_path)?;
+    }
+
+    sqlx::query("UPDATE entities SET photo_path = NULL, updated_at = CURRENT_TIMESTAMP WHERE entity_id = ?")
+        .bind(entity_id)
+        .execute(&state.db.forensics)
+        .await
+        .map_err(AppError::from)?;
+
+    info!(
+        username = %session.username,
+        entity_id = entity_id,
+        "business logo deleted"
+    );
+
+    Ok(())
+}
