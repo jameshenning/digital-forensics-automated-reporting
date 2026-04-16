@@ -41,6 +41,10 @@ pub struct AgentZeroSettings {
     pub is_configured: bool,
     /// Mirror of config.shown_ai_summarize_consent — used by AI consent dialog.
     pub shown_ai_summarize_consent: bool,
+    /// Mirror of config.tor_enabled. When true, ai_osint_person tells Agent
+    /// Zero to run the dark-web tool set alongside clearnet OSINT and uses
+    /// the 1800s deep-search timeout tier.
+    pub tor_enabled: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -52,6 +56,9 @@ pub struct AgentZeroInput {
     pub axum_port: Option<u16>,
     pub bind_host: Option<String>,
     pub allow_network_bind: Option<bool>,
+    /// Opt-in for dark-web OSINT. Requires a Tor-capable Agent Zero
+    /// container; failures surface as `AppError::TorUnavailable`.
+    pub tor_enabled: Option<bool>,
 }
 
 #[derive(Debug, Serialize)]
@@ -93,6 +100,7 @@ pub async fn settings_get_agent_zero(
         allow_network_bind: cfg.allow_network_bind,
         is_configured,
         shown_ai_summarize_consent: cfg.shown_ai_summarize_consent,
+        tor_enabled: cfg.tor_enabled,
     })
 }
 
@@ -138,6 +146,9 @@ pub async fn settings_set_agent_zero(
     }
     if let Some(v) = input.allow_network_bind {
         cfg.allow_network_bind = v;
+    }
+    if let Some(v) = input.tor_enabled {
+        cfg.tor_enabled = v;
     }
 
     // Persist config.

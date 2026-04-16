@@ -106,6 +106,7 @@ function AgentZeroSection() {
           api_key: "",
           port: settings.port,
           allow_custom_url: settings.allow_custom_url,
+          tor_enabled: settings.tor_enabled,
         }
       : undefined,
   });
@@ -119,6 +120,7 @@ function AgentZeroSection() {
           api_key: values.api_key && values.api_key.length > 0 ? values.api_key : null,
           port: values.port,
           allow_custom_url: values.allow_custom_url,
+          tor_enabled: values.tor_enabled ?? false,
         },
       }),
     onSuccess: () => {
@@ -310,6 +312,50 @@ function AgentZeroSection() {
                         allowlist (localhost / Docker). Only enable if your Agent Zero
                         is hosted on a trusted machine that you fully control.
                         An amber warning will appear whenever this is active.
+                      </FormDescription>
+                    </div>
+                  </FormItem>
+                )}
+              />
+
+              {/* Dark-web OSINT toggle — opt-in to Tor-routed dark-web tools
+                  in the existing Run OSINT flow. Reuses the OSINT consent
+                  gate; no new dialog. */}
+              <FormField
+                control={form.control}
+                name="tor_enabled"
+                render={({ field }) => (
+                  <FormItem className="flex flex-row items-start gap-3 space-y-0 rounded-md border border-purple-500/30 bg-purple-500/5 p-4">
+                    <FormControl>
+                      <Switch
+                        checked={field.value ?? false}
+                        onCheckedChange={field.onChange}
+                        aria-describedby="tor-enabled-desc"
+                      />
+                    </FormControl>
+                    <div className="space-y-1 leading-none">
+                      <FormLabel>
+                        Dark-web OSINT (via Tor)
+                      </FormLabel>
+                      <FormDescription id="tor-enabled-desc">
+                        When enabled, each Run OSINT click additionally runs
+                        SpiderFoot dark-web modules, onionsearch, and darkdump2
+                        through a Tor circuit inside the Agent Zero container.
+                        Results flow into the same Tools tab and forensic report
+                        — no extra user steps.
+                        <br />
+                        <span className="font-medium text-amber-700 dark:text-amber-400">
+                          Operational security:
+                        </span>{" "}
+                        your ISP and network-level monitoring can observe that
+                        this machine uses Tor; exit-node operators see plaintext
+                        clearnet probes that tools like SpiderFoot make;
+                        non-reproducible circuit paths mean dark-web findings
+                        should be treated as point-in-time snapshots in
+                        forensic reports. Requires the Agent Zero container to
+                        have <code>tor</code> + <code>torsocks</code> installed
+                        and running — a preflight failure surfaces as
+                        {" "}<em>Tor unavailable</em> in the error toast.
                       </FormDescription>
                     </div>
                   </FormItem>

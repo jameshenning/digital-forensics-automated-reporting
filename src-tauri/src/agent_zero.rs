@@ -63,8 +63,13 @@ const TIMEOUT_ANALYZE_EVIDENCE:Duration = Duration::from_secs(180);
 const TIMEOUT_FORENSIC_ANALYZE:Duration = Duration::from_secs(300);
 /// OSINT tier — Agent Zero may run SpiderFoot, Sherlock, theHarvester, and other
 /// Kali OSINT tools, which collectively can take up to 15 minutes. This is the
-/// longest-running endpoint we accept.
+/// longest-running clearnet-only endpoint we accept.
 const TIMEOUT_OSINT:           Duration = Duration::from_secs(900);
+/// Deep OSINT tier — when `tor_enabled` is on, the Agent Zero container
+/// additionally runs dark-web tools (SpiderFoot dark-web modules,
+/// onionsearch, darkdump2) via Tor. Onion routing adds 3–10x latency per
+/// tool so the tier doubles to 30 minutes.
+const TIMEOUT_OSINT_DEEP:      Duration = Duration::from_secs(1800);
 const TIMEOUT_CONNECT:         Duration = Duration::from_secs(10);
 
 const LIMIT_ENHANCE:           usize = 16 * 1024;
@@ -176,6 +181,15 @@ pub struct OsintPersonRequest {
     /// If true, Agent Zero has discretion to run additional Kali OSINT tools
     /// beyond `tools_requested` when it judges them useful.
     pub discretion_allowed: bool,
+    /// When true, Agent Zero additionally runs dark-web OSINT tools
+    /// (SpiderFoot with `sfp_ahmia` / `sfp_torch` / `sfp_darkdump` modules,
+    /// onionsearch, darkdump2) via Tor. The container plugin preflights the
+    /// Tor daemon and returns `status = "tor_unavailable"` if it can't
+    /// reach it, which the Rust side maps to `AppError::TorUnavailable`.
+    /// Defaults to `false` via `#[serde(default)]` so older Agent Zero
+    /// containers that don't know this field continue to work unchanged.
+    #[serde(default)]
+    pub tor_enabled: bool,
 }
 
 /// One row per tool Agent Zero actually executed.
@@ -317,9 +331,9 @@ impl AgentZeroClient {
     }
 
     /// `dfars_osint_person` — Agent Zero OSINT orchestration. Sends a
-    /// person payload (name + optional known fields) and a minimum tool set;
-    /// Agent Zero decides which additional Kali OSINT tools to run and
-    /// returns structured results.
+    /// person payload (name + optional known fields + multi-valued
+    /// identifier set) and a minimum tool set; Agent Zero decides which
+    /// additional Kali OSINT tools to run and returns structured results.
     ///
     /// HIGH DATA SENSITIVITY — PII (name / email / phone / username /
     /// employer) is sent to Agent Zero which may forward it to external
@@ -327,24 +341,39 @@ impl AgentZeroClient {
     /// list, etc.). Caller MUST have checked `config.shown_ai_osint_consent`
     /// before invoking.
     ///
-    /// 900s timeout tier. Response body capped at 512 KiB.
+    /// Timeout tier: 900s for clearnet-only runs; 1800s when
+    /// `req.tor_enabled` is true (Tor circuit + onion routing adds 3-10x
+    /// latency per dark-web tool). Response body capped at 512 KiB.
+    ///
+    /// Dark-web path: when `tor_enabled=true`, the Agent Zero plugin
+    /// preflights the Tor daemon via curl-through-SOCKS5 to
+    /// check.torproject.org. If the preflight fails, the response carries
+    /// `status="tor_unavailable"` and zero runs — the Rust caller
+    /// (`ai_osint_person`) inspects the status and maps it to
+    /// `AppError::TorUnavailable` so the investigator sees a specific
+    /// error rather than a silent no-op.
     pub async fn osint_person(
         &self,
         req: &OsintPersonRequest,
     ) -> Result<OsintPersonResponse, AppError> {
+        let timeout = if req.tor_enabled {
+            TIMEOUT_OSINT_DEEP
+        } else {
+            TIMEOUT_OSINT
+        };
         info!(
             action = audit::AI_OSINT_PERSON_CALLED,
             case_id = %req.case_id,
             tools_requested_count = req.tools_requested.len(),
             identifiers_count = req.person.identifiers.len(),
             discretion_allowed = req.discretion_allowed,
-            fields_sent = "person(name,email,phone,username,employer,dob,notes,identifiers[]), tools_requested, discretion_allowed"
+            tor_enabled = req.tor_enabled,
+            timeout_seconds = timeout.as_secs(),
+            fields_sent = "person(name,email,phone,username,employer,dob,notes,identifiers[]), tools_requested, discretion_allowed, tor_enabled"
         );
         let body = serde_json::to_value(req)
             .map_err(|e| AppError::Internal(format!("osint_person serialize failed: {e}")))?;
-        let resp = self
-            .post("dfars_osint_person", &body, TIMEOUT_OSINT)
-            .await?;
+        let resp = self.post("dfars_osint_person", &body, timeout).await?;
         let bytes = bounded_body(resp, LIMIT_OSINT).await?;
         serde_json::from_slice(&bytes)
             .map_err(|e| AppError::Internal(format!("osint_person parse failed: {e}")))
@@ -595,6 +624,91 @@ mod tests {
     fn invalid_url_rejected() {
         let e = validate_agent_zero_url("not-a-url", false).unwrap_err();
         assert!(matches!(e, AppError::AgentZeroUrlRejected { .. }));
+    }
+
+    // ─── OsintPersonRequest tor_enabled serde contract ────────────────────
+
+    fn minimal_request(tor: bool) -> OsintPersonRequest {
+        OsintPersonRequest {
+            case_id: "CASE-001".into(),
+            person: OsintPersonPayload {
+                name: "Alice".into(),
+                email: None,
+                phone: None,
+                username: None,
+                employer: None,
+                dob: None,
+                notes: None,
+                identifiers: vec![],
+            },
+            tools_requested: vec!["sherlock".into()],
+            discretion_allowed: true,
+            tor_enabled: tor,
+        }
+    }
+
+    #[test]
+    fn osint_request_tor_enabled_roundtrips_through_serde() {
+        // Default (false) roundtrip — serialized shape should contain
+        // "tor_enabled":false and re-parse into the same value.
+        let req = minimal_request(false);
+        let json = serde_json::to_string(&req).unwrap();
+        assert!(json.contains("\"tor_enabled\":false"));
+        let back: OsintPersonRequest = serde_json::from_str(&json).unwrap();
+        assert!(!back.tor_enabled);
+
+        // Explicit true survives the roundtrip.
+        let req_on = minimal_request(true);
+        let json_on = serde_json::to_string(&req_on).unwrap();
+        assert!(json_on.contains("\"tor_enabled\":true"));
+        let back_on: OsintPersonRequest = serde_json::from_str(&json_on).unwrap();
+        assert!(back_on.tor_enabled);
+    }
+
+    #[test]
+    fn osint_request_tor_enabled_defaults_when_missing_from_input() {
+        // A legacy client (e.g., an older Agent Zero plugin that doesn't
+        // know about tor_enabled yet, or a test harness) may omit the
+        // field entirely. #[serde(default)] must kick in and default to
+        // false rather than erroring out.
+        let legacy_json = r#"{
+            "case_id": "CASE-001",
+            "person": {
+                "name": "Alice",
+                "email": null,
+                "phone": null,
+                "username": null,
+                "employer": null,
+                "dob": null,
+                "notes": null,
+                "identifiers": []
+            },
+            "tools_requested": ["sherlock"],
+            "discretion_allowed": true
+        }"#;
+        let parsed: OsintPersonRequest = serde_json::from_str(legacy_json).unwrap();
+        assert!(
+            !parsed.tor_enabled,
+            "missing tor_enabled field must default to false, not error"
+        );
+    }
+
+    #[test]
+    fn osint_timeout_tier_matches_tor_enabled_flag() {
+        // Pure structural check: confirm TIMEOUT_OSINT_DEEP is strictly
+        // greater than TIMEOUT_OSINT, so the caller's tier swap actually
+        // gives dark-web tools more headroom.
+        assert!(
+            TIMEOUT_OSINT_DEEP > TIMEOUT_OSINT,
+            "deep-search timeout tier must exceed the standard tier"
+        );
+        // And the deep tier must be at least 2x — sherlock+holehe+harvester
+        // take ~8-10 min in the clearnet case; dark-web tools are 3-10x
+        // slower per tool so at least 2x headroom is the floor.
+        assert!(
+            TIMEOUT_OSINT_DEEP >= TIMEOUT_OSINT * 2,
+            "deep-search tier should be >= 2x the standard tier"
+        );
     }
 
     #[tokio::test]

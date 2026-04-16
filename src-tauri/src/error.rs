@@ -174,6 +174,15 @@ pub enum AppError {
     #[error("AI OSINT consent required")]
     AiOsintConsentRequired,
 
+    /// The investigator enabled `tor_enabled` in Agent Zero settings, but
+    /// the container does not have a reachable Tor daemon. Surfaced from
+    /// the Agent Zero plugin's preflight check so the investigator sees
+    /// a specific error message instead of a silent OSINT no-op or a
+    /// generic timeout. Fix: verify `tor` + `torsocks` are installed and
+    /// the `tor` service is running inside the Kali container.
+    #[error("Tor daemon is not reachable inside the Agent Zero container")]
+    TorUnavailable,
+
     /// SMTP connection failed.
     #[error("SMTP connection failed: {reason}")]
     SmtpConnectFailed { reason: String },

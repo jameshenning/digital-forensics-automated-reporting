@@ -55,6 +55,26 @@ pub struct AppConfig {
     #[serde(default)]
     pub shown_ai_osint_consent: bool,
 
+    /// Whether the investigator has opted-in to dark-web OSINT passes
+    /// alongside the default clearnet tools. When true, `ai_osint_person`
+    /// tells Agent Zero to also run Tor-routed tools (SpiderFoot with
+    /// dark-web modules enabled, onionsearch, darkdump2) against the
+    /// deduped identifier set, and the per-run timeout bumps from 900s
+    /// to 1800s to accommodate Tor circuit latency.
+    ///
+    /// Defaults to `false` — clearnet-only Agent Zero containers continue
+    /// to work without change. Enabling this requires the Agent Zero
+    /// container to have `tor` + `torsocks` installed and the daemon
+    /// running; if the container is not Tor-capable the run will surface
+    /// `TorUnavailable` and the investigator will know to fix the
+    /// container config rather than chase a silent no-op.
+    ///
+    /// Opsec: see the settings-UI disclosure copy for the risk trail
+    /// (clearnet-IP-to-Tor linkage, exit-node trust, non-reproducible
+    /// circuits, jurisdiction notes).
+    #[serde(default)]
+    pub tor_enabled: bool,
+
     // ─── SMTP ─────────────────────────────────────────────────────────────────
     pub smtp_host: Option<String>,
     pub smtp_port: Option<u16>,
@@ -89,6 +109,7 @@ impl Default for AppConfig {
             allow_custom_agent_zero_url: false,
             shown_ai_summarize_consent: false,
             shown_ai_osint_consent: false,
+            tor_enabled: false,
             smtp_host: None,
             smtp_port: None,
             smtp_username: None,

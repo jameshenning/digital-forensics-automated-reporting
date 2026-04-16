@@ -74,6 +74,8 @@ const ERROR_CODES: AppErrorCode[] = [
   "EntityNotAPerson",
   // Persons — identifiers (migration 0004)
   "PersonIdentifierNotFound",
+  // Dark-web OSINT — Tor preflight failure
+  "TorUnavailable",
 ];
 
 describe("toastError", () => {

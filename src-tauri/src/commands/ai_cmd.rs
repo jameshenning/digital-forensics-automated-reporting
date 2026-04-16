@@ -11,7 +11,7 @@
 use std::sync::Arc;
 
 use tauri::State;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 use crate::audit;
 use crate::auth::session::require_session;
@@ -469,11 +469,19 @@ pub async fn ai_osint_person(
         );
     }
 
+    // Read `tor_enabled` from live config. When true, the Agent Zero
+    // container plugin additionally runs dark-web tools (SpiderFoot with
+    // sfp_ahmia/sfp_torch/sfp_darkdump, onionsearch, darkdump2) and uses
+    // the deep-search timeout tier. Defaults to false on the config side
+    // so clearnet-only containers continue to work unchanged.
+    let tor_enabled = state.config.tor_enabled;
+
     let request = OsintPersonRequest {
         case_id: entity.case_id.clone(),
         person: payload,
         tools_requested: DEFAULT_OSINT_TOOLS.iter().map(|s| s.to_string()).collect(),
         discretion_allowed: true,
+        tor_enabled,
     };
 
     // Call Agent Zero.
@@ -484,6 +492,51 @@ pub async fn ai_osint_person(
     // Drop the read guard before we take async actions that might re-enter
     // state.agent_zero (avoids lock contention).
     drop(az);
+
+    // Tor preflight failure on the container side is reported as a
+    // sentinel status rather than an HTTP error, because the rest of the
+    // response shape is unchanged. Map it to a specific AppError so the
+    // investigator sees "Tor daemon is not reachable" in the toast
+    // instead of a generic failure. No tool_usage rows are inserted and
+    // no metadata_json update runs — the failure is early-exit.
+    //
+    // Any OTHER unrecognized status string is also treated as an error:
+    // the plugin contract is `success | partial | failed | tor_unavailable`,
+    // so a string we don't know about means either the plugin is a
+    // newer/older version than we expect or the response is malformed.
+    // Silently accepting it would render a misleading "success" in the
+    // UI with zero rows. Fail loudly instead. (Finalization code-review
+    // agent finding — was a fall-through gap.)
+    match response.status.as_str() {
+        "tor_unavailable" => {
+            warn!(
+                username = %session.username,
+                entity_id = entity_id,
+                upstream_notes = ?response.notes,
+                "Agent Zero reported tor_unavailable — user has tor_enabled but \
+                 the container daemon is not reachable"
+            );
+            return Err(AppError::TorUnavailable);
+        }
+        "success" | "partial" | "failed" => {
+            // expected status values — fall through to normal processing
+        }
+        other => {
+            error!(
+                username = %session.username,
+                entity_id = entity_id,
+                unknown_status = %other,
+                upstream_notes = ?response.notes,
+                runs_count = response.runs.len(),
+                "Agent Zero returned an unrecognized status string — refusing to \
+                 insert any tool_usage rows until the plugin contract is understood"
+            );
+            return Err(AppError::Internal(format!(
+                "Agent Zero returned unrecognized status '{other}'. Verify the \
+                 _dfars_integration plugin version matches this build of DFARS Desktop."
+            )));
+        }
+    }
 
     // Insert a tool_usage row for every successful run.
     let mut inserted = 0usize;
@@ -636,6 +689,9 @@ pub async fn ai_osint_person(
         note_fragments.push(format!(
             "Batch truncated: {deduped_count} distinct identifiers, {identifiers_submitted} submitted (cap {MAX_IDENTIFIERS_PER_RUN})."
         ));
+    }
+    if tor_enabled {
+        note_fragments.push("Dark-web pass: active.".to_string());
     }
     if let Some(upstream) = response.notes.as_deref() {
         if !upstream.is_empty() {

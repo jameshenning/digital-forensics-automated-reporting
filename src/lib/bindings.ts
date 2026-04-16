@@ -70,7 +70,9 @@ export type AppErrorCode =
   | "PersonPhotoNotAnImage"
   | "EntityNotAPerson"
   // Persons — identifiers (migration 0004)
-  | "PersonIdentifierNotFound";
+  | "PersonIdentifierNotFound"
+  // Dark-web OSINT — Agent Zero Tor preflight failure
+  | "TorUnavailable";
 
 export interface AppError {
   code: AppErrorCode;
@@ -1330,6 +1332,11 @@ export interface AgentZeroSettings {
   /** Derived: true when both url and api_key are set. */
   is_configured: boolean;
   shown_ai_summarize_consent: boolean;
+  /** When true, `ai_osint_person` asks Agent Zero to additionally run the
+   *  dark-web OSINT tool set (SpiderFoot with dark-web modules, onionsearch,
+   *  darkdump2) routed through Tor. Requires a Tor-capable container.
+   *  Defaults to false — clearnet-only containers continue to work. */
+  tor_enabled: boolean;
 }
 
 export interface AgentZeroInput {
@@ -1337,6 +1344,8 @@ export interface AgentZeroInput {
   api_key: string | null; // null = leave unchanged
   port: number;
   allow_custom_url: boolean;
+  /** Opt-in to dark-web OSINT. See `AgentZeroSettings.tor_enabled`. */
+  tor_enabled?: boolean;
 }
 
 export interface AgentZeroTestResult {

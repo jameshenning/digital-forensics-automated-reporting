@@ -1,28 +1,21 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+/**
+ * Root route — no UI, just a redirect.
+ *
+ * Single-user desktop app: there is no value in a branded landing page, so
+ * `/` resolves to either the dashboard (if a session token is present) or
+ * the login page (if not). The dashboard route has its own auth guard that
+ * will bounce back to login if the token is invalid or expired, so we
+ * don't need to double-check here.
+ */
+
+import { createFileRoute, redirect } from "@tanstack/react-router";
+import { getToken } from "@/lib/session";
 
 export const Route = createFileRoute("/")({
-  component: IndexPage,
+  beforeLoad: () => {
+    if (getToken()) {
+      throw redirect({ to: "/dashboard" });
+    }
+    throw redirect({ to: "/auth/login" });
+  },
 });
-
-function IndexPage() {
-  return (
-    <div className="flex min-h-screen items-center justify-center bg-background p-8">
-      <Card className="w-full max-w-md">
-        <CardHeader>
-          <CardTitle className="text-2xl font-bold">DFARS Desktop v2</CardTitle>
-          <CardDescription>Phase 0 — Skeleton scaffold</CardDescription>
-        </CardHeader>
-        <CardContent className="flex flex-col gap-3">
-          <Button asChild>
-            <Link to="/dashboard">Go to Dashboard</Link>
-          </Button>
-          <Button variant="outline" asChild>
-            <Link to="/auth/login">Go to Login</Link>
-          </Button>
-        </CardContent>
-      </Card>
-    </div>
-  );
-}

@@ -48,6 +48,10 @@ export const agentZeroSchema = z
       .min(1, "Port must be at least 1")
       .max(65535, "Port must be at most 65535"),
     allow_custom_url: z.boolean(),
+    /** Dark-web OSINT opt-in. When true, ai_osint_person tells the
+     *  Agent Zero plugin to additionally run SpiderFoot with dark-web
+     *  modules, onionsearch, and darkdump2 via Tor. Defaults to false. */
+    tor_enabled: z.boolean().default(false),
   })
   .superRefine((data, ctx) => {
     if (!data.allow_custom_url && !isAllowlistedUrl(data.url)) {

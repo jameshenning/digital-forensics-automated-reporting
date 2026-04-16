@@ -68,6 +68,8 @@ const ERROR_MESSAGES: Record<AppErrorCode, string> = {
     "This entity is not a person. Photos and OSINT identifiers can only be attached to person-type entities.",
   PersonIdentifierNotFound:
     "Identifier not found. It may have been deleted — refresh the list and try again.",
+  TorUnavailable:
+    "Dark-web OSINT is enabled but the Agent Zero container can't reach the Tor daemon. Verify `tor` and `torsocks` are installed and the `tor` service is running inside the container, then try again. To disable dark-web OSINT entirely, turn off the Tor switch in Settings → Integrations.",
   AiOsintConsentRequired:
     "See dialog.", // The AiConsentDialog with scope='osint' handles this — toast is supplemental only
   ReportGenerationFailed:

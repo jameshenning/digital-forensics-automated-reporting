@@ -109,6 +109,31 @@ describe("agentZeroSchema — valid inputs", () => {
     });
     expect(result.success).toBe(true);
   });
+
+  it("defaults tor_enabled to false when the field is omitted", () => {
+    const result = agentZeroSchema.safeParse({
+      url: "http://localhost:5099",
+      port: 5099,
+      allow_custom_url: false,
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.tor_enabled).toBe(false);
+    }
+  });
+
+  it("accepts tor_enabled = true", () => {
+    const result = agentZeroSchema.safeParse({
+      url: "http://localhost:5099",
+      port: 5099,
+      allow_custom_url: false,
+      tor_enabled: true,
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.tor_enabled).toBe(true);
+    }
+  });
 });
 
 describe("agentZeroSchema — invalid inputs", () => {
