@@ -135,8 +135,27 @@ pub fn init() -> Result<CryptoState, AppError> {
 
     // 2. Try keyfile fallback (%APPDATA%\DFARS\.keyfile).
     if let Some(key) = read_keyfile() {
-        info!(key_source = "keyfile", "Fernet key loaded from file fallback");
         let fernet = build_fernet(&key)?;
+
+        // Auto-promote into Windows Credential Manager if it's available.
+        // Without this the Security-page banner "re-run the app after
+        // ensuring Credential Manager is available" is a no-op — the user
+        // stays on keyfile storage forever. If the write succeeds we keep
+        // the .keyfile on disk as a backup (same as step 3 below) so a
+        // later Credential Manager wipe doesn't lock them out.
+        if try_keyring_set(&key) {
+            info!(
+                key_source = "keyring",
+                upgraded_from = "keyfile",
+                "Fernet key promoted to Windows Credential Manager"
+            );
+            return Ok(CryptoState {
+                fernet,
+                key_source: KeySource::Keyring,
+            });
+        }
+
+        info!(key_source = "keyfile", "Fernet key loaded from file fallback");
         return Ok(CryptoState {
             fernet,
             key_source: KeySource::Keyfile,
