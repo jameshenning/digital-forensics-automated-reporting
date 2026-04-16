@@ -16,7 +16,7 @@ use lettre::{
     AsyncSmtpTransport, AsyncTransport, Message, Tokio1Executor,
 };
 use serde::{Deserialize, Serialize};
-use tracing::{info, warn};
+use tracing::{error, info, warn};
 use zeroize::Zeroizing;
 
 use crate::error::AppError;
@@ -69,7 +69,18 @@ pub async fn send_email(
     transport
         .send(email)
         .await
-        .map_err(|e| AppError::SmtpSendFailed { reason: format!("{e}") })?;
+        .map_err(|e| {
+            let reason = format!("{e}");
+            error!(
+                host = %cfg.host,
+                port = cfg.port,
+                from = %cfg.from,
+                to = %to,
+                error = %reason,
+                "SMTP send failed"
+            );
+            AppError::SmtpSendFailed { reason }
+        })?;
 
     info!(to = %to, subject = %subject, "Email sent successfully");
     Ok(())

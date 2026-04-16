@@ -191,17 +191,32 @@ export function toastSuccess(message: string): void {
  */
 export function errorToMessage(err: unknown, fallback = "Operation failed"): string {
   const appErr = err as Partial<AppError>;
-  // AppErrorCode → canonical user-facing message wins when we have it.
-  if (appErr?.code && appErr.code in ERROR_MESSAGES) {
-    return ERROR_MESSAGES[appErr.code];
-  }
+  const m = appErr?.message as unknown;
+
   // ValidationError's message field is { field, message } per the Rust
   // serde tag/content encoding; flatten to "field: message".
-  const m = appErr?.message as unknown;
   if (m && typeof m === "object" && "field" in m && "message" in m) {
     const v = m as { field: unknown; message: unknown };
     return `${String(v.field)}: ${String(v.message)}`;
   }
+
+  // SmtpSendFailed / SmtpConnectFailed / ReportGenerationFailed all carry
+  // a { reason } object. Preferring the raw reason over the canonical
+  // ERROR_MESSAGES text makes debug feedback actionable — e.g. "relaying
+  // denied" vs. a generic "accepted connection but rejected message".
+  if (m && typeof m === "object" && "reason" in m) {
+    const reason = String((m as { reason: unknown }).reason);
+    if (appErr?.code && appErr.code in ERROR_MESSAGES) {
+      return `${ERROR_MESSAGES[appErr.code]} (${reason})`;
+    }
+    return reason;
+  }
+
+  // Known error code → canonical user-facing message.
+  if (appErr?.code && appErr.code in ERROR_MESSAGES) {
+    return ERROR_MESSAGES[appErr.code];
+  }
+
   if (typeof m === "string" && m.length > 0) return m;
   if (err instanceof Error) return err.message;
   return fallback;
