@@ -15,7 +15,7 @@
  */
 
 import React from "react";
-import { createLazyFileRoute, Link } from "@tanstack/react-router";
+import { createLazyFileRoute } from "@tanstack/react-router";
 import {
   useQuery,
   useMutation,
@@ -24,7 +24,6 @@ import {
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import {
-  ArrowLeft,
   Bot,
   Mail,
   Network,
@@ -44,7 +43,8 @@ import {
   settingsTestSmtp,
   systemGetNetworkStatus,
 } from "@/lib/bindings";
-import { getToken } from "@/lib/session";
+import { getToken, useSession } from "@/lib/session";
+import { SettingsHeader } from "@/components/settings-header";
 import { queryKeys } from "@/lib/query";
 import { toastError, toastSuccess } from "@/lib/error-toast";
 import { agentZeroSchema, type AgentZeroFormValues } from "@/lib/agent-zero-schema";
@@ -803,20 +803,11 @@ function SmtpSection() {
 // ---------------------------------------------------------------------------
 
 function IntegrationsPage() {
+  const { session } = useSession();
+  if (!session) return null;
   return (
     <div className="min-h-screen bg-background">
-      <header className="border-b">
-        <div className="mx-auto max-w-3xl px-6 py-4 flex items-center gap-3">
-          <Button variant="ghost" size="sm" asChild className="-ml-2">
-            <Link to="/settings/security">
-              <ArrowLeft className="h-4 w-4 mr-1" />
-              Security
-            </Link>
-          </Button>
-          <div className="h-4 w-px bg-border" />
-          <h1 className="text-lg font-semibold">Integrations</h1>
-        </div>
-      </header>
+      <SettingsHeader username={session.username} />
 
       <main className="mx-auto max-w-3xl px-6 py-8 flex flex-col gap-6">
         <AgentZeroSection />

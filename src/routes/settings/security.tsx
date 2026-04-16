@@ -14,7 +14,6 @@
 import {
   createFileRoute,
   Link,
-  useNavigate,
 } from "@tanstack/react-router";
 import {
   useQuery,
@@ -55,6 +54,7 @@ import { toastError, toastSuccess } from "@/lib/error-toast";
 import { requireAuthBeforeLoad } from "@/lib/auth-guard";
 import { openUrl } from "@tauri-apps/plugin-opener";
 
+import { SettingsHeader } from "@/components/settings-header";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -580,7 +580,6 @@ function UpdatesSection() {
 
 function SecurityPage() {
   const { session } = useSession();
-  const navigate = useNavigate();
   const queryClient = useQueryClient();
 
   const token = getToken() ?? "";
@@ -612,30 +611,7 @@ function SecurityPage() {
 
   return (
     <div className="min-h-screen bg-background">
-      {/* Header */}
-      <header className="border-b">
-        <div className="mx-auto max-w-3xl px-6 py-4 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <ShieldCheck className="h-5 w-5 text-primary" />
-            <h1 className="text-lg font-semibold">Security</h1>
-          </div>
-          <div className="flex items-center gap-3">
-            <span className="text-sm text-muted-foreground">
-              Signed in as <code className="font-mono">{session.username}</code>
-            </span>
-            <Button variant="ghost" size="sm" asChild>
-              <Link to="/dashboard">Dashboard</Link>
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => void navigate({ to: "/auth/logout" })}
-            >
-              Log out
-            </Button>
-          </div>
-        </div>
-      </header>
+      <SettingsHeader username={session.username} />
 
       <main className="mx-auto max-w-3xl px-6 py-8 flex flex-col gap-6">
         {/* Security posture warning banner (SEC-1 SHOULD-DO 6) */}
