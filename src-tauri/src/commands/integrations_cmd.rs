@@ -47,6 +47,17 @@ pub struct AgentZeroSettings {
     pub tor_enabled: bool,
 }
 
+/// Result shape for `settings_test_agent_zero`. Mirrors the TS
+/// `AgentZeroTestResult` interface in `src/lib/bindings.ts`.  Previously the
+/// Rust handler returned `()` which serialized as `null` on the IPC boundary
+/// and crashed the frontend with "Cannot read properties of null (reading
+/// 'plugin_version')" when the test succeeded.
+#[derive(Debug, Serialize)]
+pub struct AgentZeroTestResult {
+    pub ok: bool,
+    pub plugin_version: Option<String>,
+}
+
 #[derive(Debug, Deserialize)]
 pub struct AgentZeroInput {
     pub url: Option<String>,
@@ -172,14 +183,21 @@ pub async fn settings_set_agent_zero(
 pub async fn settings_test_agent_zero(
     token: String,
     state: State<'_, Arc<AppState>>,
-) -> Result<(), AppError> {
+) -> Result<AgentZeroTestResult, AppError> {
     require_session(&state, &token)?;
 
     let az = state.agent_zero.client.read().await;
     let client = az.as_ref().ok_or(AppError::AgentZeroNotConfigured)?;
 
-    // Send a trivial enhance request as a connectivity test.
-    client.enhance("test").await.map(|_| ())
+    // Send a trivial enhance request as a connectivity test. Reaching the
+    // plugin + passing the X-API-KEY check is the "ok" signal — whether the
+    // upstream LLM responds with text or errors on credits is not relevant
+    // for a connectivity test.
+    client.enhance("test").await?;
+    Ok(AgentZeroTestResult {
+        ok: true,
+        plugin_version: None,
+    })
 }
 
 // ─── SMTP settings ────────────────────────────────────────────────────────────
