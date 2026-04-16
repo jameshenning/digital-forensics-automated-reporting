@@ -118,9 +118,26 @@ fn build_transport(cfg: &SmtpConfig) -> Result<AsyncSmtpTransport<Tokio1Executor
 
     let creds = Credentials::new(cfg.username.clone(), cfg.password.clone());
 
-    // Attempt STARTTLS first (port 587). Fall back to implicit TLS (port 465).
-    // If the port is 25 or the TLS negotiation fails, lettre will fall through to plain.
-    let tls_params = TlsParameters::builder(cfg.host.clone())
+    // Loopback hosts (Proton Bridge, MailHog, maildev, etc.) present self-signed
+    // certificates that rustls refuses with "CaUsedAsEndEntity" — Bridge's cert
+    // is a self-signed CA being used as an end-entity. Loopback is the primary
+    // trust boundary here: if an attacker can MITM 127.0.0.1 traffic, the app
+    // is already compromised. Skip cert + hostname verification for those hosts
+    // ONLY; strict verification remains on for every non-loopback destination.
+    let is_loopback = matches!(
+        cfg.host.as_str(),
+        "127.0.0.1" | "localhost" | "::1" | "[::1]"
+    );
+
+    let tls_builder = TlsParameters::builder(cfg.host.clone());
+    let tls_builder = if is_loopback {
+        tls_builder
+            .dangerous_accept_invalid_certs(true)
+            .dangerous_accept_invalid_hostnames(true)
+    } else {
+        tls_builder
+    };
+    let tls_params = tls_builder
         .build_rustls()
         .map_err(|e| AppError::SmtpConnectFailed { reason: format!("TLS params build: {e}") })?;
 
