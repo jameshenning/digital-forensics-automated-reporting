@@ -47,6 +47,7 @@ data-encoding = "2"
 sha2 = "0.10"
 infer = "0.16"
 unicode-normalization = "0.1"
+regex = "1"
 
 # ─── Phase 5: axum REST API + outbound HTTP + mailer + drives ────────────────
 axum = { version = "0.7", default-features = false, features = ["http1", "json", "tokio"] }

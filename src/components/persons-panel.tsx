@@ -263,19 +263,31 @@ export function PersonsPanel({ caseId }: PersonsPanelProps) {
     onMutate: (entity_id) => {
       setOsintPersonId(entity_id);
     },
-    onSuccess: (summary) => {
+    onSuccess: (summary, entity_id) => {
       invalidatePersons();
       void queryClient.invalidateQueries({
         queryKey: queryKeys.tools.listForCase(caseId),
+      });
+      // Refresh the person identifier editor so auto-discovered rows
+      // show up immediately — OsintRunSummary.identifiers_auto_inserted
+      // counts new rows written by insert_discovered_batch.
+      void queryClient.invalidateQueries({
+        queryKey: queryKeys.personIdentifiers.listForEntity(entity_id),
       });
       setOsintPersonId(null);
       const inserted = summary.tool_usage_rows_inserted;
       const tools = summary.tools_run;
       const ids = summary.identifiers_submitted;
-      const headline =
+      const autoAdded = summary.identifiers_auto_inserted;
+      const headlineBase =
         ids === 0
           ? `OSINT ${summary.status} — name-only submission, ${tools} tool run${tools === 1 ? "" : "s"}, ${inserted} logged.`
           : `OSINT ${summary.status} — ${ids} identifier${ids === 1 ? "" : "s"} submitted, ${tools} tool run${tools === 1 ? "" : "s"}, ${inserted} logged.`;
+      const autoFragment =
+        autoAdded > 0
+          ? ` ${autoAdded} new identifier${autoAdded === 1 ? "" : "s"} auto-added from findings.`
+          : "";
+      const headline = `${headlineBase}${autoFragment}`;
       // Append any notes the backend added (truncation, upstream Agent Zero
       // warnings) so the investigator sees a single unambiguous status line.
       const msg = summary.notes ? `${headline} ${summary.notes}` : headline;

@@ -10,6 +10,7 @@ pub mod drives;
 pub mod error;
 pub mod forensic_tools;
 pub mod mailer;
+pub mod osint_extraction;
 pub mod reports;
 pub mod state;
 pub mod uploads;

@@ -336,6 +336,103 @@ pub async fn soft_delete(pool: &SqlitePool, identifier_id: i64) -> Result<(), Ap
     Ok(())
 }
 
+/// Auto-insert a batch of OSINT-discovered identifiers.  Dedupes against the
+/// entity's existing active rows AND against itself (so the same email showing
+/// up in two different tool outputs produces one row, not two). Validates
+/// each candidate through `validate_input`; candidates that fail validation
+/// are skipped silently (best-effort enrichment — one malformed entry must
+/// not abort the batch). Caps at `max_new` to prevent an OSINT run from
+/// bloating the identifier list. Each inserted row gets a
+/// `notes = "Auto-discovered via OSINT <tool> on <iso_date>"` stamp so the
+/// investigator can trace provenance and decide whether to keep or remove it.
+///
+/// Returns `(attempted, inserted)`: how many candidates were considered after
+/// dedup (up to the cap) and how many actually landed.  The caller uses the
+/// pair to surface a meaningful frontend toast.
+pub async fn insert_discovered_batch(
+    pool: &SqlitePool,
+    entity_id: i64,
+    discovered: &[(String, String, Option<String>, String)],
+    iso_date: &str,
+    max_new: usize,
+) -> Result<(usize, usize), AppError> {
+    // Verify the parent up front so we fail fast without hitting validation
+    // for each item. Same check add_identifier does — redundant here, but
+    // catches the case where the entity was retyped between the OSINT call
+    // and now.
+    validate_parent_is_business(pool, entity_id).await?;
+
+    // Existing active identifiers — used to suppress duplicates.
+    let existing = list_for_entity(pool, entity_id).await?;
+    let mut seen: std::collections::BTreeSet<(String, String, String)> =
+        std::collections::BTreeSet::new();
+    for row in &existing {
+        seen.insert((
+            row.kind.clone(),
+            row.value.trim().to_lowercase(),
+            row.platform
+                .as_deref()
+                .unwrap_or("")
+                .trim()
+                .to_lowercase(),
+        ));
+    }
+
+    let mut attempted = 0usize;
+    let mut inserted = 0usize;
+
+    for (kind, value, platform, source_tool) in discovered {
+        if inserted >= max_new {
+            break;
+        }
+
+        // Candidate dedup key (must match the set above exactly).
+        let key = (
+            kind.clone(),
+            value.trim().to_lowercase(),
+            platform
+                .as_deref()
+                .unwrap_or("")
+                .trim()
+                .to_lowercase(),
+        );
+        if seen.contains(&key) {
+            continue;
+        }
+
+        let input = BusinessIdentifierInput {
+            kind: kind.clone(),
+            value: value.clone(),
+            platform: platform.clone(),
+            notes: Some(format!(
+                "Auto-discovered via OSINT {source_tool} on {iso_date}"
+            )),
+        };
+
+        // Validate — silently skip candidates that fail (e.g., wrong kind for
+        // this entity type, too long, leading-dash).
+        if validate_input(&input).is_err() {
+            continue;
+        }
+
+        attempted += 1;
+        match add_identifier(pool, entity_id, &input).await {
+            Ok(_) => {
+                inserted += 1;
+                seen.insert(key);
+            }
+            Err(_) => {
+                // Individual insert failures are non-fatal — log would be
+                // ideal but we're in the db layer with no tracing context.
+                // The caller tracks the delta between attempted and inserted.
+                continue;
+            }
+        }
+    }
+
+    Ok((attempted, inserted))
+}
+
 /// Cascade soft-delete all active identifiers for a given entity. Called from
 /// `entities::soft_delete` inside its transaction so deleting a business and
 /// hiding their identifiers is atomic.
@@ -752,5 +849,147 @@ mod tests {
         tx.commit().await.unwrap();
 
         assert!(list_for_entity(&pool, entity_id).await.unwrap().is_empty());
+    }
+
+    // ─── insert_discovered_batch tests ─────────────────────────────────────
+
+    fn disco(
+        kind: &str,
+        value: &str,
+        platform: Option<&str>,
+        tool: &str,
+    ) -> (String, String, Option<String>, String) {
+        (
+            kind.into(),
+            value.into(),
+            platform.map(|s| s.into()),
+            tool.into(),
+        )
+    }
+
+    #[tokio::test]
+    async fn discovered_batch_inserts_new_and_skips_existing() {
+        let pool = make_forensics_pool().await;
+        let entity_id = seed_business(&pool).await;
+
+        add_identifier(
+            &pool,
+            entity_id,
+            &BusinessIdentifierInput {
+                kind: "domain".into(),
+                value: "acme.com".into(),
+                platform: None,
+                notes: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        let batch = vec![
+            disco("domain", "acme.com", None, "subfinder"),
+            disco("domain", "dev.acme.com", None, "subfinder"),
+            disco("email", "info@acme.com", None, "theHarvester"),
+        ];
+
+        let (_attempted, inserted) =
+            insert_discovered_batch(&pool, entity_id, &batch, "2026-04-16", 50)
+                .await
+                .unwrap();
+        assert_eq!(inserted, 2, "acme.com already existed — only 2 new");
+
+        let rows = list_for_entity(&pool, entity_id).await.unwrap();
+        let values: Vec<&str> = rows.iter().map(|r| r.value.as_str()).collect();
+        assert!(values.contains(&"dev.acme.com"));
+        assert!(values.contains(&"info@acme.com"));
+    }
+
+    #[tokio::test]
+    async fn discovered_batch_stamps_provenance_in_notes() {
+        let pool = make_forensics_pool().await;
+        let entity_id = seed_business(&pool).await;
+
+        let batch = vec![disco("domain", "new.acme.com", None, "subfinder")];
+        let (_attempted, inserted) =
+            insert_discovered_batch(&pool, entity_id, &batch, "2026-04-16", 50)
+                .await
+                .unwrap();
+        assert_eq!(inserted, 1);
+
+        let rows = list_for_entity(&pool, entity_id).await.unwrap();
+        let row = rows.iter().find(|r| r.value == "new.acme.com").unwrap();
+        let notes = row.notes.as_deref().unwrap_or("");
+        assert!(
+            notes.contains("Auto-discovered via OSINT")
+                && notes.contains("subfinder")
+                && notes.contains("2026-04-16"),
+            "notes should carry tool + date provenance, got: {notes}"
+        );
+    }
+
+    #[tokio::test]
+    async fn discovered_batch_enforces_max_new_cap() {
+        let pool = make_forensics_pool().await;
+        let entity_id = seed_business(&pool).await;
+
+        let batch: Vec<_> = (0..10)
+            .map(|i| disco("domain", &format!("sub{i}.acme.com"), None, "subfinder"))
+            .collect();
+
+        let (_attempted, inserted) =
+            insert_discovered_batch(&pool, entity_id, &batch, "2026-04-16", 4)
+                .await
+                .unwrap();
+        assert_eq!(inserted, 4, "cap should limit insertion to 4");
+    }
+
+    #[tokio::test]
+    async fn discovered_batch_skips_invalid_kinds_for_business() {
+        let pool = make_forensics_pool().await;
+        let entity_id = seed_business(&pool).await;
+
+        // "username" and "handle" are person-only kinds — must be skipped.
+        let batch = vec![
+            disco("username", "acmecorp", None, "sherlock"),
+            disco("handle", "@acme", None, "sherlock"),
+            disco("email", "info@acme.com", None, "theHarvester"),
+        ];
+
+        let (_attempted, inserted) =
+            insert_discovered_batch(&pool, entity_id, &batch, "2026-04-16", 50)
+                .await
+                .unwrap();
+        assert_eq!(inserted, 1);
+        let rows = list_for_entity(&pool, entity_id).await.unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].kind, "email");
+    }
+
+    #[tokio::test]
+    async fn discovered_batch_dedupes_within_batch() {
+        let pool = make_forensics_pool().await;
+        let entity_id = seed_business(&pool).await;
+
+        let batch = vec![
+            disco("email", "info@acme.com", None, "theHarvester"),
+            disco("email", "info@acme.com", None, "spiderfoot"),
+            disco("email", "INFO@ACME.COM", None, "holehe"),
+        ];
+
+        let (_attempted, inserted) =
+            insert_discovered_batch(&pool, entity_id, &batch, "2026-04-16", 50)
+                .await
+                .unwrap();
+        assert_eq!(inserted, 1);
+    }
+
+    #[tokio::test]
+    async fn discovered_batch_rejects_non_business_entity() {
+        let pool = make_forensics_pool().await;
+        let person_id = seed_person(&pool).await;
+
+        let batch = vec![disco("domain", "acme.com", None, "subfinder")];
+        let result =
+            insert_discovered_batch(&pool, person_id, &batch, "2026-04-16", 50).await;
+        assert!(matches!(result, Err(AppError::EntityNotABusiness { .. })));
     }
 }

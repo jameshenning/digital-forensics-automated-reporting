@@ -335,6 +335,79 @@ pub async fn soft_delete(pool: &SqlitePool, identifier_id: i64) -> Result<(), Ap
     Ok(())
 }
 
+/// Auto-insert a batch of OSINT-discovered identifiers. Mirrors
+/// `business_identifiers::insert_discovered_batch`; see that doc for semantics.
+pub async fn insert_discovered_batch(
+    pool: &SqlitePool,
+    entity_id: i64,
+    discovered: &[(String, String, Option<String>, String)],
+    iso_date: &str,
+    max_new: usize,
+) -> Result<(usize, usize), AppError> {
+    validate_parent_is_person(pool, entity_id).await?;
+
+    let existing = list_for_entity(pool, entity_id).await?;
+    let mut seen: std::collections::BTreeSet<(String, String, String)> =
+        std::collections::BTreeSet::new();
+    for row in &existing {
+        seen.insert((
+            row.kind.clone(),
+            row.value.trim().to_lowercase(),
+            row.platform
+                .as_deref()
+                .unwrap_or("")
+                .trim()
+                .to_lowercase(),
+        ));
+    }
+
+    let mut attempted = 0usize;
+    let mut inserted = 0usize;
+
+    for (kind, value, platform, source_tool) in discovered {
+        if inserted >= max_new {
+            break;
+        }
+
+        let key = (
+            kind.clone(),
+            value.trim().to_lowercase(),
+            platform
+                .as_deref()
+                .unwrap_or("")
+                .trim()
+                .to_lowercase(),
+        );
+        if seen.contains(&key) {
+            continue;
+        }
+
+        let input = PersonIdentifierInput {
+            kind: kind.clone(),
+            value: value.clone(),
+            platform: platform.clone(),
+            notes: Some(format!(
+                "Auto-discovered via OSINT {source_tool} on {iso_date}"
+            )),
+        };
+
+        if validate_input(&input).is_err() {
+            continue;
+        }
+
+        attempted += 1;
+        match add_identifier(pool, entity_id, &input).await {
+            Ok(_) => {
+                inserted += 1;
+                seen.insert(key);
+            }
+            Err(_) => continue,
+        }
+    }
+
+    Ok((attempted, inserted))
+}
+
 /// Cascade soft-delete all active identifiers for a given entity. Called from
 /// `entities::soft_delete` inside its transaction so deleting a person and
 /// hiding their identifiers is atomic.
@@ -751,5 +824,152 @@ mod tests {
         tx.commit().await.unwrap();
 
         assert!(list_for_entity(&pool, entity_id).await.unwrap().is_empty());
+    }
+
+    // ─── insert_discovered_batch tests ─────────────────────────────────────
+
+    fn disco(
+        kind: &str,
+        value: &str,
+        platform: Option<&str>,
+        tool: &str,
+    ) -> (String, String, Option<String>, String) {
+        (
+            kind.into(),
+            value.into(),
+            platform.map(|s| s.into()),
+            tool.into(),
+        )
+    }
+
+    #[tokio::test]
+    async fn discovered_batch_inserts_new_and_skips_existing() {
+        let pool = make_forensics_pool().await;
+        let entity_id = seed_person(&pool).await;
+
+        // Pre-existing identifier — should NOT be re-inserted.
+        add_identifier(
+            &pool,
+            entity_id,
+            &PersonIdentifierInput {
+                kind: "email".into(),
+                value: "alice@example.com".into(),
+                platform: None,
+                notes: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        let batch = vec![
+            disco("email", "alice@example.com", None, "theHarvester"),
+            disco("email", "bob@example.com", None, "theHarvester"),
+            disco("url", "https://twitter.com/alice", Some("twitter"), "sherlock"),
+        ];
+
+        let (attempted, inserted) =
+            insert_discovered_batch(&pool, entity_id, &batch, "2026-04-16", 50)
+                .await
+                .unwrap();
+        assert_eq!(inserted, 2, "should insert bob's email + twitter URL only");
+        assert_eq!(attempted, 2, "alice@example.com already existed — skipped before validation");
+
+        let rows = list_for_entity(&pool, entity_id).await.unwrap();
+        assert_eq!(rows.len(), 3);
+        let values: Vec<&str> = rows.iter().map(|r| r.value.as_str()).collect();
+        assert!(values.contains(&"bob@example.com"));
+        assert!(values.contains(&"https://twitter.com/alice"));
+    }
+
+    #[tokio::test]
+    async fn discovered_batch_stamps_provenance_in_notes() {
+        let pool = make_forensics_pool().await;
+        let entity_id = seed_person(&pool).await;
+
+        let batch = vec![disco("email", "new@example.com", None, "theHarvester")];
+        let (_attempted, inserted) =
+            insert_discovered_batch(&pool, entity_id, &batch, "2026-04-16", 50)
+                .await
+                .unwrap();
+        assert_eq!(inserted, 1);
+
+        let rows = list_for_entity(&pool, entity_id).await.unwrap();
+        let row = rows.iter().find(|r| r.value == "new@example.com").unwrap();
+        let notes = row.notes.as_deref().unwrap_or("");
+        assert!(
+            notes.contains("Auto-discovered via OSINT") && notes.contains("theHarvester")
+                && notes.contains("2026-04-16"),
+            "notes should carry tool + date provenance, got: {notes}"
+        );
+    }
+
+    #[tokio::test]
+    async fn discovered_batch_enforces_max_new_cap() {
+        let pool = make_forensics_pool().await;
+        let entity_id = seed_person(&pool).await;
+
+        let batch: Vec<_> = (0..10)
+            .map(|i| disco("email", &format!("user{i}@example.com"), None, "theHarvester"))
+            .collect();
+
+        let (_attempted, inserted) =
+            insert_discovered_batch(&pool, entity_id, &batch, "2026-04-16", 3)
+                .await
+                .unwrap();
+        assert_eq!(inserted, 3, "cap should limit insertion to 3");
+        assert_eq!(list_for_entity(&pool, entity_id).await.unwrap().len(), 3);
+    }
+
+    #[tokio::test]
+    async fn discovered_batch_skips_invalid_kinds_for_person() {
+        let pool = make_forensics_pool().await;
+        let entity_id = seed_person(&pool).await;
+
+        // "domain" and "registration" are business-only kinds — must be
+        // silently skipped, not cause the whole batch to fail.
+        let batch = vec![
+            disco("domain", "acme.com", None, "subfinder"),
+            disco("registration", "DE-12345", None, "whois"),
+            disco("email", "good@example.com", None, "theHarvester"),
+        ];
+
+        let (_attempted, inserted) =
+            insert_discovered_batch(&pool, entity_id, &batch, "2026-04-16", 50)
+                .await
+                .unwrap();
+        assert_eq!(inserted, 1, "only the email (valid person kind) should land");
+        let rows = list_for_entity(&pool, entity_id).await.unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].kind, "email");
+    }
+
+    #[tokio::test]
+    async fn discovered_batch_dedupes_within_batch() {
+        let pool = make_forensics_pool().await;
+        let entity_id = seed_person(&pool).await;
+
+        // Same email appearing three times from three different tools.
+        let batch = vec![
+            disco("email", "dup@example.com", None, "theHarvester"),
+            disco("email", "dup@example.com", None, "holehe"),
+            disco("email", "DUP@example.com", None, "spiderfoot"),
+        ];
+
+        let (_attempted, inserted) =
+            insert_discovered_batch(&pool, entity_id, &batch, "2026-04-16", 50)
+                .await
+                .unwrap();
+        assert_eq!(inserted, 1);
+    }
+
+    #[tokio::test]
+    async fn discovered_batch_rejects_non_person_entity() {
+        let pool = make_forensics_pool().await;
+        let biz_id = seed_business(&pool).await;
+
+        let batch = vec![disco("email", "x@x.com", None, "theHarvester")];
+        let result =
+            insert_discovered_batch(&pool, biz_id, &batch, "2026-04-16", 50).await;
+        assert!(matches!(result, Err(AppError::EntityNotAPerson { .. })));
     }
 }

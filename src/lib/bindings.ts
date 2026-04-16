@@ -1619,6 +1619,14 @@ export function aiSummarizeCase(args: {
  *   email on two different platforms is NOT a duplicate.
  * - `tool_usage_rows_inserted` — one per successful Agent Zero run. These
  *   rows appear in the case's Tools tab and in the Markdown report.
+ * - `identifiers_discovered` — total identifiers parsed out of this run's
+ *   tool outputs, BEFORE dedup against the entity's existing active rows.
+ *   Gives the frontend "we saw N candidates" signal for the toast.
+ * - `identifiers_auto_inserted` — how many of those discovered candidates
+ *   were actually inserted into `person_identifiers` / `business_identifiers`
+ *   after dedup, validation, and the 50-per-run safety cap. Each inserted
+ *   row carries a `notes = "Auto-discovered via OSINT <tool> on <date>"`
+ *   stamp for provenance — investigators can still edit or delete.
  * - `notes` — a single combined status line, prefixed with local Rust-side
  *   annotations (name-only submission, batch truncation) when relevant, then
  *   any notes Agent Zero returned. Render verbatim in the UI.
@@ -1632,6 +1640,8 @@ export interface OsintRunSummary {
   identifiers_submitted: number;
   tools_run: number;
   tool_usage_rows_inserted: number;
+  identifiers_discovered: number;
+  identifiers_auto_inserted: number;
   notes: string | null;
 }
 

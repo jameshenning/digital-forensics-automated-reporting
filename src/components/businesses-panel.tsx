@@ -218,19 +218,32 @@ export function BusinessesPanel({ caseId }: BusinessesPanelProps) {
     onMutate: (entity_id) => {
       setOsintBusinessId(entity_id);
     },
-    onSuccess: (summary) => {
+    onSuccess: (summary, entity_id) => {
       invalidateBusinesses();
       void queryClient.invalidateQueries({
         queryKey: queryKeys.tools.listForCase(caseId),
+      });
+      // Refresh the business identifier editor so auto-discovered rows
+      // show up immediately — OsintRunSummary.identifiers_auto_inserted
+      // counts new rows that insert_discovered_batch wrote into
+      // business_identifiers.
+      void queryClient.invalidateQueries({
+        queryKey: queryKeys.businessIdentifiers.listForEntity(entity_id),
       });
       setOsintBusinessId(null);
       const inserted = summary.tool_usage_rows_inserted;
       const tools = summary.tools_run;
       const ids = summary.identifiers_submitted;
-      const headline =
+      const autoAdded = summary.identifiers_auto_inserted;
+      const headlineBase =
         ids === 0
           ? `OSINT ${summary.status} — name-only submission, ${tools} tool run${tools === 1 ? "" : "s"}, ${inserted} logged.`
           : `OSINT ${summary.status} — ${ids} identifier${ids === 1 ? "" : "s"} submitted, ${tools} tool run${tools === 1 ? "" : "s"}, ${inserted} logged.`;
+      const autoFragment =
+        autoAdded > 0
+          ? ` ${autoAdded} new identifier${autoAdded === 1 ? "" : "s"} auto-added from findings.`
+          : "";
+      const headline = `${headlineBase}${autoFragment}`;
       const msg = summary.notes ? `${headline} ${summary.notes}` : headline;
       toastSuccess(msg);
     },

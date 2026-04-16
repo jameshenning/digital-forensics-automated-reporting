@@ -26,6 +26,7 @@ use crate::agent_zero::{
     OsintBusinessResponse,
 };
 use crate::db::tools::ToolInput;
+use crate::osint_extraction::{extract_from_run, DiscoveredIdentifier, EntityKind};
 use tokio::sync::RwLockReadGuard;
 use crate::error::AppError;
 use crate::state::AppState;
@@ -252,7 +253,45 @@ pub struct OsintRunSummary {
     pub identifiers_submitted: usize,
     pub tools_run: usize,
     pub tool_usage_rows_inserted: usize,
+    /// Total identifiers parsed out of this run's tool outputs (before dedup
+    /// against the entity's existing active identifiers). Useful for the
+    /// frontend toast — "we saw 14 candidate identifiers, 6 were new".
+    pub identifiers_discovered: usize,
+    /// Identifiers actually inserted into `*_identifiers` after dedup against
+    /// existing rows, validation, and the `MAX_AUTO_INSERTED_PER_RUN` cap.
+    pub identifiers_auto_inserted: usize,
     pub notes: Option<String>,
+}
+
+/// Cap on auto-inserted identifiers per OSINT run. A rich SpiderFoot pass can
+/// produce 100+ candidates; we only keep the first `MAX_AUTO_INSERTED_PER_RUN`
+/// new ones to prevent the identifier list from ballooning on a single click.
+/// Mirrors the submission cap so the shape of a round-trip stays bounded.
+const MAX_AUTO_INSERTED_PER_RUN: usize = 50;
+
+/// Flatten the discovered identifiers across every successful tool run into
+/// a single `(kind, value, platform, source_tool)` batch ready to hand to
+/// `*_identifiers::insert_discovered_batch`. Tool dispatch happens inside
+/// `osint_extraction::extract_from_run`; this helper just walks the runs.
+fn flatten_discovered(
+    runs: &[crate::agent_zero::OsintToolRun],
+    entity_kind: EntityKind,
+) -> Vec<(String, String, Option<String>, String)> {
+    let mut batch: Vec<(String, String, Option<String>, String)> = Vec::new();
+    for run in runs {
+        if !run.success {
+            continue;
+        }
+        let Some(raw) = run.raw_output_truncated.as_deref() else {
+            continue;
+        };
+        let extracted: Vec<DiscoveredIdentifier> =
+            extract_from_run(&run.tool_name, raw, entity_kind);
+        for d in extracted {
+            batch.push((d.kind, d.value, d.platform, run.tool_name.clone()));
+        }
+    }
+    batch
 }
 
 /// The minimum tool set Agent Zero MUST run if the relevant inputs are
@@ -691,6 +730,37 @@ pub async fn ai_osint_person(
         inserted += 1;
     }
 
+    // Auto-populate person_identifiers from extracted tool output.
+    // Parses each successful run's raw_output_truncated per-tool, flattens
+    // into a (kind, value, platform, source_tool) batch, and hands off to
+    // `person_identifiers::insert_discovered_batch` which dedupes against
+    // existing active rows and caps insertion at MAX_AUTO_INSERTED_PER_RUN.
+    // Failures here are non-fatal — the OSINT run has already succeeded on
+    // the tool-run side.
+    let discovered_batch = flatten_discovered(&response.runs, EntityKind::Person);
+    let identifiers_discovered = discovered_batch.len();
+    let iso_date = chrono::Utc::now().format("%Y-%m-%d").to_string();
+    let (_attempted, identifiers_auto_inserted) = match person_identifiers::insert_discovered_batch(
+        &state.db.forensics,
+        entity_id,
+        &discovered_batch,
+        &iso_date,
+        MAX_AUTO_INSERTED_PER_RUN,
+    )
+    .await
+    {
+        Ok(counts) => counts,
+        Err(e) => {
+            warn!(
+                username = %session.username,
+                entity_id = entity_id,
+                error = ?e,
+                "auto-insert of discovered identifiers failed; continuing with OSINT summary"
+            );
+            (0, 0)
+        }
+    };
+
     // Replace `osint_findings` in the entity's metadata_json with the current
     // run's results.
     //
@@ -801,6 +871,8 @@ pub async fn ai_osint_person(
         identifiers_submitted,
         tools_run: response.runs.len(),
         tool_usage_rows_inserted: inserted,
+        identifiers_discovered,
+        identifiers_auto_inserted,
         notes,
     })
 }
@@ -997,6 +1069,34 @@ pub async fn ai_osint_business(
         inserted += 1;
     }
 
+    // Auto-populate business_identifiers from extracted tool output.
+    // Same shape as the person-side auto-populate — see that branch for the
+    // full rationale.
+    let discovered_batch = flatten_discovered(&response.runs, EntityKind::Business);
+    let identifiers_discovered = discovered_batch.len();
+    let iso_date = chrono::Utc::now().format("%Y-%m-%d").to_string();
+    let (_attempted, identifiers_auto_inserted) =
+        match business_identifiers::insert_discovered_batch(
+            &state.db.forensics,
+            entity_id,
+            &discovered_batch,
+            &iso_date,
+            MAX_AUTO_INSERTED_PER_RUN,
+        )
+        .await
+        {
+            Ok(counts) => counts,
+            Err(e) => {
+                warn!(
+                    username = %session.username,
+                    entity_id = entity_id,
+                    error = ?e,
+                    "auto-insert of discovered business identifiers failed; continuing with OSINT summary"
+                );
+                (0, 0)
+            }
+        };
+
     // Atomic json_set UPDATE on metadata_json.osint_findings — mirrors the
     // pattern from ai_osint_person to avoid the concurrent-write race.
     let new_findings: Vec<serde_json::Value> = response
@@ -1088,6 +1188,8 @@ pub async fn ai_osint_business(
         identifiers_submitted,
         tools_run: response.runs.len(),
         tool_usage_rows_inserted: inserted,
+        identifiers_discovered,
+        identifiers_auto_inserted,
         notes,
     })
 }
