@@ -24,6 +24,7 @@ use crate::{
     auth::session::require_session,
     db::{
         analysis::{AnalysisInput, AnalysisNote},
+        analysis_reviews::{AnalysisReview, AnalysisReviewInput},
         custody::{CustodyEvent, CustodyInput},
         evidence::{Evidence, EvidenceInput},
         hashes::{HashInput, HashRecord},
@@ -43,6 +44,7 @@ const CUSTODY_DELETED: &str = "CUSTODY_DELETED";
 const HASH_ADDED: &str = "HASH_ADDED";
 const TOOL_LOGGED: &str = "TOOL_LOGGED";
 const ANALYSIS_ADDED: &str = "ANALYSIS_ADDED";
+const ANALYSIS_REVIEWED: &str = "ANALYSIS_REVIEWED";
 
 // ─── Evidence commands ────────────────────────────────────────────────────────
 
@@ -452,12 +454,81 @@ pub async fn analysis_add(
         &session.username,
         ANALYSIS_ADDED,
         &format!(
-            "note_id={} category={:?} confidence={:?} evidence_id={:?}",
-            note.note_id, note.category, note.confidence_level, note.evidence_id,
+            "note_id={} category={:?} confidence={:?} evidence_id={:?} created_by={:?}",
+            note.note_id,
+            note.category,
+            note.confidence_level,
+            note.evidence_id,
+            note.created_by,
         ),
     );
 
     Ok(note)
+}
+
+/// Append a peer-review stamp to an analysis note. Append-only — each
+/// call writes a new `analysis_reviews` row; existing rows are never
+/// mutated. Returns the saved review row (including DB-assigned
+/// `review_id` and `created_at`). Logs `ANALYSIS_REVIEWED` to the case
+/// audit trail.
+#[tauri::command(rename_all = "snake_case")]
+pub async fn analysis_mark_reviewed(
+    token: String,
+    note_id: i64,
+    input: AnalysisReviewInput,
+    state: State<'_, Arc<AppState>>,
+) -> Result<AnalysisReview, AppError> {
+    let session = require_session(&state, &token)?;
+
+    let review =
+        crate::db::analysis_reviews::add_review(&state.db.forensics, note_id, &input).await?;
+
+    // Join through analysis_notes to get case_id for the audit entry.
+    // The note must exist at this point (add_review verified it) — an
+    // Ok here still means we tolerate the unlikely race where the note
+    // was soft-deleted after add_review but before the SELECT. The
+    // audit write is best-effort; we don't want to fail the command
+    // because of an audit lookup miss.
+    let case_id: Option<String> = sqlx::query_scalar(
+        r#"SELECT case_id FROM analysis_notes WHERE note_id = ?"#,
+    )
+    .bind(note_id)
+    .fetch_optional(&state.db.forensics)
+    .await
+    .unwrap_or(None);
+
+    if let Some(cid) = case_id {
+        info!(
+            username = %session.username,
+            case_id = %cid,
+            note_id = %note_id,
+            review_id = %review.review_id,
+            "analysis note reviewed"
+        );
+        audit::log_case(
+            &cid,
+            &session.username,
+            ANALYSIS_REVIEWED,
+            &format!(
+                "note_id={} review_id={} reviewed_by={:?} reviewed_at={:?}",
+                note_id, review.review_id, review.reviewed_by, review.reviewed_at,
+            ),
+        );
+    }
+
+    Ok(review)
+}
+
+/// List all reviews for a single analysis note, ASC by created_at.
+#[tauri::command(rename_all = "snake_case")]
+pub async fn analysis_reviews_list_for_note(
+    token: String,
+    note_id: i64,
+    state: State<'_, Arc<AppState>>,
+) -> Result<Vec<AnalysisReview>, AppError> {
+    let _session = require_session(&state, &token)?;
+
+    crate::db::analysis_reviews::list_for_note(&state.db.forensics, note_id).await
 }
 
 /// List all analysis notes for a case, ordered by created_at DESC.

@@ -37,11 +37,22 @@ const VALID_CONFIDENCE_LEVELS: &[&str] = &["Low", "Medium", "High"];
 
 const FINDING_MAX_LEN: usize = 500;
 const DESCRIPTION_MAX_LEN: usize = 5000;
+// Validation-field length caps — generous but bounded so a stray paste
+// doesn't bloat the audit trail. `alternatives_considered` is highest
+// because reasoning chains run long in practice.
+const CREATED_BY_MAX_LEN: usize = 200;
+const METHOD_REFERENCE_MAX_LEN: usize = 500;
+const ALTERNATIVES_MAX_LEN: usize = 5000;
+const TOOL_VERSION_MAX_LEN: usize = 200;
 
 // ─── Public data types ────────────────────────────────────────────────────────
 
 /// Full analysis note row, maps 1:1 to the `analysis_notes` table.
 /// `created_at` is a `String` for v1 compat — see `db::cases::Case`.
+/// The four validation fields (created_by, method_reference,
+/// alternatives_considered, tool_version) are nullable — v1 rows carry
+/// NULLs and the UI renders "not recorded" placeholders rather than
+/// silently backfilling. See migration 0007.
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct AnalysisNote {
     pub note_id: i64,
@@ -52,10 +63,24 @@ pub struct AnalysisNote {
     pub description: Option<String>,
     pub confidence_level: String,
     pub created_at: String,
+    #[serde(default)]
+    pub created_by: Option<String>,
+    #[serde(default)]
+    pub method_reference: Option<String>,
+    #[serde(default)]
+    pub alternatives_considered: Option<String>,
+    #[serde(default)]
+    pub tool_version: Option<String>,
 }
 
 /// Writable fields for adding a new analysis note.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+///
+/// `Default` yields empty strings for `category` + `finding`; callers
+/// MUST set them explicitly or `validate_analysis_input` will reject
+/// the input. Default exists so test construction can `..Default::default()`
+/// and avoid churn when new optional fields are added (e.g., migration
+/// 0007's `created_by`/`method_reference`/etc.).
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct AnalysisInput {
     /// Optional — note may apply to the whole case or a specific evidence item.
     pub evidence_id: Option<String>,
@@ -64,6 +89,20 @@ pub struct AnalysisInput {
     pub description: Option<String>,
     /// `None` → default `"Medium"`.
     pub confidence_level: Option<String>,
+    /// Author of the finding. Optional at the DB layer for v1 compat,
+    /// but the frontend form encourages it to enable meaningful peer
+    /// review.
+    #[serde(default)]
+    pub created_by: Option<String>,
+    /// SOP or standard cited (e.g., "NIST SP 800-86 §5.2").
+    #[serde(default)]
+    pub method_reference: Option<String>,
+    /// Alternative explanations examined and ruled out.
+    #[serde(default)]
+    pub alternatives_considered: Option<String>,
+    /// Tool + version that produced the finding.
+    #[serde(default)]
+    pub tool_version: Option<String>,
 }
 
 // ─── Validation helpers ───────────────────────────────────────────────────────
@@ -121,7 +160,30 @@ fn validate_analysis_input(input: &AnalysisInput) -> Result<String, AppError> {
             });
         }
     }
+    check_optional_len(&input.created_by, "created_by", CREATED_BY_MAX_LEN)?;
+    check_optional_len(&input.method_reference, "method_reference", METHOD_REFERENCE_MAX_LEN)?;
+    check_optional_len(&input.alternatives_considered, "alternatives_considered", ALTERNATIVES_MAX_LEN)?;
+    check_optional_len(&input.tool_version, "tool_version", TOOL_VERSION_MAX_LEN)?;
     Ok(confidence)
+}
+
+/// Reject an optional string that, when Some, exceeds `max_len` chars.
+/// Does NOT reject empty strings — the frontend is responsible for
+/// coercing empty form inputs to None before the IPC call.
+fn check_optional_len(
+    value: &Option<String>,
+    field: &'static str,
+    max_len: usize,
+) -> Result<(), AppError> {
+    if let Some(v) = value {
+        if v.chars().count() > max_len {
+            return Err(AppError::ValidationError {
+                field: field.into(),
+                message: format!("{field} must not exceed {max_len} characters"),
+            });
+        }
+    }
+    Ok(())
 }
 
 // ─── Public query functions ───────────────────────────────────────────────────
@@ -140,8 +202,9 @@ pub async fn add_analysis(
     let row_id = sqlx::query(
         r#"
         INSERT INTO analysis_notes (
-            case_id, evidence_id, category, finding, description, confidence_level
-        ) VALUES (?, ?, ?, ?, ?, ?)
+            case_id, evidence_id, category, finding, description, confidence_level,
+            created_by, method_reference, alternatives_considered, tool_version
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         "#,
     )
     .bind(case_id)
@@ -150,6 +213,10 @@ pub async fn add_analysis(
     .bind(&input.finding)
     .bind(&input.description)
     .bind(&confidence)
+    .bind(&input.created_by)
+    .bind(&input.method_reference)
+    .bind(&input.alternatives_considered)
+    .bind(&input.tool_version)
     .execute(pool)
     .await?
     .last_insert_rowid();
@@ -158,7 +225,8 @@ pub async fn add_analysis(
         r#"
         SELECT
             note_id, case_id, evidence_id, category, finding,
-            description, confidence_level, created_at
+            description, confidence_level, created_at,
+            created_by, method_reference, alternatives_considered, tool_version
         FROM analysis_notes
         WHERE note_id = ?
         "#,
@@ -179,7 +247,8 @@ pub async fn list_for_case(
         r#"
         SELECT
             note_id, case_id, evidence_id, category, finding,
-            description, confidence_level, created_at
+            description, confidence_level, created_at,
+            created_by, method_reference, alternatives_considered, tool_version
         FROM analysis_notes
         WHERE case_id = ?
         ORDER BY created_at DESC
@@ -205,7 +274,8 @@ pub async fn list_for_evidence(
         r#"
         SELECT
             note_id, case_id, evidence_id, category, finding,
-            description, confidence_level, created_at
+            description, confidence_level, created_at,
+            created_by, method_reference, alternatives_considered, tool_version
         FROM analysis_notes
         WHERE evidence_id = ?
         ORDER BY created_at DESC

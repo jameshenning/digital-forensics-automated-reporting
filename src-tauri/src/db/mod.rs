@@ -1,4 +1,5 @@
 pub mod analysis;
+pub mod analysis_reviews;
 pub mod cases;
 pub mod custody;
 pub mod entities;

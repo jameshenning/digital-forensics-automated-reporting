@@ -144,9 +144,25 @@ CREATE TABLE IF NOT EXISTS analysis_notes (
     description TEXT,
     confidence_level TEXT DEFAULT 'Medium',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    -- migration 0007: validation principles (nullable, v1-compat)
+    created_by TEXT,
+    method_reference TEXT,
+    alternatives_considered TEXT,
+    tool_version TEXT,
     FOREIGN KEY (case_id) REFERENCES cases (case_id) ON DELETE RESTRICT,
     FOREIGN KEY (evidence_id) REFERENCES evidence (evidence_id) ON DELETE SET NULL
 );
+
+-- migration 0007: append-only peer review records
+CREATE TABLE IF NOT EXISTS analysis_reviews (
+    review_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    note_id INTEGER NOT NULL REFERENCES analysis_notes(note_id),
+    reviewed_by TEXT NOT NULL,
+    reviewed_at TEXT NOT NULL,
+    review_notes TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_analysis_reviews_note ON analysis_reviews(note_id);
 
 CREATE TABLE IF NOT EXISTS case_tags (
     tag_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -954,6 +970,7 @@ async fn test_14_analysis_add_valid_and_invalid_category() {
             finding: "Test finding".to_string(),
             description: None,
             confidence_level: Some("High".to_string()),
+            ..Default::default()
         },
     )
     .await
@@ -971,6 +988,7 @@ async fn test_14_analysis_add_valid_and_invalid_category() {
             finding: "Some finding".to_string(),
             description: None,
             confidence_level: None,
+            ..Default::default()
         },
     )
     .await
@@ -1001,6 +1019,7 @@ async fn test_15_analysis_list_for_evidence_filters() {
             finding: "Evidence-linked finding".to_string(),
             description: None,
             confidence_level: None,
+            ..Default::default()
         },
     )
     .await
@@ -1016,6 +1035,7 @@ async fn test_15_analysis_list_for_evidence_filters() {
             finding: "Case-level finding".to_string(),
             description: None,
             confidence_level: None,
+            ..Default::default()
         },
     )
     .await
@@ -1130,6 +1150,209 @@ async fn test_custody_list_for_case_groups() {
     );
 }
 
+// ─── Migration 0007: validation principles ──────────────────────────────────
+
+#[tokio::test]
+async fn test_analysis_note_with_validation_fields_round_trips() {
+    use dfars_desktop_lib::db::analysis::list_for_case;
+
+    let (_state, pool) = build_state().await;
+    setup_case(&pool, "CASE-VAL-1").await;
+
+    let input = AnalysisInput {
+        evidence_id: None,
+        category: "Observation".into(),
+        finding: "Artifact X appears consistent with the known sample.".into(),
+        description: Some("Detailed reasoning in case journal entry 4.".into()),
+        confidence_level: Some("High".into()),
+        created_by: Some("J. Henning".into()),
+        method_reference: Some("NIST SP 800-86 §5.2".into()),
+        alternatives_considered: Some("Could be file corruption — ruled out by SHA256 match.".into()),
+        tool_version: Some("exiftool 12.76".into()),
+    };
+
+    let saved = add_analysis(&pool, "CASE-VAL-1", &input).await.unwrap();
+    assert_eq!(saved.created_by.as_deref(), Some("J. Henning"));
+    assert_eq!(saved.method_reference.as_deref(), Some("NIST SP 800-86 §5.2"));
+    assert_eq!(
+        saved.alternatives_considered.as_deref(),
+        Some("Could be file corruption — ruled out by SHA256 match.")
+    );
+    assert_eq!(saved.tool_version.as_deref(), Some("exiftool 12.76"));
+
+    // Round-trip through the list query to confirm the new columns are in the SELECT.
+    let notes = list_for_case(&pool, "CASE-VAL-1").await.unwrap();
+    assert_eq!(notes.len(), 1);
+    assert_eq!(notes[0].created_by.as_deref(), Some("J. Henning"));
+    assert_eq!(notes[0].method_reference.as_deref(), Some("NIST SP 800-86 §5.2"));
+    assert_eq!(notes[0].tool_version.as_deref(), Some("exiftool 12.76"));
+}
+
+#[tokio::test]
+async fn test_analysis_note_accepts_null_validation_fields() {
+    // Backward-compat path: a note created the "v1 way" (no validation
+    // metadata) must still round-trip cleanly with None values, not
+    // fail validation or default-backfill.
+    let (_state, pool) = build_state().await;
+    setup_case(&pool, "CASE-VAL-2").await;
+
+    let note = add_analysis(
+        &pool,
+        "CASE-VAL-2",
+        &AnalysisInput {
+            evidence_id: None,
+            category: "Other".into(),
+            finding: "v1-style finding with no metadata".into(),
+            description: None,
+            confidence_level: None,
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+
+    assert!(note.created_by.is_none());
+    assert!(note.method_reference.is_none());
+    assert!(note.alternatives_considered.is_none());
+    assert!(note.tool_version.is_none());
+}
+
+#[tokio::test]
+async fn test_analysis_reviews_append_only_and_ordered() {
+    use dfars_desktop_lib::db::analysis_reviews::{
+        AnalysisReviewInput, add_review, list_for_note,
+    };
+
+    let (_state, pool) = build_state().await;
+    setup_case(&pool, "CASE-REV-1").await;
+
+    let note = add_analysis(
+        &pool,
+        "CASE-REV-1",
+        &AnalysisInput {
+            evidence_id: None,
+            category: "Conclusion".into(),
+            finding: "F".into(),
+            description: None,
+            confidence_level: None,
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+
+    let r1 = add_review(
+        &pool,
+        note.note_id,
+        &AnalysisReviewInput {
+            reviewed_by: "Reviewer A".into(),
+            reviewed_at: "2026-04-20T10:00:00".into(),
+            review_notes: Some("Concur with SHA256 reasoning".into()),
+        },
+    )
+    .await
+    .unwrap();
+
+    // Tiny sleep not strictly needed — created_at ties are broken by
+    // review_id ordering in list_for_note, but even so the ASC ordering
+    // by created_at is what the UI consumes. Two INSERTs in the same
+    // second will still sort stable by review_id insertion order.
+    let r2 = add_review(
+        &pool,
+        note.note_id,
+        &AnalysisReviewInput {
+            reviewed_by: "Reviewer B".into(),
+            reviewed_at: "2026-04-21T09:30:00".into(),
+            review_notes: None,
+        },
+    )
+    .await
+    .unwrap();
+
+    assert_ne!(r1.review_id, r2.review_id, "each review is its own row");
+
+    let all = list_for_note(&pool, note.note_id).await.unwrap();
+    assert_eq!(all.len(), 2, "multi-reviewer history preserved");
+    assert_eq!(all[0].reviewed_by, "Reviewer A");
+    assert_eq!(all[1].reviewed_by, "Reviewer B");
+}
+
+#[tokio::test]
+async fn test_analysis_review_rejects_missing_note() {
+    use dfars_desktop_lib::db::analysis_reviews::{AnalysisReviewInput, add_review};
+
+    let (_state, pool) = build_state().await;
+    setup_case(&pool, "CASE-REV-2").await;
+
+    let err = add_review(
+        &pool,
+        99999, // does not exist
+        &AnalysisReviewInput {
+            reviewed_by: "Ghost".into(),
+            reviewed_at: "2026-04-20T10:00:00".into(),
+            review_notes: None,
+        },
+    )
+    .await
+    .expect_err("missing note must reject");
+
+    assert!(
+        matches!(err, AppError::ValidationError { ref field, .. } if field == "note_id"),
+        "expected note_id validation error, got {err:?}"
+    );
+}
+
+#[tokio::test]
+async fn test_analysis_review_validation_rejects_empty_reviewer_and_bad_datetime() {
+    use dfars_desktop_lib::db::analysis_reviews::{AnalysisReviewInput, add_review};
+
+    let (_state, pool) = build_state().await;
+    setup_case(&pool, "CASE-REV-3").await;
+
+    let note = add_analysis(
+        &pool,
+        "CASE-REV-3",
+        &AnalysisInput {
+            evidence_id: None,
+            category: "Other".into(),
+            finding: "F".into(),
+            description: None,
+            confidence_level: None,
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+
+    // Empty reviewer
+    let err = add_review(
+        &pool,
+        note.note_id,
+        &AnalysisReviewInput {
+            reviewed_by: "   ".into(),
+            reviewed_at: "2026-04-20T10:00:00".into(),
+            review_notes: None,
+        },
+    )
+    .await
+    .expect_err("empty reviewer must reject");
+    assert!(matches!(err, AppError::ValidationError { ref field, .. } if field == "reviewed_by"));
+
+    // Unparseable datetime
+    let err = add_review(
+        &pool,
+        note.note_id,
+        &AnalysisReviewInput {
+            reviewed_by: "Rev".into(),
+            reviewed_at: "yesterday".into(),
+            review_notes: None,
+        },
+    )
+    .await
+    .expect_err("bad datetime must reject");
+    assert!(matches!(err, AppError::ValidationError { ref field, .. } if field == "reviewed_at"));
+}
+
 // ─── Additional: analysis default confidence is Medium ────────────────────────
 
 #[tokio::test]
@@ -1146,6 +1369,7 @@ async fn test_analysis_default_confidence() {
             finding: "Finding".to_string(),
             description: None,
             confidence_level: None, // not provided — must default to Medium
+            ..Default::default()
         },
     )
     .await

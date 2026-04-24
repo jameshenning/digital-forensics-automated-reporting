@@ -165,6 +165,11 @@ CREATE TABLE IF NOT EXISTS analysis_notes (
     description TEXT,
     confidence_level TEXT DEFAULT 'Medium',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    -- migration 0007: validation principles (nullable, v1-compat)
+    created_by TEXT,
+    method_reference TEXT,
+    alternatives_considered TEXT,
+    tool_version TEXT,
     FOREIGN KEY (case_id) REFERENCES cases (case_id) ON DELETE RESTRICT,
     FOREIGN KEY (evidence_id) REFERENCES evidence (evidence_id) ON DELETE SET NULL
 );
@@ -1860,6 +1865,7 @@ async fn test_crime_line_all_groups() {
         finding: "Key finding about the suspect".into(),
         description: None,
         confidence_level: None,
+        ..Default::default()
     };
     add_analysis(&pool, &case_id, &analysis_input).await.expect("add analysis");
 

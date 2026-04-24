@@ -489,6 +489,15 @@ export interface AnalysisNote {
   description: string | null; // max 5000
   confidence_level: ConfidenceLevel;
   created_at: string;
+  /** Migration 0007 — author of the finding. Nullable for v1 rows;
+   *  the UI renders "not recorded" when missing. */
+  created_by: string | null;
+  /** SOP / standard cited (e.g., "NIST SP 800-86 §5.2"). */
+  method_reference: string | null;
+  /** Alternative explanations examined and ruled out. */
+  alternatives_considered: string | null;
+  /** Tool + version that produced the finding. */
+  tool_version: string | null;
 }
 
 export interface AnalysisInput {
@@ -497,6 +506,30 @@ export interface AnalysisInput {
   finding: string;
   description: string | null;
   confidence_level: ConfidenceLevel | null; // null → backend default 'Medium'
+  /** Optional at the IPC layer. Empty form input should be coerced to
+   *  null by the submit mapper (matches existing `description` pattern). */
+  created_by?: string | null;
+  method_reference?: string | null;
+  alternatives_considered?: string | null;
+  tool_version?: string | null;
+}
+
+/** Analysis review — peer-review stamp on an analysis note.
+ *  Append-only: each call to analysis_mark_reviewed writes a new row. */
+export interface AnalysisReview {
+  review_id: number;
+  note_id: number;
+  reviewed_by: string;
+  reviewed_at: string;
+  review_notes: string | null;
+  created_at: string;
+}
+
+export interface AnalysisReviewInput {
+  reviewed_by: string;
+  /** ISO datetime; datetime-local forms must append ":00" before send. */
+  reviewed_at: string;
+  review_notes: string | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -667,6 +700,24 @@ export function analysisListForEvidence(args: {
   evidence_id: string;
 }): Promise<AnalysisNote[]> {
   return invoke<AnalysisNote[]>("analysis_list_for_evidence", args);
+}
+
+/** Append a peer-review stamp to an analysis note. Append-only — each
+ *  call writes a new row. Returns the saved review. */
+export function analysisMarkReviewed(args: {
+  token: string;
+  note_id: number;
+  input: AnalysisReviewInput;
+}): Promise<AnalysisReview> {
+  return invoke<AnalysisReview>("analysis_mark_reviewed", args);
+}
+
+/** List all reviews for a given analysis note, ASC by created_at. */
+export function analysisReviewsListForNote(args: {
+  token: string;
+  note_id: number;
+}): Promise<AnalysisReview[]> {
+  return invoke<AnalysisReview[]>("analysis_reviews_list_for_note", args);
 }
 
 // ---------------------------------------------------------------------------

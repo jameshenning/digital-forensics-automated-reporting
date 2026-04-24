@@ -75,6 +75,11 @@ pub const CUSTODY_ADDED: &str = "CUSTODY_ADDED";
 pub const HASH_ADDED: &str = "HASH_ADDED";
 pub const TOOL_ADDED: &str = "TOOL_ADDED";
 pub const ANALYSIS_ADDED: &str = "ANALYSIS_ADDED";
+/// Currently only referenced by records_cmd.rs's local constant; the
+/// pub const is kept here alongside ANALYSIS_ADDED in case axum_server
+/// grows a peer-review endpoint and needs the shared action code.
+#[allow(dead_code)]
+pub const ANALYSIS_REVIEWED: &str = "ANALYSIS_REVIEWED";
 
 // ─── Path helpers ─────────────────────────────────────────────────────────────
 

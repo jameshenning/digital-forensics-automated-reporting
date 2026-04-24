@@ -57,6 +57,10 @@ export function AnalysisForm({ evidenceList, isPending, onSubmit, onCancel }: An
       finding: "",
       description: "",
       confidence_level: "Medium",
+      created_by: "",
+      method_reference: "",
+      alternatives_considered: "",
+      tool_version: "",
     },
   });
 
@@ -196,6 +200,102 @@ export function AnalysisForm({ evidenceList, isPending, onSubmit, onCancel }: An
             </FormItem>
           )}
         />
+
+        {/* author — surfaced outside the advanced section because
+             peer review depends on it */}
+        <FormField
+          control={form.control}
+          name="created_by"
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>Author</FormLabel>
+              <FormControl>
+                <Input
+                  placeholder="Examiner name or initials"
+                  {...field}
+                />
+              </FormControl>
+              <FormDescription>
+                Recommended. Peer review records the reviewer by name;
+                the author line ties the finding to its examiner.
+              </FormDescription>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+
+        {/* advanced: validation & methodology */}
+        <details className="rounded-md border px-3 py-2">
+          <summary className="cursor-pointer text-sm font-medium text-muted-foreground select-none">
+            Validation &amp; methodology (optional)
+          </summary>
+          <div className="mt-3 space-y-4">
+            <FormField
+              control={form.control}
+              name="method_reference"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Method reference</FormLabel>
+                  <FormControl>
+                    <Input
+                      placeholder="e.g. NIST SP 800-86 §5.2, internal SOP-FRA-007"
+                      {...field}
+                    />
+                  </FormControl>
+                  <FormDescription>
+                    SOP or standard your analysis followed. Cited in the
+                    generated report so opposing counsel can trace your
+                    method.
+                  </FormDescription>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name="tool_version"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Tool + version</FormLabel>
+                  <FormControl>
+                    <Input
+                      placeholder="e.g. exiftool 12.76, Autopsy 4.21.0"
+                      {...field}
+                    />
+                  </FormControl>
+                  <FormDescription>
+                    The tool (with version) that produced this finding.
+                    Mirrors identifier tool provenance.
+                  </FormDescription>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name="alternatives_considered"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Alternative explanations considered</FormLabel>
+                  <FormControl>
+                    <Textarea
+                      placeholder="What other explanations did you examine and rule out, and why?"
+                      rows={4}
+                      {...field}
+                    />
+                  </FormControl>
+                  <FormDescription>
+                    Answers the "could this mean something else?"
+                    question before someone else asks it.
+                  </FormDescription>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+          </div>
+        </details>
 
         {/* Actions */}
         <div className="flex gap-3 pt-2">

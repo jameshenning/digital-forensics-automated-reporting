@@ -9,13 +9,23 @@
 
 import React from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Plus, AlertCircle, FileText } from "lucide-react";
+import {
+  Plus,
+  AlertCircle,
+  FileText,
+  CheckCircle2,
+  ShieldCheck,
+  User as UserIcon,
+  Wrench,
+} from "lucide-react";
 
 import {
   analysisListForCase,
   analysisAdd,
+  analysisReviewsListForNote,
   evidenceListForCase,
   type AnalysisNote,
+  type AnalysisReview,
   type AnalysisInput,
   type AnalysisCategory,
   type Evidence,
@@ -37,6 +47,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { AnalysisForm } from "@/components/analysis-form";
+import { AnalysisReviewDialog } from "@/components/analysis-review-dialog";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -87,6 +98,13 @@ function confidenceBadgeClass(level: string): string {
 const CASE_LEVEL_VALUE = "__case_level__";
 
 function formValuesToInput(values: AnalysisFormValues): AnalysisInput {
+  // Empty strings from the form are sent as null to the Rust layer so
+  // the DB stores NULL (not empty string) for "not recorded". Matches
+  // the existing pattern for `description`.
+  const nullIfEmpty = (s: string | undefined): string | null => {
+    const trimmed = (s ?? "").trim();
+    return trimmed.length === 0 ? null : trimmed;
+  };
   return {
     evidence_id:
       values.evidence_id && values.evidence_id !== CASE_LEVEL_VALUE
@@ -96,6 +114,10 @@ function formValuesToInput(values: AnalysisFormValues): AnalysisInput {
     finding: values.finding,
     description: values.description || null,
     confidence_level: values.confidence_level ?? null,
+    created_by: nullIfEmpty(values.created_by),
+    method_reference: nullIfEmpty(values.method_reference),
+    alternatives_considered: nullIfEmpty(values.alternatives_considered),
+    tool_version: nullIfEmpty(values.tool_version),
   };
 }
 
@@ -195,32 +217,7 @@ export function AnalysisPanel({ caseId }: AnalysisPanelProps) {
           </h4>
           <div className="space-y-2 pl-1">
             {(grouped[cat] ?? []).map((note) => (
-              <div
-                key={note.note_id}
-                className="rounded-md border p-3 text-sm space-y-1"
-              >
-                <div className="flex items-start justify-between gap-2">
-                  <p className="font-medium leading-snug">{note.finding}</p>
-                  <span
-                    className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium shrink-0 ${confidenceBadgeClass(note.confidence_level)}`}
-                  >
-                    {note.confidence_level}
-                  </span>
-                </div>
-                {note.description && (
-                  <p className="text-xs text-muted-foreground whitespace-pre-wrap">
-                    {note.description}
-                  </p>
-                )}
-                <div className="flex items-center gap-2 text-xs text-muted-foreground flex-wrap">
-                  <span>{fmtDatetime(note.created_at)}</span>
-                  {note.evidence_id && (
-                    <Badge variant="secondary" className="text-xs font-mono">
-                      {note.evidence_id}
-                    </Badge>
-                  )}
-                </div>
-              </div>
+              <AnalysisNoteCard key={note.note_id} note={note} />
             ))}
           </div>
         </div>
@@ -240,6 +237,119 @@ export function AnalysisPanel({ caseId }: AnalysisPanelProps) {
           />
         </DialogContent>
       </Dialog>
+    </div>
+  );
+}
+
+// ─── Note card ──────────────────────────────────────────────────────────────
+
+function AnalysisNoteCard({ note }: { note: AnalysisNote }) {
+  const token = getToken() ?? "";
+  const [reviewOpen, setReviewOpen] = React.useState(false);
+
+  const { data: reviews } = useQuery<AnalysisReview[]>({
+    queryKey: queryKeys.analysisReviews.forNote(note.note_id),
+    queryFn: () =>
+      analysisReviewsListForNote({ token, note_id: note.note_id }),
+    enabled: !!token,
+  });
+
+  const reviewCount = reviews?.length ?? 0;
+  const isReviewed = reviewCount > 0;
+
+  return (
+    <div className="rounded-md border p-3 text-sm space-y-2">
+      <div className="flex items-start justify-between gap-2">
+        <p className="font-medium leading-snug">{note.finding}</p>
+        <span
+          className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium shrink-0 ${confidenceBadgeClass(note.confidence_level)}`}
+        >
+          {note.confidence_level}
+        </span>
+      </div>
+
+      {note.description && (
+        <p className="text-xs text-muted-foreground whitespace-pre-wrap">
+          {note.description}
+        </p>
+      )}
+
+      {/* Validation metadata chips — only render fields actually present */}
+      {(note.created_by || note.method_reference || note.tool_version) && (
+        <div className="flex items-center flex-wrap gap-1.5 pt-1">
+          <Badge variant="outline" className="text-[10px] py-0 px-2 font-normal">
+            <UserIcon className="h-3 w-3 mr-1" />
+            {note.created_by ?? "not recorded"}
+          </Badge>
+          {note.method_reference && (
+            <Badge variant="outline" className="text-[10px] py-0 px-2 font-normal">
+              <ShieldCheck className="h-3 w-3 mr-1" />
+              {note.method_reference}
+            </Badge>
+          )}
+          {note.tool_version && (
+            <Badge variant="outline" className="text-[10px] py-0 px-2 font-normal">
+              <Wrench className="h-3 w-3 mr-1" />
+              {note.tool_version}
+            </Badge>
+          )}
+        </div>
+      )}
+
+      {note.alternatives_considered && (
+        <details className="rounded border-l-2 border-muted-foreground/30 pl-3 py-1 text-xs">
+          <summary className="cursor-pointer text-muted-foreground select-none">
+            Alternative explanations considered
+          </summary>
+          <p className="mt-1 whitespace-pre-wrap text-muted-foreground">
+            {note.alternatives_considered}
+          </p>
+        </details>
+      )}
+
+      {/* Footer: timestamp, evidence link, review status + action */}
+      <div className="flex items-center gap-2 text-xs text-muted-foreground flex-wrap pt-1 border-t border-border/50">
+        <span>{fmtDatetime(note.created_at)}</span>
+        {note.evidence_id && (
+          <Badge variant="secondary" className="text-xs font-mono">
+            {note.evidence_id}
+          </Badge>
+        )}
+        {isReviewed ? (
+          reviews!.map((r) => (
+            <Badge
+              key={r.review_id}
+              variant="outline"
+              className="text-[10px] py-0 px-2 border-green-600/40 text-green-400"
+            >
+              <CheckCircle2 className="h-3 w-3 mr-1" />
+              Reviewed by {r.reviewed_by}
+            </Badge>
+          ))
+        ) : (
+          <Badge
+            variant="outline"
+            className="text-[10px] py-0 px-2 border-amber-600/40 text-amber-400"
+          >
+            Pending peer review
+          </Badge>
+        )}
+        <Button
+          size="sm"
+          variant="ghost"
+          className="ml-auto h-6 text-xs"
+          onClick={() => setReviewOpen(true)}
+        >
+          Mark reviewed
+        </Button>
+      </div>
+
+      <AnalysisReviewDialog
+        noteId={note.note_id}
+        noteFinding={note.finding}
+        open={reviewOpen}
+        onOpenChange={setReviewOpen}
+      />
     </div>
   );
 }

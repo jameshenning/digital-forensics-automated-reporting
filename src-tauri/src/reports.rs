@@ -22,6 +22,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     db::{
         analysis,
+        analysis_reviews,
         cases,
         custody,
         entities,
@@ -191,11 +192,28 @@ struct ToolReport {
 
 #[allow(dead_code)]
 struct AnalysisReport {
+    note_id: i64,
     category: String,
     finding: String,
     description: Option<String>,
     confidence_level: String,
     evidence_id: Option<String>,
+    // Validation fields (migration 0007) — nullable, "not recorded"
+    // semantics preserved in the rendered output.
+    created_by: Option<String>,
+    method_reference: Option<String>,
+    alternatives_considered: Option<String>,
+    tool_version: Option<String>,
+    /// Reviews gathered separately via `analysis_reviews::list_for_case`
+    /// and joined by note_id at gathering time. Ordered by review
+    /// created_at ASC (chronological review history).
+    reviews: Vec<AnalysisReviewBrief>,
+}
+
+#[allow(dead_code)]
+struct AnalysisReviewBrief {
+    reviewed_by: String,
+    reviewed_at: String,
 }
 
 async fn gather_report_payload(
@@ -256,14 +274,36 @@ async fn gather_report_payload(
         .collect();
 
     let analysis_list = analysis::list_for_case(&state.db.forensics, case_id).await?;
+
+    // Gather reviews for every note in the case in one query and group
+    // by note_id so the rendering path can attach them without N+1.
+    let review_list = analysis_reviews::list_for_case(&state.db.forensics, case_id).await?;
+    let mut reviews_by_note: std::collections::HashMap<i64, Vec<AnalysisReviewBrief>> =
+        std::collections::HashMap::new();
+    for r in review_list {
+        reviews_by_note
+            .entry(r.note_id)
+            .or_default()
+            .push(AnalysisReviewBrief {
+                reviewed_by: r.reviewed_by,
+                reviewed_at: r.reviewed_at,
+            });
+    }
+
     let analysis_notes: Vec<AnalysisReport> = analysis_list
         .into_iter()
         .map(|n| AnalysisReport {
+            note_id: n.note_id,
             category: n.category.clone(),
             finding: n.finding.clone(),
             description: n.description.clone(),
             confidence_level: n.confidence_level.clone(),
             evidence_id: n.evidence_id.clone(),
+            created_by: n.created_by.clone(),
+            method_reference: n.method_reference.clone(),
+            alternatives_considered: n.alternatives_considered.clone(),
+            tool_version: n.tool_version.clone(),
+            reviews: reviews_by_note.remove(&n.note_id).unwrap_or_default(),
         })
         .collect();
 
@@ -510,15 +550,72 @@ fn render_markdown(p: &ReportPayload) -> Result<String, AppError> {
 
     // ── Analysis Findings ─────────────────────────────────────────────────────
     out.push_str("## Analysis Findings\n\n");
-    let detailed: String = p
-        .analysis_notes
-        .iter()
-        .filter_map(|n| n.description.as_deref())
-        .collect::<Vec<_>>()
-        .join("\n\n");
-    if !detailed.is_empty() {
-        out.push_str(&detailed);
-        out.push_str("\n\n");
+
+    // Validation summary line — counts reveal methodology coverage at
+    // a glance. "N findings total · M peer-reviewed · K pending review"
+    let total = p.analysis_notes.len();
+    let reviewed = p.analysis_notes.iter().filter(|n| !n.reviews.is_empty()).count();
+    let pending = total - reviewed;
+    out.push_str(&format!(
+        "_{} finding{} total · {} peer-reviewed · {} pending review_\n\n",
+        total,
+        if total == 1 { "" } else { "s" },
+        reviewed,
+        pending,
+    ));
+
+    // Per-note detail blocks — author, methodology, alternatives, and
+    // review footer inline so a single finding reads as a self-contained
+    // forensic record when a reader jumps to it from the TOC.
+    for note in &p.analysis_notes {
+        out.push_str(&format!(
+            "### {} — {}\n",
+            esc_md(&note.category),
+            esc_md(&note.finding),
+        ));
+        out.push_str(&format!(
+            "- **Author**: {}\n",
+            esc_md(note.created_by.as_deref().unwrap_or("not recorded")),
+        ));
+        out.push_str(&format!(
+            "- **Confidence**: {}\n",
+            esc_md(&note.confidence_level),
+        ));
+        if let Some(ev) = &note.evidence_id {
+            out.push_str(&format!("- **Evidence**: {}\n", esc_md(ev)));
+        }
+        if let Some(method) = note.method_reference.as_deref().filter(|s| !s.trim().is_empty()) {
+            out.push_str(&format!("- **Method**: {}\n", esc_md(method)));
+        }
+        if let Some(tv) = note.tool_version.as_deref().filter(|s| !s.trim().is_empty()) {
+            out.push_str(&format!("- **Tool**: {}\n", esc_md(tv)));
+        }
+        if let Some(desc) = note.description.as_deref().filter(|s| !s.trim().is_empty()) {
+            out.push_str(&format!("\n{}\n", esc_md(desc)));
+        }
+        if let Some(alts) = note
+            .alternatives_considered
+            .as_deref()
+            .filter(|s| !s.trim().is_empty())
+        {
+            out.push_str(&format!(
+                "\n**Alternative explanations considered:**\n\n{}\n",
+                esc_md(alts),
+            ));
+        }
+        if note.reviews.is_empty() {
+            out.push_str("\n_Pending peer review_\n");
+        } else {
+            out.push_str("\n**Peer review:**\n");
+            for r in &note.reviews {
+                out.push_str(&format!(
+                    "- Reviewed by {} on {}\n",
+                    esc_md(&r.reviewed_by),
+                    esc_md(&r.reviewed_at),
+                ));
+            }
+        }
+        out.push_str("\n");
     }
 
     out.push_str("### Key Findings\n");
@@ -527,7 +624,12 @@ fn render_markdown(p: &ReportPayload) -> Result<String, AppError> {
         .iter()
         .filter(|n| n.confidence_level == "High" || n.confidence_level == "Medium")
     {
-        out.push_str(&format!("- {}\n", esc_md(&note.finding)));
+        let suffix = if note.reviews.is_empty() {
+            " _(pending peer review)_"
+        } else {
+            ""
+        };
+        out.push_str(&format!("- {}{}\n", esc_md(&note.finding), suffix));
     }
     out.push_str("\n---\n\n");
 
@@ -796,18 +898,30 @@ fn render_html(p: &ReportPayload) -> Result<String, AppError> {
 // ─── Report content helpers ───────────────────────────────────────────────────
 
 fn generate_executive_summary(p: &ReportPayload) -> String {
-    let high_conf: Vec<&str> = p
+    // Tag each finding's summary string with a pending-review suffix
+    // when no peer review has been stamped — the executive summary is
+    // the first thing a reader sees, so the qualifier has to be
+    // colocated with the claim.
+    fn tagged(note: &AnalysisReport) -> String {
+        if note.reviews.is_empty() {
+            format!("{} (pending peer review)", note.finding)
+        } else {
+            note.finding.clone()
+        }
+    }
+
+    let high_conf: Vec<String> = p
         .analysis_notes
         .iter()
         .filter(|n| n.confidence_level == "High")
-        .map(|n| n.finding.as_str())
+        .map(tagged)
         .take(3)
         .collect();
-    let med_conf: Vec<&str> = p
+    let med_conf: Vec<String> = p
         .analysis_notes
         .iter()
         .filter(|n| n.confidence_level == "Medium")
-        .map(|n| n.finding.as_str())
+        .map(tagged)
         .take(3)
         .collect();
 

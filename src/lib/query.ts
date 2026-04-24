@@ -71,6 +71,11 @@ export const queryKeys = {
       ["analysis", "list", "evidence", evidenceId] as const,
   },
 
+  /** Analysis review query keys (migration 0007 — validation principles) */
+  analysisReviews: {
+    forNote: (noteId: number) => ["analysis-reviews", "note", noteId] as const,
+  },
+
   /** Evidence file query keys (Phase 3b) */
   evidenceFiles: {
     listForEvidence: (evidenceId: string) =>

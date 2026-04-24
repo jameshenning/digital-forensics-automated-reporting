@@ -66,6 +66,7 @@ use commands::{
     },
     records_cmd::{
         analysis_add, analysis_list_for_case, analysis_list_for_evidence,
+        analysis_mark_reviewed, analysis_reviews_list_for_note,
         custody_add, custody_delete, custody_list_for_case, custody_list_for_evidence,
         custody_update, evidence_add, evidence_delete, evidence_get,
         evidence_list_for_case, hash_add, hash_list_for_case, hash_list_for_evidence,
@@ -333,6 +334,8 @@ pub fn run() {
             analysis_add,
             analysis_list_for_case,
             analysis_list_for_evidence,
+            analysis_mark_reviewed,
+            analysis_reviews_list_for_note,
             // Evidence file commands (Phase 3b)
             evidence_files_upload,
             evidence_files_list,

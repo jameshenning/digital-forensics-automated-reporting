@@ -92,3 +92,52 @@ describe("analysisFormSchema — evidence_id", () => {
     expect(isValid({ ...validBase(), evidence_id: "EV-001" })).toBe(true);
   });
 });
+
+// ─── Migration 0007: validation principles ──────────────────────────────────
+
+describe("analysisFormSchema — validation fields (migration 0007)", () => {
+  it("accepts empty strings for all four new fields (backward-compat)", () => {
+    expect(
+      isValid({
+        ...validBase(),
+        created_by: "",
+        method_reference: "",
+        alternatives_considered: "",
+        tool_version: "",
+      })
+    ).toBe(true);
+  });
+
+  it("accepts populated validation fields", () => {
+    expect(
+      isValid({
+        ...validBase(),
+        created_by: "J. Henning",
+        method_reference: "NIST SP 800-86 §5.2",
+        alternatives_considered: "Ruled out file corruption by SHA256 match",
+        tool_version: "exiftool 12.76",
+      })
+    ).toBe(true);
+  });
+
+  it("rejects created_by over 200 chars", () => {
+    expect(isValid({ ...validBase(), created_by: "A".repeat(201) })).toBe(false);
+    expect(errorPaths({ ...validBase(), created_by: "A".repeat(201) })).toContain(
+      "created_by"
+    );
+  });
+
+  it("rejects method_reference over 500 chars", () => {
+    expect(isValid({ ...validBase(), method_reference: "A".repeat(501) })).toBe(false);
+  });
+
+  it("rejects alternatives_considered over 5000 chars", () => {
+    expect(
+      isValid({ ...validBase(), alternatives_considered: "A".repeat(5001) })
+    ).toBe(false);
+  });
+
+  it("rejects tool_version over 200 chars", () => {
+    expect(isValid({ ...validBase(), tool_version: "A".repeat(201) })).toBe(false);
+  });
+});

@@ -148,9 +148,25 @@ CREATE TABLE IF NOT EXISTS analysis_notes (
     description TEXT,
     confidence_level TEXT DEFAULT 'Medium',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    -- migration 0007: validation principles (nullable, v1-compat)
+    created_by TEXT,
+    method_reference TEXT,
+    alternatives_considered TEXT,
+    tool_version TEXT,
     FOREIGN KEY (case_id) REFERENCES cases (case_id) ON DELETE RESTRICT,
     FOREIGN KEY (evidence_id) REFERENCES evidence (evidence_id) ON DELETE SET NULL
 );
+
+-- migration 0007: append-only peer review records (referenced by reports)
+CREATE TABLE IF NOT EXISTS analysis_reviews (
+    review_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    note_id INTEGER NOT NULL REFERENCES analysis_notes(note_id),
+    reviewed_by TEXT NOT NULL,
+    reviewed_at TEXT NOT NULL,
+    review_notes TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_analysis_reviews_note ON analysis_reviews(note_id);
 
 CREATE TABLE IF NOT EXISTS case_tags (
     tag_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1237,6 +1253,93 @@ async fn test_20_report_generation_content() {
     assert!(
         markdown.contains("Hash Verification"),
         "report must have hash verification section"
+    );
+}
+
+// ─── Test 20c: Report renders validation fields + peer-review footer ────────
+
+#[tokio::test]
+async fn test_20c_report_renders_validation_and_review_metadata() {
+    use dfars_desktop_lib::db::{
+        analysis::{AnalysisInput, add_analysis},
+        analysis_reviews::{AnalysisReviewInput, add_review},
+    };
+
+    let (state, pool) = build_state().await;
+    let case_id = "CASE-3B-020C";
+    setup_case(&pool, case_id, None).await;
+
+    // Note with full validation metadata + one peer review stamp.
+    let reviewed_note = add_analysis(
+        &pool,
+        case_id,
+        &AnalysisInput {
+            evidence_id: None,
+            category: "Observation".into(),
+            finding: "Artifact consistent with baseline".into(),
+            description: Some("Detailed reasoning here.".into()),
+            confidence_level: Some("High".into()),
+            created_by: Some("J. Henning".into()),
+            method_reference: Some("NIST SP 800-86 §5.2".into()),
+            alternatives_considered: Some("Could be noise — ruled out by hash match.".into()),
+            tool_version: Some("exiftool 12.76".into()),
+        },
+    )
+    .await
+    .unwrap();
+
+    add_review(
+        &pool,
+        reviewed_note.note_id,
+        &AnalysisReviewInput {
+            reviewed_by: "Dr. Peer".into(),
+            reviewed_at: "2026-04-22T10:00:00".into(),
+            review_notes: None,
+        },
+    )
+    .await
+    .unwrap();
+
+    // Note with no validation fields and no review — must render as "not recorded" / "Pending peer review".
+    add_analysis(
+        &pool,
+        case_id,
+        &AnalysisInput {
+            evidence_id: None,
+            category: "Other".into(),
+            finding: "Legacy v1-style finding".into(),
+            description: None,
+            confidence_level: Some("Medium".into()),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+
+    let md = reports::preview_markdown(&state, case_id)
+        .await
+        .expect("preview must succeed");
+
+    assert!(md.contains("2 findings total"), "summary line count: {md}");
+    assert!(md.contains("1 peer-reviewed"), "summary peer-review count: {md}");
+    assert!(md.contains("1 pending review"), "summary pending count: {md}");
+
+    assert!(md.contains("J. Henning"), "author rendered: {md}");
+    assert!(md.contains("NIST SP 800-86"), "method reference rendered");
+    assert!(md.contains("exiftool 12.76"), "tool version rendered");
+    assert!(md.contains("Alternative explanations considered"), "alternatives section");
+    assert!(md.contains("ruled out by hash match"), "alternatives body");
+    assert!(md.contains("Reviewed by Dr. Peer"), "review footer");
+
+    assert!(
+        md.contains("Author**: not recorded"),
+        "v1-style note shows 'not recorded' for author"
+    );
+    assert!(md.contains("Pending peer review"), "unreviewed note flagged");
+    // Key Findings list should tag pending ones.
+    assert!(
+        md.contains("Legacy v1-style finding _(pending peer review)_"),
+        "Key Findings pending-review tag: {md}"
     );
 }
 
