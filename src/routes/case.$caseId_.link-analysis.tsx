@@ -23,12 +23,17 @@ import {
 } from "lucide-react";
 
 import { requireAuthBeforeLoad } from "@/lib/auth-guard";
-import { caseGet } from "@/lib/bindings";
-import type { GraphFilter, TimelineFilter } from "@/lib/bindings";
+import { caseGet, caseGraph } from "@/lib/bindings";
+import type { GraphFilter, GraphPayload, TimelineFilter } from "@/lib/bindings";
 import { getToken } from "@/lib/session";
 import { queryKeys } from "@/lib/query";
 import { ENTITY_TYPES } from "@/lib/link-analysis-enums";
 import { entityTypeColor } from "@/lib/link-analysis-enums";
+import {
+  computeShortestPath,
+  type GraphFocus,
+} from "@/lib/graph-focus";
+import { Route as RouteIcon, Target, X as XIcon } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -176,6 +181,58 @@ function LinkAnalysisPage() {
   const [inspectorNodeId, setInspectorNodeId] = React.useState<string | null>(
     null
   );
+
+  // ---------------------------------------------------------------------------
+  // Focus mode (feature #3) — path between two nodes OR k-hop neighborhood.
+  // Driven from the inspector's Analyze section; rendered as dim/highlight
+  // by GraphCanvas; status banner lives below the filter bar.
+  // ---------------------------------------------------------------------------
+
+  const [focus, setFocus] = React.useState<GraphFocus | null>(null);
+
+  // Subscribe to the same graph data the GraphCanvas fetches — TanStack
+  // dedupes by query key so this is free. Used for the banner's node-name
+  // lookups and to detect a no-path-found state without re-fetching.
+  const { data: graphData } = useQuery({
+    queryKey: queryKeys.graph.forCase(caseId, graphFilter),
+    queryFn: () => caseGraph({ token, case_id: caseId, filter: graphFilter }),
+    enabled: !!token,
+  });
+
+  function handleSetPathEndpoint(nodeId: string) {
+    setFocus((prev) => {
+      // If we have a path-source-pending state and this is a different
+      // node, treat the click as setting the target — completes the path.
+      if (
+        prev &&
+        prev.kind === "path" &&
+        prev.target === null &&
+        prev.source !== nodeId
+      ) {
+        return { kind: "path", source: prev.source, target: nodeId };
+      }
+      // Otherwise start fresh with this node as the new source.
+      return { kind: "path", source: nodeId, target: null };
+    });
+    // Close the inspector so the user can see the graph + click again.
+    setInspectorNodeId(null);
+  }
+
+  function handleSetNeighborhood(nodeId: string, hops: number) {
+    setFocus({ kind: "neighborhood", center: nodeId, hops });
+    setInspectorNodeId(null);
+  }
+
+  function clearFocus() {
+    setFocus(null);
+  }
+
+  // Look up a node's display label for the banner. Falls back to the
+  // raw node id (e.g. `entity:42`) if the data isn't loaded yet — the
+  // banner is informational, not load-bearing.
+  function labelFor(nodeId: string): string {
+    return graphData?.nodes.find((n) => n.id === nodeId)?.label ?? nodeId;
+  }
 
   // ---------------------------------------------------------------------------
   // Render
@@ -359,11 +416,18 @@ function LinkAnalysisPage() {
                 Reset
               </Button>
             </div>
+            <FocusBanner
+              focus={focus}
+              graphData={graphData}
+              labelFor={labelFor}
+              onClear={clearFocus}
+            />
             <Suspense fallback={<GraphCanvasSkeleton />}>
               <GraphCanvas
                 caseId={caseId}
                 filter={graphFilter}
                 onNodeClick={setInspectorNodeId}
+                focus={focus}
               />
             </Suspense>
           </TabsContent>
@@ -437,7 +501,112 @@ function LinkAnalysisPage() {
         caseId={caseId}
         nodeId={inspectorNodeId}
         onClose={() => setInspectorNodeId(null)}
+        focus={focus}
+        onSetPathEndpoint={handleSetPathEndpoint}
+        onSetNeighborhood={handleSetNeighborhood}
       />
+    </div>
+  );
+}
+
+// ─── Focus banner (feature #3) ──────────────────────────────────────────────
+
+/**
+ * Shows the active focus state above the graph canvas — pending path
+ * source, completed path with N steps, no-path-found, or k-hop
+ * neighborhood. Render is driven entirely by `focus` + the graph data
+ * (for label lookup and reachability detection).
+ */
+function FocusBanner({
+  focus,
+  graphData,
+  labelFor,
+  onClear,
+}: {
+  focus: GraphFocus | null;
+  graphData: GraphPayload | undefined;
+  labelFor: (nodeId: string) => string;
+  onClear: () => void;
+}) {
+  if (!focus) return null;
+
+  let body: React.ReactNode;
+  let tone: "info" | "warn" = "info";
+
+  if (focus.kind === "path") {
+    if (!focus.target) {
+      body = (
+        <>
+          <RouteIcon className="h-4 w-4" />
+          <span>
+            Path: <strong>{labelFor(focus.source)}</strong> → ?{" "}
+            <span className="text-muted-foreground">
+              click another node and choose <em>Find path to here</em>
+            </span>
+          </span>
+        </>
+      );
+    } else {
+      const path = graphData
+        ? computeShortestPath(graphData.edges, focus.source, focus.target)
+        : null;
+      if (!path) {
+        tone = "warn";
+        body = (
+          <>
+            <RouteIcon className="h-4 w-4" />
+            <span>
+              No path between <strong>{labelFor(focus.source)}</strong> and{" "}
+              <strong>{labelFor(focus.target)}</strong> in the current view.
+            </span>
+          </>
+        );
+      } else {
+        body = (
+          <>
+            <RouteIcon className="h-4 w-4" />
+            <span>
+              Path: <strong>{labelFor(focus.source)}</strong> →{" "}
+              <strong>{labelFor(focus.target)}</strong>{" "}
+              <span className="text-muted-foreground">
+                ({path.length - 1} step{path.length - 1 === 1 ? "" : "s"})
+              </span>
+            </span>
+          </>
+        );
+      }
+    }
+  } else {
+    body = (
+      <>
+        <Target className="h-4 w-4" />
+        <span>
+          {focus.hops}-hop neighborhood of{" "}
+          <strong>{labelFor(focus.center)}</strong>
+        </span>
+      </>
+    );
+  }
+
+  const toneClass =
+    tone === "warn"
+      ? "border-amber-500/50 bg-amber-500/5 text-amber-700 dark:text-amber-300"
+      : "border-amber-500/40 bg-amber-500/[.04]";
+
+  return (
+    <div
+      className={`flex items-center gap-2 mb-2 px-3 py-2 rounded-md border text-xs ${toneClass}`}
+    >
+      {body}
+      <Button
+        size="sm"
+        variant="ghost"
+        className="ml-auto h-6 px-2 text-xs"
+        onClick={onClear}
+      >
+        <XIcon className="h-3 w-3 mr-1" />
+        Clear
+      </Button>
     </div>
   );
 }

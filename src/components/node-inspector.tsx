@@ -18,7 +18,16 @@
 
 import * as React from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Building2, FileBox, Network, User, Tag, Users } from "lucide-react";
+import {
+  Building2,
+  FileBox,
+  Network,
+  Route as RouteIcon,
+  Target,
+  User,
+  Tag,
+  Users,
+} from "lucide-react";
 
 import { nodeInspector } from "@/lib/bindings";
 import type {
@@ -29,8 +38,10 @@ import type {
 import { getToken } from "@/lib/session";
 import { queryKeys } from "@/lib/query";
 import { entityTypeColor, identifierKindHex } from "@/lib/link-analysis-enums";
+import type { GraphFocus } from "@/lib/graph-focus";
 
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import {
   Sheet,
   SheetContent,
@@ -38,6 +49,7 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Separator } from "@/components/ui/separator";
 import { SourceToolBadge } from "@/components/source-tool-badge";
 
 interface NodeInspectorProps {
@@ -45,9 +57,25 @@ interface NodeInspectorProps {
   /** When non-null, the sheet is open and shows that node's data. */
   nodeId: string | null;
   onClose: () => void;
+  /** Current graph focus — used to label the path-endpoint button
+   *  ("Start path here" vs. "Find path to here"). */
+  focus?: GraphFocus | null;
+  /** Toggle this node as the next path endpoint. The route decides
+   *  whether the click means source or target based on existing focus
+   *  state. Optional — when omitted, the analyze section is hidden. */
+  onSetPathEndpoint?: (nodeId: string) => void;
+  /** Show this node's k-hop neighborhood. */
+  onSetNeighborhood?: (nodeId: string, hops: number) => void;
 }
 
-export function NodeInspector({ caseId, nodeId, onClose }: NodeInspectorProps) {
+export function NodeInspector({
+  caseId,
+  nodeId,
+  onClose,
+  focus,
+  onSetPathEndpoint,
+  onSetNeighborhood,
+}: NodeInspectorProps) {
   const token = getToken() ?? "";
 
   const { data, isLoading, isError } = useQuery({
@@ -90,8 +118,28 @@ export function NodeInspector({ caseId, nodeId, onClose }: NodeInspectorProps) {
               from the case after the graph was last refreshed.
             </p>
           )}
-          {data && data.kind === "entity" && <EntityBody view={data} />}
-          {data && data.kind === "evidence" && <EvidenceBody view={data} />}
+          {data && data.kind === "entity" && (
+            <>
+              <EntityBody view={data} />
+              <AnalyzeSection
+                nodeId={nodeId!}
+                focus={focus ?? null}
+                onSetPathEndpoint={onSetPathEndpoint}
+                onSetNeighborhood={onSetNeighborhood}
+              />
+            </>
+          )}
+          {data && data.kind === "evidence" && (
+            <>
+              <EvidenceBody view={data} />
+              <AnalyzeSection
+                nodeId={nodeId!}
+                focus={focus ?? null}
+                onSetPathEndpoint={onSetPathEndpoint}
+                onSetNeighborhood={onSetNeighborhood}
+              />
+            </>
+          )}
           {data && data.kind === "identifier" && (
             <IdentifierBody view={data} />
           )}
@@ -487,5 +535,89 @@ function InspectorSkeleton() {
       <Skeleton className="h-4 w-5/6" />
       <Skeleton className="h-20 w-full" />
     </div>
+  );
+}
+
+// ─── Analyze section (link analysis #3) ──────────────────────────────────────
+
+function AnalyzeSection({
+  nodeId,
+  focus,
+  onSetPathEndpoint,
+  onSetNeighborhood,
+}: {
+  nodeId: string;
+  focus: GraphFocus | null;
+  onSetPathEndpoint?: (nodeId: string) => void;
+  onSetNeighborhood?: (nodeId: string, hops: number) => void;
+}) {
+  // Hide the section entirely when the route hasn't supplied handlers.
+  if (!onSetPathEndpoint && !onSetNeighborhood) return null;
+
+  // Path-endpoint button label adapts to current focus state.
+  // - no focus or completed path → "Start path here"
+  // - path with source set, no target, and this node is NOT the source
+  //   → "Find path to here"
+  // - source matches this node → "This is the path source" (disabled)
+  let pathLabel: string;
+  let pathDisabled = false;
+  if (
+    focus &&
+    focus.kind === "path" &&
+    focus.source &&
+    !focus.target
+  ) {
+    if (focus.source === nodeId) {
+      pathLabel = "This is the path source";
+      pathDisabled = true;
+    } else {
+      pathLabel = "Find path to here";
+    }
+  } else {
+    pathLabel = "Start path here";
+  }
+
+  return (
+    <>
+      <Separator className="my-5" />
+      <section>
+        <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-3">
+          Analyze
+        </h3>
+        <div className="space-y-3">
+          {onSetPathEndpoint && (
+            <Button
+              variant="outline"
+              size="sm"
+              className="w-full justify-start"
+              disabled={pathDisabled}
+              onClick={() => onSetPathEndpoint(nodeId)}
+            >
+              <RouteIcon className="h-4 w-4 mr-2" />
+              {pathLabel}
+            </Button>
+          )}
+          {onSetNeighborhood && (
+            <div className="flex items-center gap-2">
+              <Target className="h-4 w-4 text-muted-foreground shrink-0" />
+              <span className="text-xs text-muted-foreground">
+                Neighborhood:
+              </span>
+              {[1, 2, 3].map((h) => (
+                <Button
+                  key={h}
+                  variant="outline"
+                  size="sm"
+                  className="px-3"
+                  onClick={() => onSetNeighborhood(nodeId, h)}
+                >
+                  {h}-hop
+                </Button>
+              ))}
+            </div>
+          )}
+        </div>
+      </section>
+    </>
   );
 }

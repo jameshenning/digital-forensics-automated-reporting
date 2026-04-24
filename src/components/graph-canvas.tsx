@@ -17,15 +17,76 @@ import { useQuery } from "@tanstack/react-query";
 import cytoscape from "cytoscape";
 
 import { caseGraph } from "@/lib/bindings";
-import type { GraphFilter } from "@/lib/bindings";
+import type { GraphFilter, GraphPayload } from "@/lib/bindings";
 import { getToken } from "@/lib/session";
 import { queryKeys } from "@/lib/query";
 import { entityTypeColor, identifierKindHex } from "@/lib/link-analysis-enums";
+import {
+  computeNeighborhood,
+  computeShortestPath,
+  edgeKey,
+  pathEdgeKeys,
+  type GraphFocus,
+} from "@/lib/graph-focus";
 
 interface GraphCanvasProps {
   caseId: string;
   filter: GraphFilter;
   onNodeClick?: (nodeId: string) => void;
+  /** When non-null, dim the graph except for the path/neighborhood
+   *  highlighted by the focus descriptor. Computed against the current
+   *  graph data — if the focus references a node not in the data
+   *  (e.g., user filtered it out after setting focus), no highlight is
+   *  applied and nothing is dimmed (graceful degradation). */
+  focus?: GraphFocus | null;
+}
+
+/**
+ * Apply path/neighborhood focus to a live cytoscape instance.
+ * Idempotent — clears prior `dimmed`/`highlighted` classes before
+ * re-applying. Safe to call with `focus = null` to fully reset.
+ *
+ * Uses the pure helpers from `@/lib/graph-focus` rather than
+ * cytoscape's built-in `aStar`/`openNeighborhood` so the behavior
+ * is unit-tested at the algorithm level (see graph-focus.test.ts).
+ */
+function applyFocusHighlight(
+  cy: cytoscape.Core,
+  focus: GraphFocus | null,
+  data: GraphPayload,
+): void {
+  cy.elements().removeClass("dimmed highlighted");
+  if (!focus) return;
+
+  let highlightedNodes = new Set<string>();
+  let highlightedEdgeKeys = new Set<string>();
+
+  if (focus.kind === "path") {
+    if (!focus.target) return; // pending — user has set source but not target yet
+    const path = computeShortestPath(data.edges, focus.source, focus.target);
+    if (!path) return; // disconnected — banner explains, don't dim everything
+    highlightedNodes = new Set(path);
+    highlightedEdgeKeys = pathEdgeKeys(path);
+  } else if (focus.kind === "neighborhood") {
+    highlightedNodes = computeNeighborhood(data.edges, focus.center, focus.hops);
+    // For neighborhood, every edge whose BOTH endpoints survive is highlighted.
+    for (const e of data.edges) {
+      if (highlightedNodes.has(e.source) && highlightedNodes.has(e.target)) {
+        highlightedEdgeKeys.add(edgeKey(e.source, e.target));
+      }
+    }
+  }
+
+  cy.nodes().forEach((n) => {
+    n.addClass(highlightedNodes.has(n.id()) ? "highlighted" : "dimmed");
+  });
+  cy.edges().forEach((e) => {
+    const src = e.data("source") as string;
+    const tgt = e.data("target") as string;
+    e.addClass(
+      highlightedEdgeKeys.has(edgeKey(src, tgt)) ? "highlighted" : "dimmed",
+    );
+  });
 }
 
 /** Hex color for a node based on its kind + entity_type. Identifier
@@ -56,7 +117,7 @@ function nodeHex(kind: string, entity_type: string | null): string {
   return "#888";
 }
 
-export function GraphCanvas({ caseId, filter, onNodeClick }: GraphCanvasProps) {
+export function GraphCanvas({ caseId, filter, onNodeClick, focus }: GraphCanvasProps) {
   const token = getToken() ?? "";
   const containerRef = React.useRef<HTMLDivElement>(null);
   const cyRef = React.useRef<cytoscape.Core | null>(null);
@@ -185,6 +246,31 @@ export function GraphCanvas({ caseId, filter, onNodeClick }: GraphCanvasProps) {
             label: "", // platform shows in inspector (feature #2), not on canvas
           },
         },
+        // Focus mode (feature #3): "dimmed" pushes everything off-path
+        // to background opacity; "highlighted" amber-rings the
+        // surviving nodes/edges so the path or neighborhood pops.
+        {
+          selector: ".dimmed",
+          style: {
+            opacity: 0.18,
+            "text-opacity": 0.18,
+          },
+        },
+        {
+          selector: "node.highlighted",
+          style: {
+            "border-width": 3,
+            "border-color": "#fbbf24",
+          },
+        },
+        {
+          selector: "edge.highlighted",
+          style: {
+            "line-color": "#fbbf24",
+            "target-arrow-color": "#fbbf24",
+            width: 3,
+          },
+        },
         {
           selector: "node:selected",
           style: {
@@ -218,6 +304,16 @@ export function GraphCanvas({ caseId, filter, onNodeClick }: GraphCanvasProps) {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data, onNodeClick]);
+
+  // Apply focus highlighting whenever focus or the underlying data
+  // changes. Runs SECOND in declaration order, so when data changes
+  // and the build effect re-creates the cy instance above, this
+  // effect re-applies the existing focus on the new instance.
+  React.useEffect(() => {
+    const cy = cyRef.current;
+    if (!cy || !data) return;
+    applyFocusHighlight(cy, focus ?? null, data);
+  }, [focus, data]);
 
   const isEmpty = data && data.nodes.length === 0;
 

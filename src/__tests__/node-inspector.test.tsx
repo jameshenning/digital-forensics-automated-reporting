@@ -186,6 +186,58 @@ describe("NodeInspector", () => {
     expect(screen.getByText("Acme")).toBeInTheDocument();
   });
 
+  it("shows Analyze section when handlers are provided", async () => {
+    vi.mocked(invoke).mockResolvedValue(ENTITY_PAYLOAD);
+
+    const { NodeInspector } = await import("@/components/node-inspector");
+    const { Wrapper } = makeWrapper();
+    const setPath = vi.fn();
+    const setNeighborhood = vi.fn();
+
+    render(
+      React.createElement(Wrapper, null,
+        React.createElement(NodeInspector, {
+          caseId: "CASE-1",
+          nodeId: "entity:42",
+          onClose: () => {},
+          onSetPathEndpoint: setPath,
+          onSetNeighborhood: setNeighborhood,
+        })
+      )
+    );
+
+    await waitFor(() =>
+      expect(screen.getByText(/Start path here/i)).toBeInTheDocument()
+    );
+    expect(screen.getByText(/1-hop/i)).toBeInTheDocument();
+    expect(screen.getByText(/2-hop/i)).toBeInTheDocument();
+    expect(screen.getByText(/3-hop/i)).toBeInTheDocument();
+  });
+
+  it("path button label flips to 'Find path to here' when source is set on a different node", async () => {
+    vi.mocked(invoke).mockResolvedValue(ENTITY_PAYLOAD);
+
+    const { NodeInspector } = await import("@/components/node-inspector");
+    const { Wrapper } = makeWrapper();
+
+    render(
+      React.createElement(Wrapper, null,
+        React.createElement(NodeInspector, {
+          caseId: "CASE-1",
+          nodeId: "entity:42",
+          onClose: () => {},
+          focus: { kind: "path" as const, source: "entity:99", target: null },
+          onSetPathEndpoint: () => {},
+          onSetNeighborhood: () => {},
+        })
+      )
+    );
+
+    await waitFor(() =>
+      expect(screen.getByText(/Find path to here/i)).toBeInTheDocument()
+    );
+  });
+
   it("renders not_found gracefully for stale nodes", async () => {
     vi.mocked(invoke).mockResolvedValue({ kind: "not_found" });
 
