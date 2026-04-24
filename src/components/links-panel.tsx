@@ -86,7 +86,7 @@ export function LinksPanel({ caseId }: LinksPanelProps) {
         queryKey: queryKeys.links.listForCase(caseId),
       });
       void queryClient.invalidateQueries({
-        queryKey: queryKeys.graph.forCase(caseId, { entity_types: null, include_evidence: true }),
+        queryKey: queryKeys.graph.allForCase(caseId),
       });
       toastSuccess("Link added.");
       setAddOpen(false);
@@ -102,7 +102,7 @@ export function LinksPanel({ caseId }: LinksPanelProps) {
         queryKey: queryKeys.links.listForCase(caseId),
       });
       void queryClient.invalidateQueries({
-        queryKey: queryKeys.graph.forCase(caseId, { entity_types: null, include_evidence: true }),
+        queryKey: queryKeys.graph.allForCase(caseId),
       });
       toastSuccess("Link deleted.");
     },

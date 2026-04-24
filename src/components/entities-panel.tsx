@@ -80,7 +80,7 @@ export function EntitiesPanel({ caseId }: EntitiesPanelProps) {
         queryKey: queryKeys.entities.listForCase(caseId),
       });
       void queryClient.invalidateQueries({
-        queryKey: queryKeys.graph.forCase(caseId, { entity_types: null, include_evidence: true }),
+        queryKey: queryKeys.graph.allForCase(caseId),
       });
       toastSuccess("Entity added.");
       setAddOpen(false);
@@ -101,7 +101,7 @@ export function EntitiesPanel({ caseId }: EntitiesPanelProps) {
         queryKey: queryKeys.entities.listForCase(caseId),
       });
       void queryClient.invalidateQueries({
-        queryKey: queryKeys.graph.forCase(caseId, { entity_types: null, include_evidence: true }),
+        queryKey: queryKeys.graph.allForCase(caseId),
       });
       toastSuccess("Entity updated.");
       setEditEntity(null);
@@ -117,7 +117,7 @@ export function EntitiesPanel({ caseId }: EntitiesPanelProps) {
         queryKey: queryKeys.entities.listForCase(caseId),
       });
       void queryClient.invalidateQueries({
-        queryKey: queryKeys.graph.forCase(caseId, { entity_types: null, include_evidence: true }),
+        queryKey: queryKeys.graph.allForCase(caseId),
       });
       toastSuccess("Entity deleted.");
     },

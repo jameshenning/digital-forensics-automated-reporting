@@ -20,7 +20,7 @@ import { caseGraph } from "@/lib/bindings";
 import type { GraphFilter } from "@/lib/bindings";
 import { getToken } from "@/lib/session";
 import { queryKeys } from "@/lib/query";
-import { entityTypeColor } from "@/lib/link-analysis-enums";
+import { entityTypeColor, identifierKindHex } from "@/lib/link-analysis-enums";
 
 interface GraphCanvasProps {
   caseId: string;
@@ -28,9 +28,14 @@ interface GraphCanvasProps {
   onNodeClick?: (nodeId: string) => void;
 }
 
-/** Hex color for a node based on its kind + entity_type */
+/** Hex color for a node based on its kind + entity_type. Identifier
+ *  nodes carry the identifier kind in `entity_type` (email/phone/etc.)
+ *  and pick from the identifier palette. */
 function nodeHex(kind: string, entity_type: string | null): string {
   if (kind === "evidence") return entityTypeColor("evidence").hex;
+  if (kind === "identifier" && entity_type) {
+    return identifierKindHex(entity_type);
+  }
   if (
     entity_type &&
     [
@@ -83,16 +88,29 @@ export function GraphCanvas({ caseId, filter, onNodeClick }: GraphCanvasProps) {
         },
         classes: [n.kind, n.entity_type ?? ""].filter(Boolean).join(" "),
       })),
-      ...data.edges.map((e) => ({
-        data: {
-          id: e.id,
-          source: e.source,
-          target: e.target,
-          label: e.label ?? "",
-          weight: e.weight,
-        },
-        classes: e.directional ? "directed" : "undirected",
-      })),
+      ...data.edges.map((e) => {
+        // has_identifier edges (id starts with "has:") are visually
+        // softer than user-authored entity_links — same data class
+        // (the entity owns the identifier), but lower informational
+        // weight than an investigator-asserted link.
+        const isHasEdge = e.id.startsWith("has:");
+        const edgeClasses = [
+          e.directional ? "directed" : "undirected",
+          isHasEdge ? "has-identifier" : "",
+        ]
+          .filter(Boolean)
+          .join(" ");
+        return {
+          data: {
+            id: e.id,
+            source: e.source,
+            target: e.target,
+            label: e.label ?? "",
+            weight: e.weight,
+          },
+          classes: edgeClasses,
+        };
+      }),
     ];
 
     const cy = cytoscape({
@@ -124,6 +142,19 @@ export function GraphCanvas({ caseId, filter, onNodeClick }: GraphCanvasProps) {
           },
         },
         {
+          selector: "node[kind='identifier']",
+          style: {
+            shape: "diamond" as cytoscape.Css.NodeShape,
+            width: 30,
+            height: 30,
+            "font-size": 9,
+            "text-max-width": "120px",
+            "text-wrap": "ellipsis",
+            "border-width": 1,
+            "border-color": "#1f2937",
+          },
+        },
+        {
           selector: "edge",
           style: {
             width: 1.5,
@@ -143,6 +174,15 @@ export function GraphCanvas({ caseId, filter, onNodeClick }: GraphCanvasProps) {
           selector: "edge.directed",
           style: {
             "target-arrow-shape": "triangle",
+          },
+        },
+        {
+          selector: "edge.has-identifier",
+          style: {
+            "line-color": "#4b5563",
+            "line-style": "dashed" as cytoscape.Css.LineStyle,
+            width: 1,
+            label: "", // platform shows in inspector (feature #2), not on canvas
           },
         },
         {

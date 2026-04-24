@@ -78,7 +78,7 @@ describe("GraphCanvas", () => {
       React.createElement(Wrapper, null,
         React.createElement(GraphCanvas, {
           caseId: "CASE-001",
-          filter: { entity_types: null, include_evidence: true },
+          filter: { entity_types: null, include_evidence: true, include_identifiers: false, only_shared_identifiers: false },
         })
       )
     );
@@ -107,7 +107,7 @@ describe("GraphCanvas", () => {
       React.createElement(Wrapper, null,
         React.createElement(GraphCanvas, {
           caseId: "CASE-002",
-          filter: { entity_types: null, include_evidence: false },
+          filter: { entity_types: null, include_evidence: false, include_identifiers: false, only_shared_identifiers: false },
         })
       )
     );

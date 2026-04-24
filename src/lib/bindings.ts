@@ -1102,6 +1102,16 @@ export interface GraphPayload {
 export interface GraphFilter {
   entity_types: EntityType[] | null; // null → all
   include_evidence: boolean;
+  /** When true, person/business identifiers are emitted as graph nodes
+   *  (kind="identifier") with `has_*` edges from each owning entity.
+   *  Identifiers sharing the same dedup key collapse to one node, so
+   *  two entities sharing an email/phone/handle/etc. become visibly
+   *  connected through the shared identifier node. */
+  include_identifiers: boolean;
+  /** When true and `include_identifiers` is true, only identifier nodes
+   *  shared by ≥2 distinct entities are kept. Surfaces high-signal
+   *  cross-entity connections. */
+  only_shared_identifiers: boolean;
 }
 
 export interface TimelineItem {

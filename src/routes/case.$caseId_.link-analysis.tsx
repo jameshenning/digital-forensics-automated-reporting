@@ -96,6 +96,8 @@ export const Route = createFileRoute("/case/$caseId_/link-analysis")({
 const DEFAULT_GRAPH_FILTER: GraphFilter = {
   entity_types: null, // all
   include_evidence: true,
+  include_identifiers: true,
+  only_shared_identifiers: false,
 };
 
 const DEFAULT_TIMELINE_FILTER: TimelineFilter = {
@@ -287,7 +289,55 @@ function LinkAnalysisPage() {
                   htmlFor="include-evidence"
                   className="text-xs text-muted-foreground cursor-pointer"
                 >
-                  Evidence nodes
+                  Evidence
+                </label>
+              </div>
+              <div className="flex items-center gap-2">
+                <Switch
+                  id="include-identifiers"
+                  checked={graphFilter.include_identifiers}
+                  onCheckedChange={(checked) =>
+                    setGraphFilter((prev) => ({
+                      ...prev,
+                      include_identifiers: checked,
+                      // Disabling identifiers also disables the shared-only
+                      // sub-toggle to avoid a confusing "filter does nothing"
+                      // state.
+                      only_shared_identifiers: checked
+                        ? prev.only_shared_identifiers
+                        : false,
+                    }))
+                  }
+                />
+                <label
+                  htmlFor="include-identifiers"
+                  className="text-xs text-muted-foreground cursor-pointer"
+                >
+                  Identifiers
+                </label>
+              </div>
+              <div className="flex items-center gap-2">
+                <Switch
+                  id="only-shared-identifiers"
+                  checked={graphFilter.only_shared_identifiers}
+                  disabled={!graphFilter.include_identifiers}
+                  onCheckedChange={(checked) =>
+                    setGraphFilter((prev) => ({
+                      ...prev,
+                      only_shared_identifiers: checked,
+                    }))
+                  }
+                />
+                <label
+                  htmlFor="only-shared-identifiers"
+                  className={`text-xs cursor-pointer ${
+                    graphFilter.include_identifiers
+                      ? "text-muted-foreground"
+                      : "text-muted-foreground/40 cursor-not-allowed"
+                  }`}
+                  title="Show only identifiers shared by 2+ entities — surfaces high-signal cross-entity connections"
+                >
+                  Only shared
                 </label>
               </div>
               <Button

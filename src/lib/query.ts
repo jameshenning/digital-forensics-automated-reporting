@@ -125,6 +125,11 @@ export const queryKeys = {
   graph: {
     forCase: (caseId: string, filter: GraphFilter) =>
       ["graph", caseId, filter] as const,
+    /** Prefix key for invalidating ALL graph filter combinations for a
+     *  given case at once. TanStack matches by array prefix so this
+     *  catches any active filter the user has applied. Use this for
+     *  invalidations from CRUD mutations on entities/links/identifiers. */
+    allForCase: (caseId: string) => ["graph", caseId] as const,
   },
 
   /** Crime-line query keys (Phase 4) */

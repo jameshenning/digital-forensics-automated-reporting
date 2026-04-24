@@ -22,18 +22,20 @@ use crate::error::AppError;
 
 /// A single node in the Cytoscape graph.
 ///
-/// `id` is namespaced: `"entity:<entity_id>"` or `"evidence:<evidence_id>"`
-/// so they never collide across tables.
+/// `id` is namespaced: `"entity:<entity_id>"`, `"evidence:<evidence_id>"`,
+/// or `"identifier:<identifier_id>"` so they never collide across tables.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GraphNode {
-    /// Namespaced id: `"entity:<id>"` or `"evidence:<id>"`.
+    /// Namespaced id: `"entity:<id>"`, `"evidence:<id>"`, or `"identifier:<id>"`.
     pub id: String,
     pub label: String,
-    /// `"entity"` or `"evidence"`.
+    /// `"entity"`, `"evidence"`, or `"identifier"`.
     pub kind: String,
-    /// entity_type if kind == "entity", else None.
+    /// For `kind = "entity"`: the entity_type. For `kind = "identifier"`: the
+    /// identifier kind (email/phone/domain/etc.). `None` for evidence.
     pub entity_type: Option<String>,
-    /// subtype if kind == "entity" and entity has one.
+    /// For `kind = "entity"`: the entity subtype. For `kind = "identifier"`:
+    /// the platform (e.g., `"twitter"`, `"gmail"`). `None` otherwise.
     pub subtype: Option<String>,
 }
 
@@ -66,6 +68,35 @@ pub struct GraphFilter {
     pub entity_types: Option<Vec<String>>,
     /// If `false`, no evidence nodes are included.  Default: `true`.
     pub include_evidence: bool,
+    /// If `true` (default), `person_identifiers` and `business_identifiers`
+    /// rows are emitted as graph nodes with `has_identifier` edges from
+    /// each owning entity. Identifiers sharing the same dedup key
+    /// (`kind`, normalized `value`, normalized `platform`) collapse to a
+    /// single node, so two entities sharing an email/phone/handle/etc.
+    /// become visually connected through the shared identifier.
+    #[serde(default = "default_true")]
+    pub include_identifiers: bool,
+    /// When `true` and `include_identifiers` is also `true`, only identifier
+    /// nodes connected to ≥2 distinct entities are kept. Surfaces the
+    /// high-signal subset: shared identifiers are the strongest
+    /// non-obvious connections in OSINT investigations.
+    #[serde(default)]
+    pub only_shared_identifiers: bool,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+impl Default for GraphFilter {
+    fn default() -> Self {
+        Self {
+            entity_types: None,
+            include_evidence: true,
+            include_identifiers: true,
+            only_shared_identifiers: false,
+        }
+    }
 }
 
 // ─── Timeline types ───────────────────────────────────────────────────────────
@@ -166,6 +197,36 @@ struct LinkRow {
     weight: f64,
 }
 
+#[derive(sqlx::FromRow)]
+struct IdentRow {
+    identifier_id: i64,
+    entity_id: i64,
+    kind: String,
+    value: String,
+    platform: Option<String>,
+}
+
+/// Normalize a string for identifier dedup: trim + lowercase. Mirrors the
+/// dedup key used by `insert_discovered_batch` in
+/// `db::person_identifiers` / `db::business_identifiers`.
+fn normalize_ident(s: &str) -> String {
+    s.trim().to_lowercase()
+}
+
+/// Truncate an identifier value for use as the on-canvas node label.
+/// Long emails/URLs/domains overflow the diamond shape and clutter the
+/// graph; the full value remains available via the inspector (feature #2).
+fn truncate_label(s: &str, max_chars: usize) -> String {
+    let chars: Vec<char> = s.chars().collect();
+    if chars.len() <= max_chars {
+        s.to_string()
+    } else {
+        let mut out: String = chars.iter().take(max_chars).collect();
+        out.push('…');
+        out
+    }
+}
+
 // ─── Graph assembly ───────────────────────────────────────────────────────────
 
 /// Build a Cytoscape.js-friendly graph payload for a case.
@@ -252,7 +313,126 @@ pub async fn build_graph(
         }
     }
 
-    // 3. Load active links and emit edges only if both endpoints are in the node set.
+    // 3. Identifier nodes (if requested). We query each identifier table
+    //    restricted to the entity_ids currently in the node set, so a
+    //    filtered-out entity contributes no identifiers. Identifiers
+    //    sharing the same dedup key collapse to a single node — this is
+    //    where the cross-entity connections become visible.
+    let mut edges: Vec<GraphEdge> = Vec::new();
+
+    if filter.include_identifiers {
+        let person_ids: Vec<i64> = entity_rows
+            .iter()
+            .filter(|e| e.entity_type == "person")
+            .map(|e| e.entity_id)
+            .collect();
+        let business_ids: Vec<i64> = entity_rows
+            .iter()
+            .filter(|e| e.entity_type == "business")
+            .map(|e| e.entity_id)
+            .collect();
+
+        let mut all_idents: Vec<IdentRow> = Vec::new();
+
+        if !person_ids.is_empty() {
+            let placeholders = person_ids.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
+            let sql = format!(
+                r#"SELECT identifier_id, entity_id, kind, value, platform
+                   FROM person_identifiers
+                   WHERE is_deleted = 0 AND entity_id IN ({placeholders})
+                   ORDER BY entity_id ASC, identifier_id ASC"#
+            );
+            let mut q = sqlx::query_as::<_, IdentRow>(&sql);
+            for id in &person_ids {
+                q = q.bind(id);
+            }
+            all_idents.extend(q.fetch_all(pool).await?);
+        }
+
+        if !business_ids.is_empty() {
+            let placeholders = business_ids.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
+            let sql = format!(
+                r#"SELECT identifier_id, entity_id, kind, value, platform
+                   FROM business_identifiers
+                   WHERE is_deleted = 0 AND entity_id IN ({placeholders})
+                   ORDER BY entity_id ASC, identifier_id ASC"#
+            );
+            let mut q = sqlx::query_as::<_, IdentRow>(&sql);
+            for id in &business_ids {
+                q = q.bind(id);
+            }
+            all_idents.extend(q.fetch_all(pool).await?);
+        }
+
+        // Dedup key: (kind, normalized value, normalized platform).
+        // Sort-by-(entity_id,identifier_id) above gives deterministic
+        // canonical-id assignment — the lowest identifier_id encountered
+        // first wins the node id for a given dedup key.
+        type DedupKey = (String, String, String);
+        let mut node_for_key: std::collections::HashMap<DedupKey, String> =
+            std::collections::HashMap::new();
+        let mut entities_per_key: std::collections::HashMap<DedupKey, std::collections::HashSet<i64>> =
+            std::collections::HashMap::new();
+        let mut ident_nodes: Vec<GraphNode> = Vec::new();
+        let mut ident_edges: Vec<GraphEdge> = Vec::new();
+
+        for r in &all_idents {
+            let key: DedupKey = (
+                r.kind.clone(),
+                normalize_ident(&r.value),
+                r.platform.as_deref().map(normalize_ident).unwrap_or_default(),
+            );
+
+            let node_id = if let Some(existing) = node_for_key.get(&key) {
+                existing.clone()
+            } else {
+                let id = format!("identifier:{}", r.identifier_id);
+                node_for_key.insert(key.clone(), id.clone());
+                ident_nodes.push(GraphNode {
+                    id: id.clone(),
+                    label: truncate_label(&r.value, 32),
+                    kind: "identifier".into(),
+                    entity_type: Some(r.kind.clone()),
+                    subtype: r.platform.clone(),
+                });
+                id
+            };
+
+            entities_per_key.entry(key).or_default().insert(r.entity_id);
+
+            ident_edges.push(GraphEdge {
+                id: format!("has:e{}-{}", r.entity_id, node_id),
+                source: format!("entity:{}", r.entity_id),
+                target: node_id,
+                label: r.platform.clone(),
+                directional: false,
+                weight: 1.0,
+            });
+        }
+
+        // only_shared_identifiers: keep nodes whose dedup key has ≥2
+        // distinct entities pointing at it. The filter is applied after
+        // the full set is built so we can count cross-entity references.
+        if filter.only_shared_identifiers {
+            let shared_node_ids: std::collections::HashSet<String> = node_for_key
+                .iter()
+                .filter(|(k, _)| {
+                    entities_per_key.get(*k).map(|s| s.len()).unwrap_or(0) >= 2
+                })
+                .map(|(_, id)| id.clone())
+                .collect();
+            ident_nodes.retain(|n| shared_node_ids.contains(&n.id));
+            ident_edges.retain(|e| shared_node_ids.contains(&e.target));
+        }
+
+        for n in &ident_nodes {
+            node_ids.insert(n.id.clone());
+        }
+        nodes.extend(ident_nodes);
+        edges.extend(ident_edges);
+    }
+
+    // 4. Load active links and emit edges only if both endpoints are in the node set.
     let link_rows: Vec<LinkRow> = sqlx::query_as::<_, LinkRow>(
         r#"SELECT link_id, source_type, source_id, target_type, target_id,
                   link_label, directional, weight
@@ -263,7 +443,7 @@ pub async fn build_graph(
     .fetch_all(pool)
     .await?;
 
-    let mut edges: Vec<GraphEdge> = Vec::with_capacity(link_rows.len());
+    edges.reserve(link_rows.len());
     for lk in &link_rows {
         let source_node = format!("{}:{}", lk.source_type, lk.source_id);
         let target_node = format!("{}:{}", lk.target_type, lk.target_id);

@@ -1177,6 +1177,9 @@ async fn test_graph_happy_path() {
     let filter = GraphFilter {
         entity_types: None,
         include_evidence: true,
+        // No identifiers attached in this test; disable to keep the shape v1.
+        include_identifiers: false,
+        ..Default::default()
     };
     let payload = build_graph(&pool, &case_id, &filter).await.expect("build_graph failed");
 
@@ -1225,6 +1228,8 @@ async fn test_graph_entity_type_filter() {
     let filter = GraphFilter {
         entity_types: Some(vec!["person".into()]),
         include_evidence: false,
+        include_identifiers: false,
+        ..Default::default()
     };
     let payload = build_graph(&pool, &case_id, &filter).await.expect("build_graph");
 
@@ -1262,6 +1267,8 @@ async fn test_graph_no_evidence() {
     let filter = GraphFilter {
         entity_types: None,
         include_evidence: false,
+        include_identifiers: false,
+        ..Default::default()
     };
     let payload = build_graph(&pool, &case_id, &filter).await.expect("build_graph");
 
@@ -1303,6 +1310,8 @@ async fn test_graph_excludes_soft_deleted() {
     let filter = GraphFilter {
         entity_types: None,
         include_evidence: false,
+        include_identifiers: false,
+        ..Default::default()
     };
     let payload = build_graph(&pool, &case_id, &filter).await.expect("build_graph");
 
@@ -1311,6 +1320,231 @@ async fn test_graph_excludes_soft_deleted() {
     assert_eq!(payload.nodes[0].id, format!("entity:{b}"));
     // Link is cascade-deleted — no edges
     assert_eq!(payload.edges.len(), 0, "edge involving deleted entity must not appear");
+}
+
+// ─── Test 15a-d: Identifiers as graph nodes ──────────────────────────────────
+
+#[tokio::test]
+async fn test_graph_identifiers_emitted_per_entity() {
+    let (_, pool) = make_state().await;
+    let case_id = make_case(&pool, "GRAPH-IDENT-1").await;
+
+    let alice = make_entity(&pool, &case_id, "Alice", "person").await;
+    add_identifier(
+        &pool,
+        alice,
+        &PersonIdentifierInput {
+            kind: "email".into(),
+            value: "alice@example.com".into(),
+            platform: None,
+            notes: None,
+        },
+    )
+    .await
+    .expect("add alice email");
+
+    let acme = make_entity(&pool, &case_id, "Acme Corp", "business").await;
+    biz_add_identifier(
+        &pool,
+        acme,
+        &BusinessIdentifierInput {
+            kind: "domain".into(),
+            value: "acme.example".into(),
+            platform: None,
+            notes: None,
+        },
+    )
+    .await
+    .expect("add acme domain");
+
+    let filter = GraphFilter {
+        include_identifiers: true,
+        include_evidence: false,
+        ..Default::default()
+    };
+    let payload = build_graph(&pool, &case_id, &filter).await.expect("build_graph");
+
+    // 2 entity nodes + 2 identifier nodes
+    assert_eq!(payload.nodes.len(), 4, "expected 2 entities + 2 identifiers");
+    let ident_count = payload.nodes.iter().filter(|n| n.kind == "identifier").count();
+    assert_eq!(ident_count, 2, "expected 2 identifier nodes");
+
+    // 2 has_identifier edges (one from each entity to its identifier)
+    assert_eq!(payload.edges.len(), 2);
+    for e in &payload.edges {
+        assert!(e.id.starts_with("has:"), "edge id should be a has_identifier edge: {}", e.id);
+        assert!(!e.directional, "has_identifier edges are undirected");
+    }
+
+    // Identifier kind is exposed as entity_type on the identifier node so
+    // the frontend can color/style by kind.
+    let kinds: std::collections::HashSet<_> = payload
+        .nodes
+        .iter()
+        .filter(|n| n.kind == "identifier")
+        .map(|n| n.entity_type.clone().unwrap_or_default())
+        .collect();
+    assert!(kinds.contains("email"));
+    assert!(kinds.contains("domain"));
+}
+
+#[tokio::test]
+async fn test_graph_identifier_dedup_collapses_shared_value() {
+    // Two persons with the SAME email (case-insensitive, trimmed) collapse
+    // to a single identifier node — that's the whole point of feature #1.
+    let (_, pool) = make_state().await;
+    let case_id = make_case(&pool, "GRAPH-IDENT-2").await;
+
+    let alice = make_entity(&pool, &case_id, "Alice", "person").await;
+    let bob = make_entity(&pool, &case_id, "Bob", "person").await;
+
+    add_identifier(
+        &pool,
+        alice,
+        &PersonIdentifierInput {
+            kind: "email".into(),
+            value: "Shared@Example.com".into(),
+            platform: None,
+            notes: None,
+        },
+    )
+    .await
+    .unwrap();
+    add_identifier(
+        &pool,
+        bob,
+        &PersonIdentifierInput {
+            kind: "email".into(),
+            value: "  shared@example.COM  ".into(),
+            platform: None,
+            notes: None,
+        },
+    )
+    .await
+    .unwrap();
+
+    let filter = GraphFilter {
+        include_identifiers: true,
+        include_evidence: false,
+        ..Default::default()
+    };
+    let payload = build_graph(&pool, &case_id, &filter).await.expect("build_graph");
+
+    // 2 entities + 1 shared identifier node = 3
+    let ident_nodes: Vec<_> = payload.nodes.iter().filter(|n| n.kind == "identifier").collect();
+    assert_eq!(ident_nodes.len(), 1, "shared identifier must collapse to ONE node");
+
+    // 2 has_identifier edges, both pointing at the same identifier node
+    let has_edges: Vec<_> = payload.edges.iter().filter(|e| e.id.starts_with("has:")).collect();
+    assert_eq!(has_edges.len(), 2);
+    assert_eq!(has_edges[0].target, has_edges[1].target);
+    assert_ne!(has_edges[0].source, has_edges[1].source, "edges must come from different entities");
+}
+
+#[tokio::test]
+async fn test_graph_only_shared_identifiers_drops_solos() {
+    // Alice has a unique email + a shared email; Bob has a unique handle + the same shared email.
+    // With only_shared_identifiers=true, the two unique identifiers are dropped;
+    // only the shared email node + its 2 edges survive.
+    let (_, pool) = make_state().await;
+    let case_id = make_case(&pool, "GRAPH-IDENT-3").await;
+
+    let alice = make_entity(&pool, &case_id, "Alice", "person").await;
+    let bob = make_entity(&pool, &case_id, "Bob", "person").await;
+
+    for (eid, kind, value) in &[
+        (alice, "email", "alice-only@example.com"),
+        (alice, "email", "shared@example.com"),
+        (bob, "handle", "bob_only_handle"),
+        (bob, "email", "shared@example.com"),
+    ] {
+        add_identifier(
+            &pool,
+            *eid,
+            &PersonIdentifierInput {
+                kind: (*kind).into(),
+                value: (*value).into(),
+                platform: None,
+                notes: None,
+            },
+        )
+        .await
+        .unwrap();
+    }
+
+    let filter = GraphFilter {
+        include_identifiers: true,
+        only_shared_identifiers: true,
+        include_evidence: false,
+        ..Default::default()
+    };
+    let payload = build_graph(&pool, &case_id, &filter).await.expect("build_graph");
+
+    let ident_nodes: Vec<_> = payload.nodes.iter().filter(|n| n.kind == "identifier").collect();
+    assert_eq!(ident_nodes.len(), 1, "only the shared identifier should survive");
+    assert_eq!(ident_nodes[0].entity_type.as_deref(), Some("email"));
+
+    let has_edges: Vec<_> = payload.edges.iter().filter(|e| e.id.starts_with("has:")).collect();
+    assert_eq!(has_edges.len(), 2, "two entities still connect to the shared node");
+}
+
+#[tokio::test]
+async fn test_graph_identifiers_respect_entity_type_filter() {
+    // When entity_types filter excludes a parent entity, its identifiers
+    // must not appear either — even if those same identifiers would be
+    // shared with a non-filtered entity.
+    let (_, pool) = make_state().await;
+    let case_id = make_case(&pool, "GRAPH-IDENT-4").await;
+
+    let alice = make_entity(&pool, &case_id, "Alice", "person").await;
+    let acme = make_entity(&pool, &case_id, "Acme", "business").await;
+
+    add_identifier(
+        &pool,
+        alice,
+        &PersonIdentifierInput {
+            kind: "email".into(),
+            value: "ceo@acme.example".into(),
+            platform: None,
+            notes: None,
+        },
+    )
+    .await
+    .unwrap();
+    biz_add_identifier(
+        &pool,
+        acme,
+        &BusinessIdentifierInput {
+            kind: "email".into(),
+            value: "ceo@acme.example".into(),
+            platform: None,
+            notes: None,
+        },
+    )
+    .await
+    .unwrap();
+
+    // Filter out persons. The shared-with-Alice identifier must not appear
+    // because Alice's entity is gone.
+    let filter = GraphFilter {
+        entity_types: Some(vec!["business".into()]),
+        include_identifiers: true,
+        include_evidence: false,
+        ..Default::default()
+    };
+    let payload = build_graph(&pool, &case_id, &filter).await.expect("build_graph");
+
+    // 1 business entity + 1 identifier (only the business's, not Alice's) = 2
+    assert_eq!(payload.nodes.len(), 2);
+    let entity_count = payload.nodes.iter().filter(|n| n.kind == "entity").count();
+    let ident_count = payload.nodes.iter().filter(|n| n.kind == "identifier").count();
+    assert_eq!(entity_count, 1);
+    assert_eq!(ident_count, 1);
+
+    // One has_identifier edge from Acme.
+    let has_edges: Vec<_> = payload.edges.iter().filter(|e| e.id.starts_with("has:")).collect();
+    assert_eq!(has_edges.len(), 1);
+    assert_eq!(has_edges[0].source, format!("entity:{acme}"));
 }
 
 // ─── Test 16: Crime line assembly (all 6 groups) ─────────────────────────────

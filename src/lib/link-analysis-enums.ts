@@ -170,3 +170,45 @@ export function eventCategoryHex(
 ): string {
   return EVENT_CATEGORY_HEX_MAP[category];
 }
+
+// ---------------------------------------------------------------------------
+// Identifier kind colors (Cytoscape diamond nodes)
+// ---------------------------------------------------------------------------
+
+/** Union of person + business identifier kinds, mirrors the Rust
+ *  VALID_KINDS allowlists in `db/person_identifiers.rs` and
+ *  `db/business_identifiers.rs`. */
+export const IDENTIFIER_KINDS = [
+  "email",
+  "username",
+  "handle",
+  "phone",
+  "url",
+  "domain",
+  "registration",
+  "ein",
+  "address",
+  "social",
+] as const;
+export type IdentifierKind = (typeof IDENTIFIER_KINDS)[number];
+
+/** Hex color for an identifier-kind diamond node. Reuses entity-type
+ *  colors where the kind name is shared (email/phone/address); novel
+ *  kinds get distinct hues so investigators can read the graph at a
+ *  glance. Unknown kinds fall back to neutral gray. */
+const IDENTIFIER_KIND_HEX_MAP: Record<IdentifierKind, string> = {
+  email: "#6f42c1",        // matches entity email
+  phone: "#20c997",        // matches entity phone
+  address: "#fd7e14",      // matches entity address
+  username: "#06b6d4",     // cyan
+  handle: "#d946ef",       // fuchsia
+  url: "#14b8a6",          // teal
+  domain: "#f59e0b",       // amber
+  registration: "#78716c", // stone
+  ein: "#71717a",          // zinc
+  social: "#f43f5e",       // rose
+};
+
+export function identifierKindHex(kind: string): string {
+  return (IDENTIFIER_KIND_HEX_MAP as Record<string, string>)[kind] ?? "#6c757d";
+}
