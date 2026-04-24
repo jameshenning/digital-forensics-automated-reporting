@@ -32,6 +32,10 @@ pub struct SmtpConfig {
     /// Plaintext password — caller must obtain via `crypto.decrypt(encrypted)`.
     pub password: String,
     pub from: String,
+    /// When true, require STARTTLS on the SMTP handshake. When false, use
+    /// plain SMTP with no encryption (only appropriate for loopback relays
+    /// that explicitly don't offer TLS).
+    pub tls: bool,
 }
 
 // ─── Public API ───────────────────────────────────────────────────────────────
@@ -141,10 +145,16 @@ fn build_transport(cfg: &SmtpConfig) -> Result<AsyncSmtpTransport<Tokio1Executor
         .build_rustls()
         .map_err(|e| AppError::SmtpConnectFailed { reason: format!("TLS params build: {e}") })?;
 
+    let tls_mode = if cfg.tls {
+        Tls::Required(tls_params)
+    } else {
+        Tls::None
+    };
+
     let transport = AsyncSmtpTransport::<Tokio1Executor>::relay(&cfg.host)
         .map_err(|e| AppError::SmtpConnectFailed { reason: format!("relay build: {e}") })?
         .port(cfg.port)
-        .tls(Tls::Required(tls_params))
+        .tls(tls_mode)
         .credentials(creds)
         .build();
 

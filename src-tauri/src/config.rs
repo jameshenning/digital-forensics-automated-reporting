@@ -83,6 +83,12 @@ pub struct AppConfig {
     /// Fernet-encrypted SMTP password.
     pub smtp_password_encrypted: Option<String>,
     pub smtp_from: Option<String>,
+    /// When true (default), STARTTLS/implicit-TLS is required for the SMTP
+    /// transport. When false, the mailer uses plain SMTP with no encryption.
+    /// Loopback destinations relax cert verification regardless; this flag
+    /// controls whether TLS is attempted at all.
+    #[serde(default = "default_smtp_tls")]
+    pub smtp_tls: bool,
 
     // ─── File upload (Phase 3b carry-forward) ─────────────────────────────────
     pub max_upload_bytes: Option<u64>,
@@ -96,6 +102,10 @@ fn default_bind_host() -> String {
 
 fn default_axum_port() -> u16 {
     5099
+}
+
+fn default_smtp_tls() -> bool {
+    true
 }
 
 impl Default for AppConfig {
@@ -115,6 +125,7 @@ impl Default for AppConfig {
             smtp_username: None,
             smtp_password_encrypted: None,
             smtp_from: None,
+            smtp_tls: default_smtp_tls(),
             max_upload_bytes: None,
             evidence_onedrive_risk_acknowledged: false,
         }
@@ -190,5 +201,36 @@ mod tests {
         let cfg = load(&path).unwrap();
         assert_eq!(cfg.bind_host, "127.0.0.1");
         assert!(!cfg.allow_network_bind);
+    }
+
+    #[test]
+    fn missing_smtp_tls_defaults_to_true() {
+        // Pre-smtp_tls config.json — field absent. Existing installs upgrading
+        // through this release must land on tls=true so their working SMTP
+        // setup keeps working.
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("config.json");
+        std::fs::write(
+            &path,
+            r#"{
+                "bind_host": "127.0.0.1",
+                "allow_network_bind": false,
+                "axum_port": 5099,
+                "evidence_onedrive_risk_acknowledged": false
+            }"#,
+        )
+        .unwrap();
+        let loaded = load(&path).unwrap();
+        assert!(loaded.smtp_tls, "missing smtp_tls must default to true");
+    }
+
+    #[test]
+    fn smtp_tls_false_round_trips() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("config.json");
+        let mut cfg = AppConfig::default();
+        cfg.smtp_tls = false;
+        save(&path, &cfg).unwrap();
+        assert!(!load(&path).unwrap().smtp_tls);
     }
 }

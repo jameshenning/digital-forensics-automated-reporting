@@ -79,6 +79,10 @@ pub struct SmtpSettings {
     pub username: Option<String>,
     pub password_set: bool,
     pub from: Option<String>,
+    /// Mirrors config.smtp_tls. Defaults to true (STARTTLS/implicit TLS
+    /// on).  The frontend Switch previously bound to a missing field,
+    /// which silently failed zod validation and blocked Save.
+    pub tls: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -89,6 +93,7 @@ pub struct SmtpInput {
     /// Plaintext password — encrypted before storage.
     pub password: Option<String>,
     pub from: Option<String>,
+    pub tls: Option<bool>,
 }
 
 // ─── Agent Zero settings ──────────────────────────────────────────────────────
@@ -220,6 +225,7 @@ pub async fn settings_get_smtp(
         username: cfg.smtp_username.clone(),
         password_set: cfg.smtp_password_encrypted.is_some(),
         from: cfg.smtp_from.clone(),
+        tls: cfg.smtp_tls,
     })
 }
 
@@ -243,6 +249,7 @@ pub async fn settings_set_smtp(
         }
     }
     if let Some(from) = input.from { cfg.smtp_from = Some(from); }
+    if let Some(tls) = input.tls { cfg.smtp_tls = tls; }
 
     let config_path = state.config_path.clone();
     config::save(&config_path, &cfg)?;
@@ -366,7 +373,7 @@ fn build_smtp_config(state: &AppState) -> Result<SmtpConfig, AppError> {
         String::new()
     };
     let from = cfg.smtp_from.clone().unwrap_or_else(|| username.clone());
-    Ok(SmtpConfig { host, port, username, password, from })
+    Ok(SmtpConfig { host, port, username, password, from, tls: cfg.smtp_tls })
 }
 
 async fn rebuild_agent_zero_client(
