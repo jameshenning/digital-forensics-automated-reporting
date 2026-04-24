@@ -1267,6 +1267,91 @@ export function caseCrimeLine(args: {
   return invoke<TimelinePayload>("case_crime_line", args);
 }
 
+// ─── Node inspector (link analysis feature #2) ──────────────────────────────
+
+/** Common shape of a person/business identifier for the inspector. */
+export interface EntityIdentifier {
+  identifier_id: number;
+  kind: string;
+  value: string;
+  platform: string | null;
+  notes: string | null;
+  discovered_via_tool: string | null;
+}
+
+export interface EntityInspectorView {
+  entity_id: number;
+  entity_type: string;
+  display_name: string;
+  subtype: string | null;
+  photo_path: string | null;
+  email: string | null;
+  phone: string | null;
+  username: string | null;
+  employer: string | null;
+  dob: string | null;
+  notes: string | null;
+  identifiers: EntityIdentifier[];
+  linked_entity_count: number;
+  linked_evidence_count: number;
+}
+
+export interface CustodyEventSummary {
+  action: string;
+  from_party: string;
+  to_party: string;
+  custody_datetime: string;
+  location: string | null;
+}
+
+export interface EvidenceInspectorView {
+  evidence: Evidence;
+  linked_entity_count: number;
+  hash_verification_count: number;
+  latest_custody: CustodyEventSummary | null;
+}
+
+export interface IdentifierOwner {
+  entity_id: number;
+  display_name: string;
+  /** "person" or "business" */
+  entity_type: string;
+}
+
+export interface IdentifierInspectorView {
+  /** Identifier kind (email/phone/domain/etc.). Renamed in Rust to
+   *  avoid colliding with the InspectorPayload discriminator `kind`. */
+  identifier_kind: string;
+  value: string;
+  platform: string | null;
+  notes: string | null;
+  discovered_via_tool: string | null;
+  /** ALL entities sharing this identifier's dedup key, across both
+   *  person_identifiers and business_identifiers. Length ≥1 always
+   *  (the clicked row); length ≥2 means the identifier is shared. */
+  owners: IdentifierOwner[];
+}
+
+/** Discriminated union — `kind` selects the rendering path. Matches the
+ *  Rust serde tag = "kind", rename_all = "snake_case" enum. */
+export type InspectorPayload =
+  | ({ kind: "entity" } & EntityInspectorView)
+  | ({ kind: "evidence" } & EvidenceInspectorView)
+  | ({ kind: "identifier" } & IdentifierInspectorView)
+  | { kind: "not_found" };
+
+/** Resolve a graph node id to its inspector payload. The node id format
+ *  matches the GraphNode.id namespacing: "entity:<id>", "evidence:<id>",
+ *  or "identifier:<id>". Returns `{ kind: "not_found" }` for stale or
+ *  malformed ids — the UI degrades gracefully without throwing. */
+export function nodeInspector(args: {
+  token: string;
+  case_id: string;
+  node_id: string;
+}): Promise<InspectorPayload> {
+  return invoke<InspectorPayload>("node_inspector", args);
+}
+
 // ---------------------------------------------------------------------------
 // Person identifiers (migration 0004)
 // ---------------------------------------------------------------------------

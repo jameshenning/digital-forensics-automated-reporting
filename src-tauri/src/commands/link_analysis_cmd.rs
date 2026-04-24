@@ -30,6 +30,7 @@ use crate::{
         entities::{Entity, EntityInput},
         events::{CaseEvent, EventInput},
         graph::{GraphFilter, GraphPayload, TimelineFilter, TimelinePayload},
+        inspector::{build_inspector, InspectorPayload},
         links::{Link, LinkInput},
         person_employers,
         person_identifiers::{PersonIdentifier, PersonIdentifierInput},
@@ -429,6 +430,26 @@ pub async fn case_crime_line(
     let _session = require_session(&state, &token)?;
 
     crate::db::graph::build_crime_line(&state.db.forensics, &case_id, &filter).await
+}
+
+/// Resolve a graph node id (`entity:<id>`, `evidence:<id>`, or
+/// `identifier:<id>`) to its inspector payload — entity row + linked
+/// counts, evidence row + custody summary, or identifier + cross-table
+/// owners. Read-only. Returns `InspectorPayload::NotFound` for stale or
+/// malformed node ids rather than erroring, so the UI can degrade
+/// gracefully if the graph is rendered from cached state after a
+/// soft-delete.
+#[tauri::command(rename_all = "snake_case")]
+pub async fn node_inspector(
+    token: String,
+    case_id: String,
+    node_id: String,
+    state: State<'_, Arc<AppState>>,
+) -> Result<InspectorPayload, AppError> {
+    // MUST-DO 3 — session guard first
+    let _session = require_session(&state, &token)?;
+
+    build_inspector(&state.db.forensics, &case_id, &node_id).await
 }
 
 // ─── Person identifier commands (migration 0004) ──────────────────────────────

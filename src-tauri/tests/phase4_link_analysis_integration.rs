@@ -60,6 +60,7 @@ use dfars_desktop_lib::{
                  soft_delete as event_soft_delete, update_event},
         evidence::{EvidenceInput, add_evidence},
         graph::{GraphFilter, TimelineFilter, build_crime_line, build_graph},
+        inspector::{InspectorPayload, build_inspector},
         hashes::{HashInput, add_hash},
         links::{LinkInput, add_link, list_for_case as link_list_for_case,
                 soft_delete as link_soft_delete},
@@ -1545,6 +1546,261 @@ async fn test_graph_identifiers_respect_entity_type_filter() {
     let has_edges: Vec<_> = payload.edges.iter().filter(|e| e.id.starts_with("has:")).collect();
     assert_eq!(has_edges.len(), 1);
     assert_eq!(has_edges[0].source, format!("entity:{acme}"));
+}
+
+// ─── Test 15e-h: Node inspector aggregate ───────────────────────────────────
+
+#[tokio::test]
+async fn test_inspector_entity_with_identifiers_and_counts() {
+    let (_, pool) = make_state().await;
+    let case_id = make_case(&pool, "INSPECT-ENT-1").await;
+
+    let alice = make_entity(&pool, &case_id, "Alice", "person").await;
+    let bob = make_entity(&pool, &case_id, "Bob", "person").await;
+    let ev1 = make_evidence(&pool, &case_id, "EV-INSP-1").await;
+    let ev2 = make_evidence(&pool, &case_id, "EV-INSP-2").await;
+
+    // Alice has 2 identifiers, 1 entity-link to Bob, 2 evidence links.
+    add_identifier(
+        &pool,
+        alice,
+        &PersonIdentifierInput {
+            kind: "email".into(),
+            value: "alice@example.com".into(),
+            platform: None,
+            notes: None,
+        },
+    )
+    .await
+    .unwrap();
+    add_identifier(
+        &pool,
+        alice,
+        &PersonIdentifierInput {
+            kind: "handle".into(),
+            value: "alice_irl".into(),
+            platform: Some("twitter".into()),
+            notes: None,
+        },
+    )
+    .await
+    .unwrap();
+    add_link(
+        &pool,
+        &case_id,
+        &LinkInput {
+            source_type: "entity".into(),
+            source_id: alice.to_string(),
+            target_type: "entity".into(),
+            target_id: bob.to_string(),
+            link_label: None,
+            directional: None,
+            weight: None,
+            notes: None,
+        },
+    )
+    .await
+    .unwrap();
+    for ev in &[&ev1, &ev2] {
+        add_link(
+            &pool,
+            &case_id,
+            &LinkInput {
+                source_type: "entity".into(),
+                source_id: alice.to_string(),
+                target_type: "evidence".into(),
+                target_id: (*ev).clone(),
+                link_label: None,
+                directional: None,
+                weight: None,
+                notes: None,
+            },
+        )
+        .await
+        .unwrap();
+    }
+
+    let payload = build_inspector(&pool, &case_id, &format!("entity:{alice}")).await.unwrap();
+    let view = match payload {
+        InspectorPayload::Entity(v) => v,
+        other => panic!("expected Entity, got {other:?}"),
+    };
+    assert_eq!(view.entity_id, alice);
+    assert_eq!(view.display_name, "Alice");
+    assert_eq!(view.entity_type, "person");
+    assert_eq!(view.identifiers.len(), 2, "expected 2 identifiers");
+    assert_eq!(view.linked_entity_count, 1, "1 link to Bob");
+    assert_eq!(view.linked_evidence_count, 2, "2 evidence links");
+}
+
+#[tokio::test]
+async fn test_inspector_evidence_with_latest_custody_and_counts() {
+    let (_, pool) = make_state().await;
+    let case_id = make_case(&pool, "INSPECT-EV-1").await;
+
+    let alice = make_entity(&pool, &case_id, "Alice", "person").await;
+    let ev_id = make_evidence(&pool, &case_id, "EV-INSP-EV-1").await;
+
+    add_link(
+        &pool,
+        &case_id,
+        &LinkInput {
+            source_type: "entity".into(),
+            source_id: alice.to_string(),
+            target_type: "evidence".into(),
+            target_id: ev_id.clone(),
+            link_label: None,
+            directional: None,
+            weight: None,
+            notes: None,
+        },
+    )
+    .await
+    .unwrap();
+
+    // Two custody events; the LATEST by datetime should appear in the
+    // inspector — that's "where is this evidence right now?".
+    let earlier = NaiveDateTime::parse_from_str("2026-04-10 09:00:00", "%Y-%m-%d %H:%M:%S").unwrap();
+    let later = NaiveDateTime::parse_from_str("2026-04-12 14:30:00", "%Y-%m-%d %H:%M:%S").unwrap();
+    add_custody(
+        &pool,
+        &ev_id,
+        &CustodyInput {
+            action: "Seized".into(),
+            from_party: "Scene".into(),
+            to_party: "Officer A".into(),
+            location: Some("Warehouse 4".into()),
+            custody_datetime: earlier,
+            purpose: None,
+            notes: None,
+        },
+    )
+    .await
+    .unwrap();
+    add_custody(
+        &pool,
+        &ev_id,
+        &CustodyInput {
+            action: "Transferred".into(),
+            from_party: "Officer A".into(),
+            to_party: "Lab Tech".into(),
+            location: Some("Lab".into()),
+            custody_datetime: later,
+            purpose: None,
+            notes: None,
+        },
+    )
+    .await
+    .unwrap();
+
+    add_hash(
+        &pool,
+        &ev_id,
+        &HashInput {
+            algorithm: "SHA256".into(),
+            hash_value: "a".repeat(64),
+            verified_by: "tester".into(),
+            verification_datetime: NaiveDateTime::parse_from_str("2026-04-11 10:00:00", "%Y-%m-%d %H:%M:%S").unwrap(),
+            notes: None,
+        },
+    )
+    .await
+    .unwrap();
+
+    let payload = build_inspector(&pool, &case_id, &format!("evidence:{ev_id}")).await.unwrap();
+    let view = match payload {
+        InspectorPayload::Evidence(v) => v,
+        other => panic!("expected Evidence, got {other:?}"),
+    };
+    assert_eq!(view.evidence.evidence_id, ev_id);
+    assert_eq!(view.linked_entity_count, 1);
+    assert_eq!(view.hash_verification_count, 1);
+    let custody = view.latest_custody.expect("expected latest custody");
+    assert_eq!(custody.action, "Transferred", "latest by datetime DESC");
+    assert_eq!(custody.to_party, "Lab Tech");
+}
+
+#[tokio::test]
+async fn test_inspector_identifier_lists_all_owners_across_tables() {
+    // The same email is shared between a person AND a business — the
+    // inspector must surface BOTH owners regardless of which table the
+    // canvas canonical id came from.
+    let (_, pool) = make_state().await;
+    let case_id = make_case(&pool, "INSPECT-ID-1").await;
+
+    let alice = make_entity(&pool, &case_id, "Alice", "person").await;
+    let acme = make_entity(&pool, &case_id, "Acme Corp", "business").await;
+
+    add_identifier(
+        &pool,
+        alice,
+        &PersonIdentifierInput {
+            kind: "email".into(),
+            value: "Shared@Acme.example".into(), // mixed case to test normalization
+            platform: None,
+            notes: None,
+        },
+    )
+    .await
+    .unwrap();
+    let biz_ident = biz_add_identifier(
+        &pool,
+        acme,
+        &BusinessIdentifierInput {
+            kind: "email".into(),
+            value: "  shared@acme.EXAMPLE  ".into(), // padded + different case
+            platform: None,
+            notes: None,
+        },
+    )
+    .await
+    .unwrap();
+
+    // Look up by either identifier_id — both must resolve to the same
+    // shared owner list.
+    for id in &[biz_ident.identifier_id] {
+        let payload = build_inspector(&pool, &case_id, &format!("identifier:{id}")).await.unwrap();
+        let view = match payload {
+            InspectorPayload::Identifier(v) => v,
+            other => panic!("expected Identifier, got {other:?}"),
+        };
+        assert_eq!(view.kind, "email");
+        assert_eq!(view.owners.len(), 2, "shared identifier must list both owners");
+        let names: std::collections::HashSet<_> = view.owners.iter().map(|o| o.display_name.clone()).collect();
+        assert!(names.contains("Alice"), "Alice missing from owners");
+        assert!(names.contains("Acme Corp"), "Acme missing from owners");
+        let types: std::collections::HashSet<_> = view.owners.iter().map(|o| o.entity_type.clone()).collect();
+        assert!(types.contains("person"));
+        assert!(types.contains("business"));
+    }
+}
+
+#[tokio::test]
+async fn test_inspector_returns_not_found_for_stale_or_malformed_ids() {
+    let (_, pool) = make_state().await;
+    let case_id = make_case(&pool, "INSPECT-NF").await;
+
+    // Stale entity id — never existed.
+    let payload = build_inspector(&pool, &case_id, "entity:99999").await.unwrap();
+    assert!(matches!(payload, InspectorPayload::NotFound), "stale entity id");
+
+    // Malformed (entity id not parseable as i64).
+    let payload = build_inspector(&pool, &case_id, "entity:notanumber").await.unwrap();
+    assert!(matches!(payload, InspectorPayload::NotFound), "malformed entity id");
+
+    // Unknown prefix.
+    let payload = build_inspector(&pool, &case_id, "spaceship:42").await.unwrap();
+    assert!(matches!(payload, InspectorPayload::NotFound), "unknown prefix");
+
+    // Stale identifier id.
+    let payload = build_inspector(&pool, &case_id, "identifier:99999").await.unwrap();
+    assert!(matches!(payload, InspectorPayload::NotFound), "stale identifier id");
+
+    // Soft-deleted entity must NOT resolve.
+    let alice = make_entity(&pool, &case_id, "Alice", "person").await;
+    entity_soft_delete(&pool, alice).await.unwrap();
+    let payload = build_inspector(&pool, &case_id, &format!("entity:{alice}")).await.unwrap();
+    assert!(matches!(payload, InspectorPayload::NotFound), "soft-deleted entity");
 }
 
 // ─── Test 16: Crime line assembly (all 6 groups) ─────────────────────────────

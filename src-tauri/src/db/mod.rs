@@ -6,6 +6,7 @@ pub mod events;
 pub mod evidence;
 pub mod evidence_files;
 pub mod graph;
+pub mod inspector;
 pub mod hashes;
 pub mod links;
 pub mod person_employers;

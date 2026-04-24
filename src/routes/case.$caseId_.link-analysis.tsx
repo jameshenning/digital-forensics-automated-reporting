@@ -59,6 +59,7 @@ const CrimeLineCanvas = lazy(() =>
 import { EntitiesPanel } from "@/components/entities-panel";
 import { LinksPanel } from "@/components/links-panel";
 import { EventsPanel } from "@/components/events-panel";
+import { NodeInspector } from "@/components/node-inspector";
 
 // ---------------------------------------------------------------------------
 // Suspense fallback skeletons
@@ -167,6 +168,14 @@ function LinkAnalysisPage() {
   function resetTimelineFilter() {
     setTimelineFilter(DEFAULT_TIMELINE_FILTER);
   }
+
+  // ---------------------------------------------------------------------------
+  // Inspector — clicking a graph node opens the slide-in details panel
+  // ---------------------------------------------------------------------------
+
+  const [inspectorNodeId, setInspectorNodeId] = React.useState<string | null>(
+    null
+  );
 
   // ---------------------------------------------------------------------------
   // Render
@@ -351,7 +360,11 @@ function LinkAnalysisPage() {
               </Button>
             </div>
             <Suspense fallback={<GraphCanvasSkeleton />}>
-              <GraphCanvas caseId={caseId} filter={graphFilter} />
+              <GraphCanvas
+                caseId={caseId}
+                filter={graphFilter}
+                onNodeClick={setInspectorNodeId}
+              />
             </Suspense>
           </TabsContent>
 
@@ -418,6 +431,13 @@ function LinkAnalysisPage() {
           </TabsContent>
         </Tabs>
       </main>
+
+      {/* Click-to-inspect panel — controlled, opens when a graph node is tapped */}
+      <NodeInspector
+        caseId={caseId}
+        nodeId={inspectorNodeId}
+        onClose={() => setInspectorNodeId(null)}
+      />
     </div>
   );
 }

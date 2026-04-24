@@ -138,6 +138,14 @@ export const queryKeys = {
       ["crime-line", caseId, filter] as const,
   },
 
+  /** Node inspector query keys (Phase 4 — link analysis feature #2) */
+  inspector: {
+    forNode: (caseId: string, nodeId: string) =>
+      ["inspector", caseId, nodeId] as const,
+    /** Prefix key for invalidating ALL inspector lookups in a case. */
+    allForCase: (caseId: string) => ["inspector", caseId] as const,
+  },
+
   /** Agent Zero integration settings (Phase 5) */
   agentZero: {
     settings: ["agentZero", "settings"] as const,

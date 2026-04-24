@@ -56,7 +56,7 @@ use commands::{
     link_analysis_cmd::{
         business_identifier_add, business_identifier_delete, business_identifier_list,
         business_identifier_update,
-        case_crime_line, case_graph,
+        case_crime_line, case_graph, node_inspector,
         entity_add, entity_delete, entity_get, entity_list_for_case, entity_update,
         event_add, event_delete, event_list_for_case, event_update,
         link_add, link_delete, link_list_for_case,
@@ -369,6 +369,7 @@ pub fn run() {
             // Graph aggregate commands (Phase 4)
             case_graph,
             case_crime_line,
+            node_inspector,
             // Person employer commands (employer combobox feature)
             person_employers_set,
             person_employers_list,
