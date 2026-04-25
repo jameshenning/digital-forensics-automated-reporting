@@ -26,6 +26,12 @@ use crate::error::AppError;
 
 const REVIEWED_BY_MAX_LEN: usize = 200;
 const REVIEW_NOTES_MAX_LEN: usize = 2000;
+/// Defensive cap on `reviewed_at` BEFORE handing the string to
+/// `parse_loose_datetime`. Without this, a megabyte-sized pasted
+/// string would burn parser time and bloat the audit log before
+/// being rejected. Real ISO datetimes are ≤30 chars; 64 leaves
+/// slack for fractional seconds and offset suffixes.
+const REVIEWED_AT_MAX_LEN: usize = 64;
 
 // ─── Public data types ────────────────────────────────────────────────────────
 
@@ -70,7 +76,16 @@ fn validate_input(input: &AnalysisReviewInput) -> Result<(), AppError> {
         });
     }
 
-    if parse_loose_datetime(input.reviewed_at.trim()).is_none() {
+    let reviewed_at = input.reviewed_at.trim();
+    if reviewed_at.chars().count() > REVIEWED_AT_MAX_LEN {
+        return Err(AppError::ValidationError {
+            field: "reviewed_at".into(),
+            message: format!(
+                "reviewed_at must not exceed {REVIEWED_AT_MAX_LEN} characters"
+            ),
+        });
+    }
+    if parse_loose_datetime(reviewed_at).is_none() {
         return Err(AppError::ValidationError {
             field: "reviewed_at".into(),
             message: "reviewed_at must be an ISO datetime".into(),
@@ -145,6 +160,11 @@ pub async fn add_review(
 
 /// All reviews for a given note, oldest first (so the UI can show the
 /// review history chronologically).
+///
+/// `created_at` is SQLite-second precision; two reviews stamped in the
+/// same second tie on the timestamp. `review_id ASC` is added as
+/// tiebreaker so the surfaced ordering is deterministic across runs —
+/// matters for both UI display and report rendering.
 pub async fn list_for_note(
     pool: &SqlitePool,
     note_id: i64,
@@ -154,7 +174,7 @@ pub async fn list_for_note(
         SELECT review_id, note_id, reviewed_by, reviewed_at, review_notes, created_at
         FROM analysis_reviews
         WHERE note_id = ?
-        ORDER BY created_at ASC
+        ORDER BY created_at ASC, review_id ASC
         "#,
     )
     .bind(note_id)
@@ -163,9 +183,11 @@ pub async fn list_for_note(
     Ok(rows)
 }
 
-/// All reviews for every note in a case — for the report aggregate.
-/// The report renderer groups these by note_id on the Rust side rather
-/// than issuing one query per note.
+/// All reviews for every note in a case — for the report aggregate
+/// AND the AnalysisPanel's one-shot fetch (replacing what would
+/// otherwise be N+1 per-note queries from each note card).
+///
+/// Same `review_id` tiebreaker as `list_for_note`.
 pub async fn list_for_case(
     pool: &SqlitePool,
     case_id: &str,
@@ -176,7 +198,7 @@ pub async fn list_for_case(
         FROM analysis_reviews r
         JOIN analysis_notes n ON r.note_id = n.note_id
         WHERE n.case_id = ?
-        ORDER BY r.note_id ASC, r.created_at ASC
+        ORDER BY r.note_id ASC, r.created_at ASC, r.review_id ASC
         "#,
     )
     .bind(case_id)

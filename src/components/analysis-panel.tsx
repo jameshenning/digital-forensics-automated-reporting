@@ -22,7 +22,7 @@ import {
 import {
   analysisListForCase,
   analysisAdd,
-  analysisReviewsListForNote,
+  analysisReviewsListForCase,
   evidenceListForCase,
   type AnalysisNote,
   type AnalysisReview,
@@ -142,6 +142,25 @@ export function AnalysisPanel({ caseId }: AnalysisPanelProps) {
     enabled: !!token,
   });
 
+  // Single round-trip for ALL reviews in the case. Each AnalysisNoteCard
+  // gets a pre-grouped slice via React.useMemo, eliminating the N+1 fetch
+  // that the previous per-card useQuery produced.
+  const { data: allReviews } = useQuery<AnalysisReview[]>({
+    queryKey: queryKeys.analysisReviews.forCase(caseId),
+    queryFn: () => analysisReviewsListForCase({ token, case_id: caseId }),
+    enabled: !!token,
+  });
+
+  const reviewsByNote = React.useMemo(() => {
+    const map = new Map<number, AnalysisReview[]>();
+    for (const r of allReviews ?? []) {
+      const list = map.get(r.note_id);
+      if (list) list.push(r);
+      else map.set(r.note_id, [r]);
+    }
+    return map;
+  }, [allReviews]);
+
   const addMutation = useMutation({
     mutationFn: (values: AnalysisFormValues) =>
       analysisAdd({ token, case_id: caseId, input: formValuesToInput(values) }),
@@ -217,7 +236,11 @@ export function AnalysisPanel({ caseId }: AnalysisPanelProps) {
           </h4>
           <div className="space-y-2 pl-1">
             {(grouped[cat] ?? []).map((note) => (
-              <AnalysisNoteCard key={note.note_id} note={note} />
+              <AnalysisNoteCard
+                key={note.note_id}
+                note={note}
+                reviews={reviewsByNote.get(note.note_id) ?? []}
+              />
             ))}
           </div>
         </div>
@@ -243,19 +266,21 @@ export function AnalysisPanel({ caseId }: AnalysisPanelProps) {
 
 // ─── Note card ──────────────────────────────────────────────────────────────
 
-function AnalysisNoteCard({ note }: { note: AnalysisNote }) {
-  const token = getToken() ?? "";
+/**
+ * Renders a single analysis note with validation chips, alternatives
+ * disclosure, and review footer. `reviews` is sliced from the parent
+ * panel's single per-case query — DO NOT add a per-card useQuery here
+ * (the panel used to do that and produced an N+1 fetch pattern).
+ */
+function AnalysisNoteCard({
+  note,
+  reviews,
+}: {
+  note: AnalysisNote;
+  reviews: AnalysisReview[];
+}) {
   const [reviewOpen, setReviewOpen] = React.useState(false);
-
-  const { data: reviews } = useQuery<AnalysisReview[]>({
-    queryKey: queryKeys.analysisReviews.forNote(note.note_id),
-    queryFn: () =>
-      analysisReviewsListForNote({ token, note_id: note.note_id }),
-    enabled: !!token,
-  });
-
-  const reviewCount = reviews?.length ?? 0;
-  const isReviewed = reviewCount > 0;
+  const isReviewed = reviews.length > 0;
 
   return (
     <div className="rounded-md border p-3 text-sm space-y-2">
@@ -274,27 +299,35 @@ function AnalysisNoteCard({ note }: { note: AnalysisNote }) {
         </p>
       )}
 
-      {/* Validation metadata chips — only render fields actually present */}
-      {(note.created_by || note.method_reference || note.tool_version) && (
-        <div className="flex items-center flex-wrap gap-1.5 pt-1">
+      {/* Validation metadata chips. The author chip ALWAYS renders so
+           a v1 note (no metadata) shows "by not recorded" — visible
+           reminder that provenance is missing, matches the report's
+           rendering. Method + tool only appear when populated. */}
+      <div className="flex items-center flex-wrap gap-1.5 pt-1">
+        <Badge
+          variant="outline"
+          className={`text-[10px] py-0 px-2 font-normal ${
+            note.created_by
+              ? ""
+              : "border-dashed text-muted-foreground/70"
+          }`}
+        >
+          <UserIcon className="h-3 w-3 mr-1" />
+          {note.created_by ?? "not recorded"}
+        </Badge>
+        {note.method_reference && (
           <Badge variant="outline" className="text-[10px] py-0 px-2 font-normal">
-            <UserIcon className="h-3 w-3 mr-1" />
-            {note.created_by ?? "not recorded"}
+            <ShieldCheck className="h-3 w-3 mr-1" />
+            {note.method_reference}
           </Badge>
-          {note.method_reference && (
-            <Badge variant="outline" className="text-[10px] py-0 px-2 font-normal">
-              <ShieldCheck className="h-3 w-3 mr-1" />
-              {note.method_reference}
-            </Badge>
-          )}
-          {note.tool_version && (
-            <Badge variant="outline" className="text-[10px] py-0 px-2 font-normal">
-              <Wrench className="h-3 w-3 mr-1" />
-              {note.tool_version}
-            </Badge>
-          )}
-        </div>
-      )}
+        )}
+        {note.tool_version && (
+          <Badge variant="outline" className="text-[10px] py-0 px-2 font-normal">
+            <Wrench className="h-3 w-3 mr-1" />
+            {note.tool_version}
+          </Badge>
+        )}
+      </div>
 
       {note.alternatives_considered && (
         <details className="rounded border-l-2 border-muted-foreground/30 pl-3 py-1 text-xs">
@@ -316,7 +349,7 @@ function AnalysisNoteCard({ note }: { note: AnalysisNote }) {
           </Badge>
         )}
         {isReviewed ? (
-          reviews!.map((r) => (
+          reviews.map((r) => (
             <Badge
               key={r.review_id}
               variant="outline"

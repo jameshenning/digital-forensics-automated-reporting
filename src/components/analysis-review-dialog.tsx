@@ -118,8 +118,12 @@ export function AnalysisReviewDialog({
         input: formValuesToInput(values),
       }),
     onSuccess: () => {
+      // Invalidate the prefix so BOTH the panel's per-case aggregate
+      // and any per-note cache refresh. Cheaper than threading caseId
+      // into the dialog just to invalidate the right key, and the
+      // refetch cost is tiny (single per-case query).
       void queryClient.invalidateQueries({
-        queryKey: queryKeys.analysisReviews.forNote(noteId),
+        queryKey: queryKeys.analysisReviews.all(),
       });
       toastSuccess("Peer review recorded.");
       onOpenChange(false);

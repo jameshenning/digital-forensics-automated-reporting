@@ -74,6 +74,12 @@ export const queryKeys = {
   /** Analysis review query keys (migration 0007 — validation principles) */
   analysisReviews: {
     forNote: (noteId: number) => ["analysis-reviews", "note", noteId] as const,
+    forCase: (caseId: string) => ["analysis-reviews", "case", caseId] as const,
+    /** Prefix matching ALL review queries (per-note + per-case).
+     *  Used by the review-mark mutation to invalidate every review
+     *  cache the panel might be holding without requiring the dialog
+     *  to know the caseId. TanStack matches by array prefix. */
+    all: () => ["analysis-reviews"] as const,
   },
 
   /** Evidence file query keys (Phase 3b) */

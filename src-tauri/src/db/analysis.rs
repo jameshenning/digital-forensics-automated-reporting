@@ -146,14 +146,18 @@ fn validate_analysis_input(input: &AnalysisInput) -> Result<String, AppError> {
             message: "finding must not be empty".into(),
         });
     }
-    if input.finding.len() > FINDING_MAX_LEN {
+    // chars().count() — Unicode-safe character count. The previous
+    // .len() check was BYTES, so a 250-emoji finding (~1000 bytes)
+    // wrongly tripped the 500-char cap. Matches the new validation
+    // fields' character-count pattern.
+    if input.finding.chars().count() > FINDING_MAX_LEN {
         return Err(AppError::ValidationError {
             field: "finding".into(),
             message: format!("finding must not exceed {FINDING_MAX_LEN} characters"),
         });
     }
     if let Some(desc) = &input.description {
-        if desc.len() > DESCRIPTION_MAX_LEN {
+        if desc.chars().count() > DESCRIPTION_MAX_LEN {
             return Err(AppError::ValidationError {
                 field: "description".into(),
                 message: format!("description must not exceed {DESCRIPTION_MAX_LEN} characters"),

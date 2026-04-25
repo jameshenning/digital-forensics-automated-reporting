@@ -17,7 +17,7 @@
 use std::sync::Arc;
 
 use tauri::State;
-use tracing::info;
+use tracing::{info, warn};
 
 use crate::{
     audit,
@@ -484,42 +484,62 @@ pub async fn analysis_mark_reviewed(
         crate::db::analysis_reviews::add_review(&state.db.forensics, note_id, &input).await?;
 
     // Join through analysis_notes to get case_id for the audit entry.
-    // The note must exist at this point (add_review verified it) — an
-    // Ok here still means we tolerate the unlikely race where the note
-    // was soft-deleted after add_review but before the SELECT. The
-    // audit write is best-effort; we don't want to fail the command
-    // because of an audit lookup miss.
-    let case_id: Option<String> = sqlx::query_scalar(
+    // The note existed at the moment add_review verified it — there's
+    // a vanishingly thin race window where it could disappear before
+    // this lookup, but more importantly: we never want a SUCCESSFUL
+    // review with NO audit trail to be silently OK. Surface a warning
+    // so the gap is visible in the rolling debug log, even if the
+    // command itself returns Ok to the caller.
+    let lookup: Result<Option<String>, _> = sqlx::query_scalar(
         r#"SELECT case_id FROM analysis_notes WHERE note_id = ?"#,
     )
     .bind(note_id)
     .fetch_optional(&state.db.forensics)
-    .await
-    .unwrap_or(None);
+    .await;
 
-    if let Some(cid) = case_id {
-        info!(
-            username = %session.username,
-            case_id = %cid,
-            note_id = %note_id,
-            review_id = %review.review_id,
-            "analysis note reviewed"
-        );
-        audit::log_case(
-            &cid,
-            &session.username,
-            ANALYSIS_REVIEWED,
-            &format!(
-                "note_id={} review_id={} reviewed_by={:?} reviewed_at={:?}",
-                note_id, review.review_id, review.reviewed_by, review.reviewed_at,
-            ),
-        );
+    match lookup {
+        Ok(Some(cid)) => {
+            info!(
+                username = %session.username,
+                case_id = %cid,
+                note_id = %note_id,
+                review_id = %review.review_id,
+                "analysis note reviewed"
+            );
+            audit::log_case(
+                &cid,
+                &session.username,
+                ANALYSIS_REVIEWED,
+                &format!(
+                    "note_id={} review_id={} reviewed_by={:?} reviewed_at={:?}",
+                    note_id, review.review_id, review.reviewed_by, review.reviewed_at,
+                ),
+            );
+        }
+        Ok(None) => {
+            warn!(
+                username = %session.username,
+                note_id = %note_id,
+                review_id = %review.review_id,
+                "review recorded but parent note not found for audit lookup; \
+                 audit entry NOT written"
+            );
+        }
+        Err(e) => {
+            warn!(
+                username = %session.username,
+                note_id = %note_id,
+                review_id = %review.review_id,
+                error = %e,
+                "review recorded but case_id lookup failed; audit entry NOT written"
+            );
+        }
     }
 
     Ok(review)
 }
 
-/// List all reviews for a single analysis note, ASC by created_at.
+/// List all reviews for a single analysis note, ASC by created_at, review_id.
 #[tauri::command(rename_all = "snake_case")]
 pub async fn analysis_reviews_list_for_note(
     token: String,
@@ -529,6 +549,21 @@ pub async fn analysis_reviews_list_for_note(
     let _session = require_session(&state, &token)?;
 
     crate::db::analysis_reviews::list_for_note(&state.db.forensics, note_id).await
+}
+
+/// List ALL reviews for every analysis note in a case in one round-trip.
+/// Eliminates the N+1 fetch the AnalysisPanel would otherwise make
+/// (one IPC call per note card to learn whether the note has been
+/// peer-reviewed). The frontend groups results by note_id locally.
+#[tauri::command(rename_all = "snake_case")]
+pub async fn analysis_reviews_list_for_case(
+    token: String,
+    case_id: String,
+    state: State<'_, Arc<AppState>>,
+) -> Result<Vec<AnalysisReview>, AppError> {
+    let _session = require_session(&state, &token)?;
+
+    crate::db::analysis_reviews::list_for_case(&state.db.forensics, &case_id).await
 }
 
 /// List all analysis notes for a case, ordered by created_at DESC.

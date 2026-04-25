@@ -720,6 +720,17 @@ export function analysisReviewsListForNote(args: {
   return invoke<AnalysisReview[]>("analysis_reviews_list_for_note", args);
 }
 
+/** List ALL reviews for every note in a case in one round-trip.
+ *  Eliminates the N+1 fetch pattern when an analysis panel renders
+ *  many notes — call this once and group by note_id locally instead
+ *  of one analysis_reviews_list_for_note per card. */
+export function analysisReviewsListForCase(args: {
+  token: string;
+  case_id: string;
+}): Promise<AnalysisReview[]> {
+  return invoke<AnalysisReview[]>("analysis_reviews_list_for_case", args);
+}
+
 // ---------------------------------------------------------------------------
 // Settings commands
 // ---------------------------------------------------------------------------

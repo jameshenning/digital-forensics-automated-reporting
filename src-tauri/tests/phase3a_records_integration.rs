@@ -1353,6 +1353,233 @@ async fn test_analysis_review_validation_rejects_empty_reviewer_and_bad_datetime
     assert!(matches!(err, AppError::ValidationError { ref field, .. } if field == "reviewed_at"));
 }
 
+#[tokio::test]
+async fn test_analysis_reviews_list_for_case_groups_across_notes() {
+    use dfars_desktop_lib::db::analysis_reviews::{
+        AnalysisReviewInput, add_review, list_for_case,
+    };
+
+    // Two cases, two notes per case, two reviews per note. Verifies
+    // (a) the per-case aggregate query returns ONLY the requested
+    // case's reviews, ordered note_id ASC then created_at ASC.
+    // (b) used by the AnalysisPanel's single-fetch refactor.
+    let (_state, pool) = build_state().await;
+    setup_case(&pool, "CASE-LFC-A").await;
+    setup_case(&pool, "CASE-LFC-B").await;
+
+    let mk_note = |case: &str, kind: &str| {
+        let pool = pool.clone();
+        let case = case.to_string();
+        let kind = kind.to_string();
+        async move {
+            add_analysis(
+                &pool,
+                &case,
+                &AnalysisInput {
+                    evidence_id: None,
+                    category: "Other".into(),
+                    finding: kind,
+                    description: None,
+                    confidence_level: None,
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap()
+        }
+    };
+
+    let n_a1 = mk_note("CASE-LFC-A", "A1").await;
+    let n_a2 = mk_note("CASE-LFC-A", "A2").await;
+    let n_b1 = mk_note("CASE-LFC-B", "B1").await;
+
+    let mk_review = |note_id: i64, name: &str| {
+        let pool = pool.clone();
+        let name = name.to_string();
+        async move {
+            add_review(
+                &pool,
+                note_id,
+                &AnalysisReviewInput {
+                    reviewed_by: name,
+                    reviewed_at: "2026-04-22T10:00:00".into(),
+                    review_notes: None,
+                },
+            )
+            .await
+            .unwrap()
+        }
+    };
+
+    let _ = mk_review(n_a1.note_id, "Rev A1-1").await;
+    let _ = mk_review(n_a1.note_id, "Rev A1-2").await;
+    let _ = mk_review(n_a2.note_id, "Rev A2-1").await;
+    let _ = mk_review(n_b1.note_id, "Rev B1-1").await;
+
+    let case_a_reviews = list_for_case(&pool, "CASE-LFC-A").await.unwrap();
+    assert_eq!(case_a_reviews.len(), 3, "case A has 3 reviews across 2 notes");
+    assert!(
+        case_a_reviews.iter().all(|r| r.note_id == n_a1.note_id || r.note_id == n_a2.note_id),
+        "must not leak case B reviews"
+    );
+    // Ordered by note_id ASC: A1's two reviews come before A2's.
+    assert_eq!(case_a_reviews[0].note_id, n_a1.note_id);
+    assert_eq!(case_a_reviews[1].note_id, n_a1.note_id);
+    assert_eq!(case_a_reviews[2].note_id, n_a2.note_id);
+
+    let case_b_reviews = list_for_case(&pool, "CASE-LFC-B").await.unwrap();
+    assert_eq!(case_b_reviews.len(), 1);
+    assert_eq!(case_b_reviews[0].note_id, n_b1.note_id);
+}
+
+#[tokio::test]
+async fn test_analysis_reviews_deterministic_tiebreaker_on_same_second() {
+    // Two reviews inserted in the same SQLite-second tie on
+    // created_at. The list_for_note ORDER BY adds review_id ASC as
+    // tiebreaker so the result is deterministic — earlier review_id
+    // (i.e., the first INSERT) sorts first.
+    use dfars_desktop_lib::db::analysis_reviews::{
+        AnalysisReviewInput, add_review, list_for_note,
+    };
+
+    let (_state, pool) = build_state().await;
+    setup_case(&pool, "CASE-TIE").await;
+
+    let note = add_analysis(
+        &pool,
+        "CASE-TIE",
+        &AnalysisInput {
+            evidence_id: None,
+            category: "Other".into(),
+            finding: "F".into(),
+            description: None,
+            confidence_level: None,
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+
+    // Insert without delay — both reviews land in the same second.
+    let r1 = add_review(
+        &pool,
+        note.note_id,
+        &AnalysisReviewInput {
+            reviewed_by: "First".into(),
+            reviewed_at: "2026-04-22T10:00:00".into(),
+            review_notes: None,
+        },
+    )
+    .await
+    .unwrap();
+    let r2 = add_review(
+        &pool,
+        note.note_id,
+        &AnalysisReviewInput {
+            reviewed_by: "Second".into(),
+            reviewed_at: "2026-04-22T10:00:00".into(),
+            review_notes: None,
+        },
+    )
+    .await
+    .unwrap();
+
+    let listed = list_for_note(&pool, note.note_id).await.unwrap();
+    assert_eq!(listed.len(), 2);
+    assert_eq!(
+        listed[0].review_id, r1.review_id,
+        "earliest review_id must sort first when created_at ties"
+    );
+    assert_eq!(listed[1].review_id, r2.review_id);
+}
+
+#[tokio::test]
+async fn test_analysis_reviewed_at_length_cap_rejects_huge_input() {
+    use dfars_desktop_lib::db::analysis_reviews::{AnalysisReviewInput, add_review};
+
+    let (_state, pool) = build_state().await;
+    setup_case(&pool, "CASE-LEN").await;
+    let note = add_analysis(
+        &pool,
+        "CASE-LEN",
+        &AnalysisInput {
+            evidence_id: None,
+            category: "Other".into(),
+            finding: "F".into(),
+            description: None,
+            confidence_level: None,
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+
+    // 65 characters — one over the 64-char defensive cap.
+    let oversized = "X".repeat(65);
+    let err = add_review(
+        &pool,
+        note.note_id,
+        &AnalysisReviewInput {
+            reviewed_by: "Rev".into(),
+            reviewed_at: oversized,
+            review_notes: None,
+        },
+    )
+    .await
+    .expect_err("oversized reviewed_at must reject");
+    assert!(
+        matches!(err, AppError::ValidationError { ref field, .. } if field == "reviewed_at")
+    );
+}
+
+#[tokio::test]
+async fn test_analysis_finding_uses_char_count_not_byte_count() {
+    // Pre-existing byte-vs-char bug fix verification: 250 emoji =
+    // ~1000 bytes but 250 chars. Old `.len()` check would reject;
+    // new `.chars().count()` accepts since 250 ≤ FINDING_MAX_LEN (500).
+    let (_state, pool) = build_state().await;
+    setup_case(&pool, "CASE-UNICODE").await;
+
+    let emoji_finding = "🎯".repeat(250); // 250 chars, ~1000 bytes
+    let result = add_analysis(
+        &pool,
+        "CASE-UNICODE",
+        &AnalysisInput {
+            evidence_id: None,
+            category: "Observation".into(),
+            finding: emoji_finding.clone(),
+            description: None,
+            confidence_level: None,
+            ..Default::default()
+        },
+    )
+    .await;
+    assert!(
+        result.is_ok(),
+        "250-char Unicode finding must be accepted (chars, not bytes): {result:?}"
+    );
+
+    // 501 emojis must still reject (over the chars cap).
+    let too_many = "🎯".repeat(501);
+    let err = add_analysis(
+        &pool,
+        "CASE-UNICODE",
+        &AnalysisInput {
+            evidence_id: None,
+            category: "Observation".into(),
+            finding: too_many,
+            description: None,
+            confidence_level: None,
+            ..Default::default()
+        },
+    )
+    .await
+    .expect_err("501-char finding must reject");
+    assert!(
+        matches!(err, AppError::ValidationError { ref field, .. } if field == "finding")
+    );
+}
+
 // ─── Additional: analysis default confidence is Medium ────────────────────────
 
 #[tokio::test]
