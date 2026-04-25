@@ -208,7 +208,15 @@ export function AnalysisForm({ evidenceList, isPending, onSubmit, onCancel }: An
           name="created_by"
           render={({ field }) => (
             <FormItem>
-              <FormLabel>Author</FormLabel>
+              <FormLabel>
+                Author
+                <span
+                  className="ml-1.5 text-xs font-normal text-amber-500/80"
+                  aria-hidden="true"
+                >
+                  (recommended)
+                </span>
+              </FormLabel>
               <FormControl>
                 <Input
                   placeholder="Examiner name or initials"
@@ -216,8 +224,8 @@ export function AnalysisForm({ evidenceList, isPending, onSubmit, onCancel }: An
                 />
               </FormControl>
               <FormDescription>
-                Recommended. Peer review records the reviewer by name;
-                the author line ties the finding to its examiner.
+                Peer review records the reviewer by name; the author
+                line ties the finding to its examiner.
               </FormDescription>
               <FormMessage />
             </FormItem>

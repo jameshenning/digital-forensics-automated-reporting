@@ -97,8 +97,11 @@ export function AnalysisReviewDialog({
     },
   });
 
-  // Reset the form state each time the dialog opens — stale "reviewed_at"
-  // from a previous session would otherwise carry over.
+  // Reset the form state each time the dialog opens — stale
+  // "reviewed_at" from a previous session would otherwise carry over.
+  // `form` from useForm is referentially stable across renders so
+  // including it in deps is a no-op (no re-trigger on render); we
+  // include it anyway to satisfy exhaustive-deps without a disable.
   React.useEffect(() => {
     if (open) {
       form.reset({
@@ -107,8 +110,7 @@ export function AnalysisReviewDialog({
         review_notes: "",
       });
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open]);
+  }, [open, form]);
 
   const mutation = useMutation({
     mutationFn: (values: AnalysisReviewFormValues) =>

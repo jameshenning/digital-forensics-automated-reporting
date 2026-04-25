@@ -154,3 +154,67 @@ pub fn log_case(case_id: &str, user: &str, action: &str, details: &str) {
     let line = format_line(user, action, details);
     append_line(case_audit_path(case_id).as_path(), &line);
 }
+
+#[cfg(test)]
+mod tests {
+    //! Format-only tests. The filesystem-write path uses BaseDirs
+    //! and would touch the real user's APPDATA — out of scope here.
+    //! These lock in the action constants and the line-format shape
+    //! so a downstream rename or reordering shows up as a failed
+    //! assertion rather than as a silent audit-log regression.
+    use super::*;
+
+    #[test]
+    fn action_codes_use_screaming_snake_case() {
+        // Spot-check — these strings appear in audit files and may be
+        // grep-matched by external tooling. Renaming silently would
+        // break those consumers.
+        assert_eq!(EVIDENCE_ADDED, "EVIDENCE_ADDED");
+        assert_eq!(CUSTODY_ADDED, "CUSTODY_ADDED");
+        assert_eq!(HASH_ADDED, "HASH_ADDED");
+        assert_eq!(TOOL_ADDED, "TOOL_ADDED");
+        assert_eq!(ANALYSIS_ADDED, "ANALYSIS_ADDED");
+        assert_eq!(ANALYSIS_REVIEWED, "ANALYSIS_REVIEWED");
+    }
+
+    #[test]
+    fn format_line_uses_pipe_separated_fields() {
+        let line = format_line("jane", "ANALYSIS_REVIEWED", "note_id=42");
+        // Format: TIMESTAMP | USER | ACTION | DETAILS\n
+        let parts: Vec<&str> = line.trim_end().splitn(4, " | ").collect();
+        assert_eq!(parts.len(), 4, "expected 4 pipe-delimited fields: {line:?}");
+        let (ts, user, action, details) = (parts[0], parts[1], parts[2], parts[3]);
+        // Timestamp shape: YYYY-MM-DDTHH:MM:SS.uuuuuu (RFC-ish, no zone)
+        assert!(ts.starts_with(&format!("{}", chrono::Utc::now().format("%Y"))));
+        assert!(ts.contains('T'));
+        assert_eq!(user, "jane");
+        assert_eq!(action, "ANALYSIS_REVIEWED");
+        assert_eq!(details, "note_id=42");
+        assert!(line.ends_with('\n'), "line must terminate with newline");
+    }
+
+    #[test]
+    fn format_line_substitutes_system_for_empty_user() {
+        // Empty actor → "SYSTEM" (e.g., a bootstrap action with no
+        // session). Locks in the fallback so it doesn't silently
+        // regress to an empty actor field.
+        let line = format_line("", "EVIDENCE_ADDED", "x");
+        assert!(line.contains(" | SYSTEM | "), "empty user must render as SYSTEM: {line:?}");
+    }
+
+    #[test]
+    fn case_audit_path_namespaces_per_case() {
+        // Two cases write to two distinct files. Same case writes to
+        // the same file. Provides regression on the path-builder
+        // shape used by `log_case`.
+        let a = case_audit_path("CASE-001");
+        let b = case_audit_path("CASE-002");
+        let a_again = case_audit_path("CASE-001");
+        assert_ne!(a, b);
+        assert_eq!(a, a_again);
+        assert!(
+            a.file_name().unwrap().to_string_lossy().ends_with("CASE-001_audit.txt"),
+            "case_id should be embedded in the audit filename: {a:?}"
+        );
+    }
+}
