@@ -1294,7 +1294,9 @@ async fn test_20c_report_renders_validation_and_review_metadata() {
         &AnalysisReviewInput {
             reviewed_by: "Dr. Peer".into(),
             reviewed_at: "2026-04-22T10:00:00".into(),
-            review_notes: None,
+            review_notes: Some(
+                "Concur with the methodology; recommend SHA512 follow-up.".into(),
+            ),
         },
     )
     .await
@@ -1330,6 +1332,10 @@ async fn test_20c_report_renders_validation_and_review_metadata() {
     assert!(md.contains("Alternative explanations considered"), "alternatives section");
     assert!(md.contains("ruled out by hash match"), "alternatives body");
     assert!(md.contains("Reviewed by Dr. Peer"), "review footer");
+    assert!(
+        md.contains("recommend SHA512 follow-up"),
+        "review_notes commentary must render inline beneath the review entry: {md}"
+    );
 
     assert!(
         md.contains("Author**: not recorded"),

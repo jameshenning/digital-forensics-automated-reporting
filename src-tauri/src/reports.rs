@@ -214,6 +214,11 @@ struct AnalysisReport {
 struct AnalysisReviewBrief {
     reviewed_by: String,
     reviewed_at: String,
+    /// Optional reviewer commentary captured when the review was
+    /// stamped. Rendered inline beneath the "Reviewed by X on Y"
+    /// line in the report so substantive peer feedback isn't
+    /// invisibly buried in the DB.
+    review_notes: Option<String>,
 }
 
 async fn gather_report_payload(
@@ -287,6 +292,7 @@ async fn gather_report_payload(
             .push(AnalysisReviewBrief {
                 reviewed_by: r.reviewed_by,
                 reviewed_at: r.reviewed_at,
+                review_notes: r.review_notes,
             });
     }
 
@@ -609,10 +615,17 @@ fn render_markdown(p: &ReportPayload) -> Result<String, AppError> {
             out.push_str("\n**Peer review:**\n");
             for r in &note.reviews {
                 out.push_str(&format!(
-                    "- Reviewed by {} on {}\n",
+                    "- Reviewed by {} on {}",
                     esc_md(&r.reviewed_by),
                     esc_md(&r.reviewed_at),
                 ));
+                // Reviewer commentary surfaces inline when present.
+                // Indented continuation under the bullet preserves
+                // the list structure across CommonMark renderers.
+                if let Some(notes) = r.review_notes.as_deref().filter(|s| !s.trim().is_empty()) {
+                    out.push_str(&format!("\n\n  > {}", esc_md(notes)));
+                }
+                out.push('\n');
             }
         }
         out.push_str("\n");

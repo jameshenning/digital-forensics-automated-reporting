@@ -354,6 +354,9 @@ function AnalysisNoteCard({
               key={r.review_id}
               variant="outline"
               className="text-[10px] py-0 px-2 border-green-600/40 text-green-400"
+              // Review commentary surfaces on hover/long-press; full
+              // text is below the chip when populated.
+              title={r.review_notes ?? undefined}
             >
               <CheckCircle2 className="h-3 w-3 mr-1" />
               Reviewed by {r.reviewed_by}
@@ -376,6 +379,24 @@ function AnalysisNoteCard({
           Mark reviewed
         </Button>
       </div>
+
+      {/* Inline review-notes block — only rendered when at least one
+           review carries commentary. Indented + dim styling keeps the
+           card readable while making substantive feedback visible. */}
+      {reviews.some((r) => r.review_notes && r.review_notes.trim().length > 0) && (
+        <div className="ml-2 pl-3 border-l-2 border-green-600/30 space-y-1 text-xs text-muted-foreground">
+          {reviews
+            .filter((r) => r.review_notes && r.review_notes.trim().length > 0)
+            .map((r) => (
+              <div key={r.review_id} className="whitespace-pre-wrap">
+                <span className="text-green-400 font-medium mr-1">
+                  {r.reviewed_by}:
+                </span>
+                {r.review_notes}
+              </div>
+            ))}
+        </div>
+      )}
 
       <AnalysisReviewDialog
         noteId={note.note_id}
