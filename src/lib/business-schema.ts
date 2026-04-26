@@ -47,6 +47,20 @@ export const businessIdentifierFormSchema = z.object({
     .string()
     .max(2000, "Notes must be at most 2000 characters")
     .optional(),
+  // Phase B (migration 0008) attribution fields — all optional, char caps
+  // mirror the Rust validators in db/business_identifiers.rs.
+  attributed_by: z
+    .string()
+    .max(200, "Author must be at most 200 characters")
+    .optional(),
+  attribution_basis: z
+    .string()
+    .max(5000, "Attribution basis must be at most 5000 characters")
+    .optional(),
+  confidence_level: z.enum(["Low", "Medium", "High"]).optional(),
+  verification_status: z
+    .enum(["Unverified", "Tentative", "Confirmed"])
+    .optional(),
 });
 
 export type BusinessIdentifierFormValues = z.input<

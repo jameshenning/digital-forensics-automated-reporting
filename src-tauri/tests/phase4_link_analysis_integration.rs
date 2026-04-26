@@ -1,4 +1,4 @@
-/// Phase 4 Link Analysis Integration Tests
+﻿/// Phase 4 Link Analysis Integration Tests
 ///
 /// Covers all 19 test families from the Phase 4 brief:
 ///   1.  Entity CRUD
@@ -71,7 +71,7 @@ use dfars_desktop_lib::{
     state::AppState,
 };
 
-// ─── Test infrastructure ──────────────────────────────────────────────────────
+// â”€â”€â”€ Test infrastructure â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 /// Unique DB counter for test isolation (each test gets a fresh pool).
 static DB_COUNTER: AtomicU64 = AtomicU64::new(4000);
@@ -231,6 +231,13 @@ CREATE TABLE IF NOT EXISTS entity_links (
     notes TEXT,
     is_deleted INTEGER DEFAULT 0,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    -- migration 0008: attribution principles
+    attributed_by TEXT,
+    basis TEXT,
+    confidence_level TEXT,
+    method_reference TEXT,
+    alternatives_considered TEXT,
+    evidence_refs TEXT,
     FOREIGN KEY (case_id) REFERENCES cases (case_id) ON DELETE RESTRICT
 );
 
@@ -299,7 +306,7 @@ CREATE TABLE IF NOT EXISTS case_shares (
     FOREIGN KEY (case_id) REFERENCES cases (case_id) ON DELETE RESTRICT
 );
 
--- migration 0004: person_identifiers (+ 0006 discovered_via_tool)
+-- migration 0004: person_identifiers (+ 0006 discovered_via_tool, 0008 attribution)
 CREATE TABLE IF NOT EXISTS person_identifiers (
     identifier_id INTEGER PRIMARY KEY AUTOINCREMENT,
     entity_id INTEGER NOT NULL,
@@ -308,6 +315,10 @@ CREATE TABLE IF NOT EXISTS person_identifiers (
     platform TEXT,
     notes TEXT,
     discovered_via_tool TEXT,
+    attributed_by TEXT,
+    attribution_basis TEXT,
+    confidence_level TEXT,
+    verification_status TEXT,
     is_deleted INTEGER DEFAULT 0,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -321,7 +332,7 @@ CREATE INDEX IF NOT EXISTS idx_person_identifiers_kind
 CREATE INDEX IF NOT EXISTS idx_person_identifiers_discovered_via_tool
     ON person_identifiers(discovered_via_tool);
 
--- migration 0005: business_identifiers (+ 0006 discovered_via_tool)
+-- migration 0005: business_identifiers (+ 0006 discovered_via_tool, 0008 attribution)
 CREATE TABLE IF NOT EXISTS business_identifiers (
     identifier_id INTEGER PRIMARY KEY AUTOINCREMENT,
     entity_id INTEGER NOT NULL,
@@ -330,6 +341,10 @@ CREATE TABLE IF NOT EXISTS business_identifiers (
     platform TEXT,
     notes TEXT,
     discovered_via_tool TEXT,
+    attributed_by TEXT,
+    attribution_basis TEXT,
+    confidence_level TEXT,
+    verification_status TEXT,
     is_deleted INTEGER DEFAULT 0,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -370,7 +385,7 @@ async fn new_forensics_pool() -> SqlitePool {
 async fn make_state() -> (Arc<AppState>, SqlitePool) {
     let forensics = new_forensics_pool().await;
 
-    // Auth pool — minimal, not used for Phase 4 DB queries
+    // Auth pool â€” minimal, not used for Phase 4 DB queries
     let auth_opts = SqliteConnectOptions::new()
         .filename(":memory:")
         .create_if_missing(true);
@@ -488,7 +503,7 @@ fn past_dt() -> NaiveDateTime {
     Utc::now().naive_utc() - Duration::hours(2)
 }
 
-// ─── Test 1: Entity CRUD ──────────────────────────────────────────────────────
+// â”€â”€â”€ Test 1: Entity CRUD â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 #[tokio::test]
 async fn test_entity_crud() {
@@ -554,7 +569,7 @@ async fn test_entity_crud() {
     assert!(list2.is_empty(), "deleted entity should not appear in list");
 }
 
-// ─── Test 2: Entity type + subtype validation ─────────────────────────────────
+// â”€â”€â”€ Test 2: Entity type + subtype validation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 #[tokio::test]
 async fn test_entity_type_subtype_validation() {
@@ -579,7 +594,7 @@ async fn test_entity_type_subtype_validation() {
     let err = add_entity(&pool, &case_id, &bad_type).await.unwrap_err();
     assert!(matches!(err, AppError::ValidationError { .. }), "invalid entity_type must be rejected: {err:?}");
 
-    // Non-person with subtype → rejected
+    // Non-person with subtype â†’ rejected
     let bad_subtype = EntityInput {
         entity_type: "business".into(),
         display_name: "Acme Corp".into(),
@@ -597,7 +612,7 @@ async fn test_entity_type_subtype_validation() {
     let err = add_entity(&pool, &case_id, &bad_subtype).await.unwrap_err();
     assert!(matches!(err, AppError::ValidationError { .. }), "non-person subtype must be rejected: {err:?}");
 
-    // Person without subtype → allowed
+    // Person without subtype â†’ allowed
     let ok = EntityInput {
         entity_type: "person".into(),
         display_name: "Bob".into(),
@@ -633,7 +648,7 @@ async fn test_entity_type_subtype_validation() {
     assert!(matches!(err, AppError::ValidationError { .. }), "invalid person subtype must be rejected: {err:?}");
 }
 
-// ─── Test 3: Entity parent validation ────────────────────────────────────────
+// â”€â”€â”€ Test 3: Entity parent validation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 #[tokio::test]
 async fn test_entity_parent_validation() {
@@ -680,9 +695,9 @@ async fn test_entity_parent_validation() {
     let err = add_entity(&pool, &case_a, &input_cross).await.unwrap_err();
     assert!(matches!(err, AppError::ValidationError { .. }), "cross-case parent must be rejected: {err:?}");
 
-    // Cycle: A → B → C → A
+    // Cycle: A â†’ B â†’ C â†’ A
     // entity_a already exists in case_a. Create B with parent A, then C with parent B,
-    // then try to update A's parent to C (which would create A→B→C→A).
+    // then try to update A's parent to C (which would create Aâ†’Bâ†’Câ†’A).
     let entity_b_in_a = make_entity(&pool, &case_a, "Bob in A", "person").await;
     let input_b_parent = EntityInput {
         entity_type: "person".into(),
@@ -721,7 +736,7 @@ async fn test_entity_parent_validation() {
         .expect("add C with parent B must succeed")
         .entity_id;
 
-    // Now try to update A's parent to C — this creates A→B→C→A cycle.
+    // Now try to update A's parent to C â€” this creates Aâ†’Bâ†’Câ†’A cycle.
     let cycle_input = EntityInput {
         entity_type: "person".into(),
         display_name: "Alice (cycle attempt)".into(),
@@ -739,18 +754,18 @@ async fn test_entity_parent_validation() {
     let err = update_entity(&pool, entity_a, &cycle_input).await.unwrap_err();
     assert!(
         matches!(err, AppError::EntityCycle { .. }),
-        "cycle A→B→C→A must be rejected with EntityCycle: {err:?}"
+        "cycle Aâ†’Bâ†’Câ†’A must be rejected with EntityCycle: {err:?}"
     );
 }
 
-// ─── Test 4: Entity metadata_json validation ──────────────────────────────────
+// â”€â”€â”€ Test 4: Entity metadata_json validation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 #[tokio::test]
 async fn test_entity_metadata_json_validation() {
     let (_, pool) = make_state().await;
     let case_id = make_case(&pool, "JSON-01").await;
 
-    // Invalid JSON → rejected
+    // Invalid JSON â†’ rejected
     let bad = EntityInput {
         entity_type: "person".into(),
         display_name: "Alice".into(),
@@ -768,7 +783,7 @@ async fn test_entity_metadata_json_validation() {
     let err = add_entity(&pool, &case_id, &bad).await.unwrap_err();
     assert!(matches!(err, AppError::ValidationError { .. }), "bad JSON must be rejected: {err:?}");
 
-    // Valid JSON → accepted
+    // Valid JSON â†’ accepted
     let good = EntityInput {
         entity_type: "person".into(),
         display_name: "Bob".into(),
@@ -786,7 +801,7 @@ async fn test_entity_metadata_json_validation() {
     add_entity(&pool, &case_id, &good).await.expect("valid JSON should be accepted");
 }
 
-// ─── Test 5: Entity soft-delete cascade to entity_links ──────────────────────
+// â”€â”€â”€ Test 5: Entity soft-delete cascade to entity_links â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 #[tokio::test]
 async fn test_entity_soft_delete_cascades_to_links() {
@@ -796,7 +811,7 @@ async fn test_entity_soft_delete_cascades_to_links() {
     let a = make_entity(&pool, &case_id, "Alice", "person").await;
     let b = make_entity(&pool, &case_id, "Bob", "person").await;
 
-    // Create a link A → B
+    // Create a link A â†’ B
     let link_input = LinkInput {
         source_type: "entity".into(),
         source_id: a.to_string(),
@@ -806,6 +821,12 @@ async fn test_entity_soft_delete_cascades_to_links() {
         directional: None,
         weight: None,
         notes: None,
+        attributed_by: None,
+        basis: None,
+        confidence_level: None,
+        method_reference: None,
+        alternatives_considered: None,
+        evidence_refs: None,
     };
     let link = add_link(&pool, &case_id, &link_input).await.expect("add link failed");
 
@@ -813,7 +834,7 @@ async fn test_entity_soft_delete_cascades_to_links() {
     let links_before = link_list_for_case(&pool, &case_id).await.expect("list links failed");
     assert_eq!(links_before.len(), 1, "link must be present before cascade");
 
-    // Soft-delete entity A — must cascade to the link
+    // Soft-delete entity A â€” must cascade to the link
     entity_soft_delete(&pool, a).await.expect("soft delete entity failed");
 
     // Link should now be invisible (is_deleted = 1)
@@ -835,7 +856,7 @@ async fn test_entity_soft_delete_cascades_to_links() {
     assert_eq!(raw.0, 1, "link row must be soft-deleted (is_deleted=1), not hard-deleted");
 }
 
-// ─── Test 6: Link endpoint validation ────────────────────────────────────────
+// â”€â”€â”€ Test 6: Link endpoint validation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 #[tokio::test]
 async fn test_link_endpoint_validation() {
@@ -844,7 +865,7 @@ async fn test_link_endpoint_validation() {
     let a = make_entity(&pool, &case_id, "Alice", "person").await;
     let ev = make_evidence(&pool, &case_id, "EV-001").await;
 
-    // Link from non-existent entity → LinkEndpointMissing
+    // Link from non-existent entity â†’ LinkEndpointMissing
     let bad_entity = LinkInput {
         source_type: "entity".into(),
         source_id: "99999".into(),
@@ -854,6 +875,12 @@ async fn test_link_endpoint_validation() {
         directional: None,
         weight: None,
         notes: None,
+        attributed_by: None,
+        basis: None,
+        confidence_level: None,
+        method_reference: None,
+        alternatives_considered: None,
+        evidence_refs: None,
     };
     let err = add_link(&pool, &case_id, &bad_entity).await.unwrap_err();
     assert!(
@@ -861,7 +888,7 @@ async fn test_link_endpoint_validation() {
         "missing entity endpoint must be LinkEndpointMissing: {err:?}"
     );
 
-    // Link from valid entity to non-existent evidence → LinkEndpointMissing
+    // Link from valid entity to non-existent evidence â†’ LinkEndpointMissing
     let bad_evidence = LinkInput {
         source_type: "entity".into(),
         source_id: a.to_string(),
@@ -871,6 +898,12 @@ async fn test_link_endpoint_validation() {
         directional: None,
         weight: None,
         notes: None,
+        attributed_by: None,
+        basis: None,
+        confidence_level: None,
+        method_reference: None,
+        alternatives_considered: None,
+        evidence_refs: None,
     };
     let err = add_link(&pool, &case_id, &bad_evidence).await.unwrap_err();
     assert!(
@@ -878,7 +911,7 @@ async fn test_link_endpoint_validation() {
         "missing evidence endpoint must be LinkEndpointMissing: {err:?}"
     );
 
-    // Self-loop → ValidationError
+    // Self-loop â†’ ValidationError
     let self_loop = LinkInput {
         source_type: "entity".into(),
         source_id: a.to_string(),
@@ -888,11 +921,17 @@ async fn test_link_endpoint_validation() {
         directional: None,
         weight: None,
         notes: None,
+        attributed_by: None,
+        basis: None,
+        confidence_level: None,
+        method_reference: None,
+        alternatives_considered: None,
+        evidence_refs: None,
     };
     let err = add_link(&pool, &case_id, &self_loop).await.unwrap_err();
     assert!(matches!(err, AppError::ValidationError { .. }), "self-loop must be ValidationError: {err:?}");
 
-    // Valid entity → evidence link
+    // Valid entity â†’ evidence link
     let ok = LinkInput {
         source_type: "entity".into(),
         source_id: a.to_string(),
@@ -902,11 +941,17 @@ async fn test_link_endpoint_validation() {
         directional: None,
         weight: None,
         notes: None,
+        attributed_by: None,
+        basis: None,
+        confidence_level: None,
+        method_reference: None,
+        alternatives_considered: None,
+        evidence_refs: None,
     };
-    add_link(&pool, &case_id, &ok).await.expect("valid entity→evidence link should succeed");
+    add_link(&pool, &case_id, &ok).await.expect("valid entityâ†’evidence link should succeed");
 }
 
-// ─── Test 7: Link CRUD ────────────────────────────────────────────────────────
+// â”€â”€â”€ Test 7: Link CRUD â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 #[tokio::test]
 async fn test_link_crud() {
@@ -925,6 +970,12 @@ async fn test_link_crud() {
         directional: Some(1),
         weight: Some(2.5),
         notes: None,
+        attributed_by: None,
+        basis: None,
+        confidence_level: None,
+        method_reference: None,
+        alternatives_considered: None,
+        evidence_refs: None,
     };
     let link = add_link(&pool, &case_id, &input).await.expect("add link");
     assert_eq!(link.link_label.as_deref(), Some("employs"));
@@ -944,7 +995,7 @@ async fn test_link_crud() {
     assert!(list2.is_empty(), "deleted link should not appear in list");
 }
 
-// ─── Test 8: Event CRUD ───────────────────────────────────────────────────────
+// â”€â”€â”€ Test 8: Event CRUD â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 #[tokio::test]
 async fn test_event_crud() {
@@ -997,7 +1048,7 @@ async fn test_event_crud() {
     assert!(list2.is_empty(), "deleted event should not appear in list");
 }
 
-// ─── Test 9: Event category allowlist ────────────────────────────────────────
+// â”€â”€â”€ Test 9: Event category allowlist â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 #[tokio::test]
 async fn test_event_category_allowlist() {
@@ -1017,7 +1068,7 @@ async fn test_event_category_allowlist() {
     let err = add_event(&pool, &case_id, &bad).await.unwrap_err();
     assert!(matches!(err, AppError::ValidationError { .. }), "invalid category must be rejected: {err:?}");
 
-    // None category → allowed
+    // None category â†’ allowed
     let no_cat = EventInput {
         title: "No category event".into(),
         description: None,
@@ -1046,14 +1097,14 @@ async fn test_event_category_allowlist() {
     }
 }
 
-// ─── Test 10: Event datetime validation ──────────────────────────────────────
+// â”€â”€â”€ Test 10: Event datetime validation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 #[tokio::test]
 async fn test_event_datetime_validation() {
     let (_, pool) = make_state().await;
     let case_id = make_case(&pool, "EVT-DT-01").await;
 
-    // Future datetime → rejected
+    // Future datetime â†’ rejected
     let future_dt = Utc::now().naive_utc() + Duration::hours(1);
     let bad_future = EventInput {
         title: "Future event".into(),
@@ -1067,7 +1118,7 @@ async fn test_event_datetime_validation() {
     let err = add_event(&pool, &case_id, &bad_future).await.unwrap_err();
     assert!(matches!(err, AppError::ValidationError { .. }), "future datetime must be rejected: {err:?}");
 
-    // end < start → rejected
+    // end < start â†’ rejected
     let start = past_dt();
     let end_before_start = start - Duration::hours(1);
     let bad_end = EventInput {
@@ -1096,14 +1147,14 @@ async fn test_event_datetime_validation() {
     add_event(&pool, &case_id, &good).await.expect("valid range event must be accepted");
 }
 
-// ─── Test 11: Event related FK validation ────────────────────────────────────
+// â”€â”€â”€ Test 11: Event related FK validation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 #[tokio::test]
 async fn test_event_related_fk_validation() {
     let (_, pool) = make_state().await;
     let case_id = make_case(&pool, "EVT-FK-01").await;
 
-    // Missing entity_id → ValidationError
+    // Missing entity_id â†’ ValidationError
     let bad_entity = EventInput {
         title: "Event".into(),
         description: None,
@@ -1116,7 +1167,7 @@ async fn test_event_related_fk_validation() {
     let err = add_event(&pool, &case_id, &bad_entity).await.unwrap_err();
     assert!(matches!(err, AppError::ValidationError { .. }), "missing entity FK must be rejected: {err:?}");
 
-    // Missing evidence_id → ValidationError
+    // Missing evidence_id â†’ ValidationError
     let bad_ev = EventInput {
         title: "Event".into(),
         description: None,
@@ -1145,7 +1196,7 @@ async fn test_event_related_fk_validation() {
     add_event(&pool, &case_id, &ok).await.expect("valid FK refs must be accepted");
 }
 
-// ─── Test 12: Graph assembly happy path ──────────────────────────────────────
+// â”€â”€â”€ Test 12: Graph assembly happy path â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 #[tokio::test]
 async fn test_graph_happy_path() {
@@ -1159,7 +1210,7 @@ async fn test_graph_happy_path() {
     let ev1 = make_evidence(&pool, &case_id, "EV-G-001").await;
     let ev2 = make_evidence(&pool, &case_id, "EV-G-002").await;
 
-    // 4 links: A→B, B→C, A→ev1, C→ev2
+    // 4 links: Aâ†’B, Bâ†’C, Aâ†’ev1, Câ†’ev2
     let pairs: &[(&str, String, &str, String)] = &[
         ("entity", a.to_string(), "entity", b.to_string()),
         ("entity", b.to_string(), "entity", c.to_string()),
@@ -1176,6 +1227,12 @@ async fn test_graph_happy_path() {
             directional: None,
             weight: None,
             notes: None,
+            attributed_by: None,
+            basis: None,
+            confidence_level: None,
+            method_reference: None,
+            alternatives_considered: None,
+            evidence_refs: None,
         };
         add_link(&pool, &case_id, &input).await.expect("add link");
     }
@@ -1207,7 +1264,7 @@ async fn test_graph_happy_path() {
     }
 }
 
-// ─── Test 13: Graph with entity_type filter ───────────────────────────────────
+// â”€â”€â”€ Test 13: Graph with entity_type filter â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 #[tokio::test]
 async fn test_graph_entity_type_filter() {
@@ -1217,7 +1274,7 @@ async fn test_graph_entity_type_filter() {
     let person_id = make_entity(&pool, &case_id, "Alice", "person").await;
     let biz_id = make_entity(&pool, &case_id, "Acme", "business").await;
 
-    // Link person → business
+    // Link person â†’ business
     let link_input = LinkInput {
         source_type: "entity".into(),
         source_id: person_id.to_string(),
@@ -1227,6 +1284,12 @@ async fn test_graph_entity_type_filter() {
         directional: None,
         weight: None,
         notes: None,
+        attributed_by: None,
+        basis: None,
+        confidence_level: None,
+        method_reference: None,
+        alternatives_considered: None,
+        evidence_refs: None,
     };
     add_link(&pool, &case_id, &link_input).await.expect("add link");
 
@@ -1243,11 +1306,11 @@ async fn test_graph_entity_type_filter() {
     assert_eq!(payload.nodes.len(), 1, "expected only 1 person node, got {}", payload.nodes.len());
     assert_eq!(payload.nodes[0].id, format!("entity:{person_id}"));
 
-    // The link touches business which is filtered out → no edges
+    // The link touches business which is filtered out â†’ no edges
     assert_eq!(payload.edges.len(), 0, "edge touching filtered entity must be excluded");
 }
 
-// ─── Test 14: Graph with include_evidence=false ───────────────────────────────
+// â”€â”€â”€ Test 14: Graph with include_evidence=false â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 #[tokio::test]
 async fn test_graph_no_evidence() {
@@ -1257,7 +1320,7 @@ async fn test_graph_no_evidence() {
     let person_id = make_entity(&pool, &case_id, "Alice", "person").await;
     let ev_id = make_evidence(&pool, &case_id, "EV-H-001").await;
 
-    // Link person → evidence
+    // Link person â†’ evidence
     let link_input = LinkInput {
         source_type: "entity".into(),
         source_id: person_id.to_string(),
@@ -1267,6 +1330,12 @@ async fn test_graph_no_evidence() {
         directional: None,
         weight: None,
         notes: None,
+        attributed_by: None,
+        basis: None,
+        confidence_level: None,
+        method_reference: None,
+        alternatives_considered: None,
+        evidence_refs: None,
     };
     add_link(&pool, &case_id, &link_input).await.expect("add link");
 
@@ -1288,7 +1357,7 @@ async fn test_graph_no_evidence() {
     assert_eq!(payload.edges.len(), 0, "edge to evidence must be excluded when evidence not in node set");
 }
 
-// ─── Test 15: Graph excludes soft-deleted entities and links ──────────────────
+// â”€â”€â”€ Test 15: Graph excludes soft-deleted entities and links â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 #[tokio::test]
 async fn test_graph_excludes_soft_deleted() {
@@ -1307,6 +1376,12 @@ async fn test_graph_excludes_soft_deleted() {
         directional: None,
         weight: None,
         notes: None,
+        attributed_by: None,
+        basis: None,
+        confidence_level: None,
+        method_reference: None,
+        alternatives_considered: None,
+        evidence_refs: None,
     };
     add_link(&pool, &case_id, &link_input).await.expect("add link");
 
@@ -1324,11 +1399,11 @@ async fn test_graph_excludes_soft_deleted() {
     // Only B remains
     assert_eq!(payload.nodes.len(), 1, "soft-deleted entity A must not appear in graph");
     assert_eq!(payload.nodes[0].id, format!("entity:{b}"));
-    // Link is cascade-deleted — no edges
+    // Link is cascade-deleted â€” no edges
     assert_eq!(payload.edges.len(), 0, "edge involving deleted entity must not appear");
 }
 
-// ─── Test 15a-d: Identifiers as graph nodes ──────────────────────────────────
+// â”€â”€â”€ Test 15a-d: Identifiers as graph nodes â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 #[tokio::test]
 async fn test_graph_identifiers_emitted_per_entity() {
@@ -1344,6 +1419,10 @@ async fn test_graph_identifiers_emitted_per_entity() {
             value: "alice@example.com".into(),
             platform: None,
             notes: None,
+            attributed_by: None,
+            attribution_basis: None,
+            confidence_level: None,
+            verification_status: None,
         },
     )
     .await
@@ -1358,6 +1437,10 @@ async fn test_graph_identifiers_emitted_per_entity() {
             value: "acme.example".into(),
             platform: None,
             notes: None,
+            attributed_by: None,
+            attribution_basis: None,
+            confidence_level: None,
+            verification_status: None,
         },
     )
     .await
@@ -1397,7 +1480,7 @@ async fn test_graph_identifiers_emitted_per_entity() {
 #[tokio::test]
 async fn test_graph_identifier_dedup_collapses_shared_value() {
     // Two persons with the SAME email (case-insensitive, trimmed) collapse
-    // to a single identifier node — that's the whole point of feature #1.
+    // to a single identifier node â€” that's the whole point of feature #1.
     let (_, pool) = make_state().await;
     let case_id = make_case(&pool, "GRAPH-IDENT-2").await;
 
@@ -1412,6 +1495,10 @@ async fn test_graph_identifier_dedup_collapses_shared_value() {
             value: "Shared@Example.com".into(),
             platform: None,
             notes: None,
+            attributed_by: None,
+            attribution_basis: None,
+            confidence_level: None,
+            verification_status: None,
         },
     )
     .await
@@ -1424,6 +1511,10 @@ async fn test_graph_identifier_dedup_collapses_shared_value() {
             value: "  shared@example.COM  ".into(),
             platform: None,
             notes: None,
+            attributed_by: None,
+            attribution_basis: None,
+            confidence_level: None,
+            verification_status: None,
         },
     )
     .await
@@ -1472,6 +1563,10 @@ async fn test_graph_only_shared_identifiers_drops_solos() {
                 value: (*value).into(),
                 platform: None,
                 notes: None,
+                attributed_by: None,
+                attribution_basis: None,
+                confidence_level: None,
+                verification_status: None,
             },
         )
         .await
@@ -1497,7 +1592,7 @@ async fn test_graph_only_shared_identifiers_drops_solos() {
 #[tokio::test]
 async fn test_graph_identifiers_respect_entity_type_filter() {
     // When entity_types filter excludes a parent entity, its identifiers
-    // must not appear either — even if those same identifiers would be
+    // must not appear either â€” even if those same identifiers would be
     // shared with a non-filtered entity.
     let (_, pool) = make_state().await;
     let case_id = make_case(&pool, "GRAPH-IDENT-4").await;
@@ -1513,6 +1608,10 @@ async fn test_graph_identifiers_respect_entity_type_filter() {
             value: "ceo@acme.example".into(),
             platform: None,
             notes: None,
+            attributed_by: None,
+            attribution_basis: None,
+            confidence_level: None,
+            verification_status: None,
         },
     )
     .await
@@ -1525,6 +1624,10 @@ async fn test_graph_identifiers_respect_entity_type_filter() {
             value: "ceo@acme.example".into(),
             platform: None,
             notes: None,
+            attributed_by: None,
+            attribution_basis: None,
+            confidence_level: None,
+            verification_status: None,
         },
     )
     .await
@@ -1553,7 +1656,7 @@ async fn test_graph_identifiers_respect_entity_type_filter() {
     assert_eq!(has_edges[0].source, format!("entity:{acme}"));
 }
 
-// ─── Test 15e-h: Node inspector aggregate ───────────────────────────────────
+// â”€â”€â”€ Test 15e-h: Node inspector aggregate â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 #[tokio::test]
 async fn test_inspector_entity_with_identifiers_and_counts() {
@@ -1574,6 +1677,10 @@ async fn test_inspector_entity_with_identifiers_and_counts() {
             value: "alice@example.com".into(),
             platform: None,
             notes: None,
+            attributed_by: None,
+            attribution_basis: None,
+            confidence_level: None,
+            verification_status: None,
         },
     )
     .await
@@ -1586,6 +1693,10 @@ async fn test_inspector_entity_with_identifiers_and_counts() {
             value: "alice_irl".into(),
             platform: Some("twitter".into()),
             notes: None,
+            attributed_by: None,
+            attribution_basis: None,
+            confidence_level: None,
+            verification_status: None,
         },
     )
     .await
@@ -1602,6 +1713,12 @@ async fn test_inspector_entity_with_identifiers_and_counts() {
             directional: None,
             weight: None,
             notes: None,
+            attributed_by: None,
+            basis: None,
+            confidence_level: None,
+            method_reference: None,
+            alternatives_considered: None,
+            evidence_refs: None,
         },
     )
     .await
@@ -1619,6 +1736,12 @@ async fn test_inspector_entity_with_identifiers_and_counts() {
                 directional: None,
                 weight: None,
                 notes: None,
+                attributed_by: None,
+                basis: None,
+                confidence_level: None,
+                method_reference: None,
+                alternatives_considered: None,
+                evidence_refs: None,
             },
         )
         .await
@@ -1658,13 +1781,19 @@ async fn test_inspector_evidence_with_latest_custody_and_counts() {
             directional: None,
             weight: None,
             notes: None,
+            attributed_by: None,
+            basis: None,
+            confidence_level: None,
+            method_reference: None,
+            alternatives_considered: None,
+            evidence_refs: None,
         },
     )
     .await
     .unwrap();
 
     // Two custody events; the LATEST by datetime should appear in the
-    // inspector — that's "where is this evidence right now?".
+    // inspector â€” that's "where is this evidence right now?".
     let earlier = NaiveDateTime::parse_from_str("2026-04-10 09:00:00", "%Y-%m-%d %H:%M:%S").unwrap();
     let later = NaiveDateTime::parse_from_str("2026-04-12 14:30:00", "%Y-%m-%d %H:%M:%S").unwrap();
     add_custody(
@@ -1727,7 +1856,7 @@ async fn test_inspector_evidence_with_latest_custody_and_counts() {
 
 #[tokio::test]
 async fn test_inspector_identifier_lists_all_owners_across_tables() {
-    // The same email is shared between a person AND a business — the
+    // The same email is shared between a person AND a business â€” the
     // inspector must surface BOTH owners regardless of which table the
     // canvas canonical id came from.
     let (_, pool) = make_state().await;
@@ -1744,6 +1873,10 @@ async fn test_inspector_identifier_lists_all_owners_across_tables() {
             value: "Shared@Acme.example".into(), // mixed case to test normalization
             platform: None,
             notes: None,
+            attributed_by: None,
+            attribution_basis: None,
+            confidence_level: None,
+            verification_status: None,
         },
     )
     .await
@@ -1756,12 +1889,16 @@ async fn test_inspector_identifier_lists_all_owners_across_tables() {
             value: "  shared@acme.EXAMPLE  ".into(), // padded + different case
             platform: None,
             notes: None,
+            attributed_by: None,
+            attribution_basis: None,
+            confidence_level: None,
+            verification_status: None,
         },
     )
     .await
     .unwrap();
 
-    // Look up by either identifier_id — both must resolve to the same
+    // Look up by either identifier_id â€” both must resolve to the same
     // shared owner list.
     for id in &[biz_ident.identifier_id] {
         let payload = build_inspector(&pool, &case_id, &format!("identifier:{id}")).await.unwrap();
@@ -1785,7 +1922,7 @@ async fn test_inspector_returns_not_found_for_stale_or_malformed_ids() {
     let (_, pool) = make_state().await;
     let case_id = make_case(&pool, "INSPECT-NF").await;
 
-    // Stale entity id — never existed.
+    // Stale entity id â€” never existed.
     let payload = build_inspector(&pool, &case_id, "entity:99999").await.unwrap();
     assert!(matches!(payload, InspectorPayload::NotFound), "stale entity id");
 
@@ -1808,7 +1945,7 @@ async fn test_inspector_returns_not_found_for_stale_or_malformed_ids() {
     assert!(matches!(payload, InspectorPayload::NotFound), "soft-deleted entity");
 }
 
-// ─── Test 16: Crime line assembly (all 6 groups) ─────────────────────────────
+// â”€â”€â”€ Test 16: Crime line assembly (all 6 groups) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 #[tokio::test]
 async fn test_crime_line_all_groups() {
@@ -1830,7 +1967,7 @@ async fn test_crime_line_all_groups() {
     };
     add_custody(&pool, &ev_id, &cust_input).await.expect("add custody");
 
-    // Hash — verification_datetime is NaiveDateTime (not Option)
+    // Hash â€” verification_datetime is NaiveDateTime (not Option)
     let hash_input = HashInput {
         algorithm: "SHA256".into(),
         hash_value: "a".repeat(64),
@@ -1907,7 +2044,7 @@ async fn test_crime_line_all_groups() {
     }
 }
 
-// ─── Test 17: Crime line date range filter ────────────────────────────────────
+// â”€â”€â”€ Test 17: Crime line date range filter â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 #[tokio::test]
 async fn test_crime_line_date_range_filter() {
@@ -1939,7 +2076,7 @@ async fn test_crime_line_date_range_filter() {
 
     assert!(added > 14, "need >14 events for the filter test to be meaningful (got {added})");
 
-    // Filter to a 7-day window: days 10–17
+    // Filter to a 7-day window: days 10â€“17
     let window_start = base + Duration::days(10);
     let window_end = base + Duration::days(17);
 
@@ -1952,7 +2089,7 @@ async fn test_crime_line_date_range_filter() {
         .expect("build_crime_line with filter failed");
 
     // All returned items must be within the window.
-    // TimelineItem.start is now a String (v1-compat, see db::graph) — parse
+    // TimelineItem.start is now a String (v1-compat, see db::graph) â€” parse
     // it back via the helper to do the range comparison.
     use dfars_desktop_lib::db::graph::parse_loose_datetime;
     for item in &payload.items {
@@ -1977,7 +2114,7 @@ async fn test_crime_line_date_range_filter() {
     );
 }
 
-// ─── Test 18: Crime line excludes soft-deleted events ────────────────────────
+// â”€â”€â”€ Test 18: Crime line excludes soft-deleted events â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 #[tokio::test]
 async fn test_crime_line_excludes_soft_deleted_events() {
@@ -1996,7 +2133,7 @@ async fn test_crime_line_excludes_soft_deleted_events() {
     };
     let event = add_event(&pool, &case_id, &evt_input).await.expect("add event");
 
-    // Add evidence (auto-derived — not soft-deleted even if entity is)
+    // Add evidence (auto-derived â€” not soft-deleted even if entity is)
     make_evidence(&pool, &case_id, "EV-CL-003").await;
 
     // Soft-delete the event
@@ -2021,10 +2158,10 @@ async fn test_crime_line_excludes_soft_deleted_events() {
     );
 }
 
-// ─── Test 19: Session guard negative tests ────────────────────────────────────
+// â”€â”€â”€ Test 19: Session guard negative tests â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 /// The session guard lives in the Tauri command layer (not the db:: functions).
-/// We verify it directly via `require_session` — the same function every command
+/// We verify it directly via `require_session` â€” the same function every command
 /// calls as its first statement.
 
 #[tokio::test]
@@ -2087,7 +2224,7 @@ async fn test_session_guard_valid_token_accepted() {
     assert!(result.is_ok(), "valid verified session token must be accepted: {result:?}");
 }
 
-// ─── Person identifiers (migration 0004) ──────────────────────────────────────
+// â”€â”€â”€ Person identifiers (migration 0004) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 /// Helper: create a person entity and return its id. Person-typed so
 /// identifier insertion is allowed.
@@ -2118,6 +2255,10 @@ fn make_identifier_input(kind: &str, value: &str) -> PersonIdentifierInput {
         value: value.into(),
         platform: None,
         notes: None,
+        attributed_by: None,
+        attribution_basis: None,
+        confidence_level: None,
+        verification_status: None,
     }
 }
 
@@ -2136,6 +2277,10 @@ async fn test_person_identifier_crud_roundtrip() {
             value: "alice@example.com".into(),
             platform: Some("gmail".into()),
             notes: Some("primary".into()),
+            attributed_by: None,
+            attribution_basis: None,
+            confidence_level: None,
+            verification_status: None,
         },
     )
     .await
@@ -2157,6 +2302,10 @@ async fn test_person_identifier_crud_roundtrip() {
             value: "alice@new.example.com".into(),
             platform: Some("protonmail".into()),
             notes: None,
+            attributed_by: None,
+            attribution_basis: None,
+            confidence_level: None,
+            verification_status: None,
         },
     )
     .await
@@ -2181,7 +2330,7 @@ async fn test_person_identifier_multi_platform_ordering() {
     let case_id = make_case(&pool, "PID-02").await;
     let entity_id = make_person(&pool, &case_id, "Bob").await;
 
-    // Scrambled kinds — list should come back sorted by kind ASC, created_at ASC.
+    // Scrambled kinds â€” list should come back sorted by kind ASC, created_at ASC.
     add_identifier(&pool, entity_id, &make_identifier_input("url", "https://bob.example.com"))
         .await
         .unwrap();
@@ -2292,7 +2441,7 @@ async fn test_person_identifier_session_guard() {
 
 /// End-to-end chain test: create identifiers through the db layer, then
 /// fetch them through `list_for_entity`, then pipe them into
-/// `build_osint_payload` (Pass 2). Proves that the Pass 1 → Pass 2 handoff
+/// `build_osint_payload` (Pass 2). Proves that the Pass 1 â†’ Pass 2 handoff
 /// survives a real DB roundtrip (not just the pure-function unit tests in
 /// `ai_cmd::tests::*` which never touch sqlx).
 #[tokio::test]
@@ -2320,6 +2469,10 @@ async fn test_pass1_to_pass2_identifier_flow_end_to_end() {
             value: value.into(),
             platform: platform.map(|p| p.into()),
             notes: None,
+            attributed_by: None,
+            attribution_basis: None,
+            confidence_level: None,
+            verification_status: None,
         };
         add_identifier(&pool, entity_id, &input).await.unwrap();
     }
@@ -2341,14 +2494,14 @@ async fn test_pass1_to_pass2_identifier_flow_end_to_end() {
     // The two case-mangled duplicates of alice@example.com on gmail should
     // collapse; everything else (different kind, different platform, or
     // different value) must survive.
-    //   - email a@e.com gmail (first) ✓
+    //   - email a@e.com gmail (first) âœ“
     //   - email A@E.C gmail          dropped as duplicate of above
-    //   - email a@e.com protonmail   ✓ (distinct platform)
-    //   - handle @alice twitter      ✓
-    //   - handle @alice reddit       ✓ (distinct platform)
-    //   - username alice_dev         ✓
-    //   - phone +15555550101         ✓
-    //   - url https://alice.example  ✓
+    //   - email a@e.com protonmail   âœ“ (distinct platform)
+    //   - handle @alice twitter      âœ“
+    //   - handle @alice reddit       âœ“ (distinct platform)
+    //   - username alice_dev         âœ“
+    //   - phone +15555550101         âœ“
+    //   - url https://alice.example  âœ“
     // Expected survivors: 7
     assert_eq!(
         result.payload.identifiers.len(),
@@ -2379,7 +2532,7 @@ async fn test_pass1_to_pass2_identifier_flow_end_to_end() {
 /// Structural guard: every `person_identifier_*` Tauri command MUST carry
 /// the `#[tauri::command(rename_all = "snake_case")]` attribute, or multi-
 /// word parameters like `entity_id` / `identifier_id` silently deserialize
-/// as zero in Tauri v2 (camelCase auto-convert trap — see
+/// as zero in Tauri v2 (camelCase auto-convert trap â€” see
 /// feedback_tauri_v2_camelcase.md). This test reads the source of
 /// link_analysis_cmd.rs at compile time and asserts the attribute appears
 /// immediately before each `pub async fn person_identifier_*`.
@@ -2395,7 +2548,7 @@ fn test_person_identifier_commands_have_rename_all_snake_case() {
         "pub async fn person_identifier_delete",
     ] {
         let cmd_idx = source.find(cmd).unwrap_or_else(|| {
-            panic!("could not locate `{cmd}` in link_analysis_cmd.rs — did it get renamed or moved?")
+            panic!("could not locate `{cmd}` in link_analysis_cmd.rs â€” did it get renamed or moved?")
         });
         // Walk back up to 200 bytes looking for the attribute on a preceding
         // line. 200 is plenty for a docstring + attribute header.
@@ -2403,7 +2556,7 @@ fn test_person_identifier_commands_have_rename_all_snake_case() {
         let preamble = &source[window_start..cmd_idx];
         assert!(
             preamble.contains(expected_attr),
-            "{cmd} is missing {expected_attr} — this will silently break the \
+            "{cmd} is missing {expected_attr} â€” this will silently break the \
              Tauri v2 camelCase-to-snake_case parameter binding and the frontend \
              call will pass NULL for every multi-word argument."
         );
@@ -2421,7 +2574,7 @@ fn test_ai_osint_person_session_guard_precedes_consent_check() {
 
     let fn_idx = source
         .find("pub async fn ai_osint_person(")
-        .expect("could not locate ai_osint_person in ai_cmd.rs — did it get renamed?");
+        .expect("could not locate ai_osint_person in ai_cmd.rs â€” did it get renamed?");
 
     // Slice from the function signature through the end of the file (or
     // 2 KiB, whichever is smaller) so we can check ordering within the body.
@@ -2437,7 +2590,7 @@ fn test_ai_osint_person_session_guard_precedes_consent_check() {
 
     assert!(
         session_idx < consent_idx,
-        "ai_osint_person must call require_session BEFORE osint_consent_granted — \
+        "ai_osint_person must call require_session BEFORE osint_consent_granted â€” \
          reordering would allow a missing session to reach the consent check."
     );
 
@@ -2450,7 +2603,7 @@ fn test_ai_osint_person_session_guard_precedes_consent_check() {
     );
 }
 
-// ─── Business identifiers (migration 0005) ────────────────────────────────────
+// â”€â”€â”€ Business identifiers (migration 0005) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 /// Helper: create a business entity and return its id.
 async fn make_business(pool: &SqlitePool, case_id: &str, name: &str) -> i64 {
@@ -2480,6 +2633,10 @@ fn make_biz_identifier_input(kind: &str, value: &str) -> BusinessIdentifierInput
         value: value.into(),
         platform: None,
         notes: None,
+        attributed_by: None,
+        attribution_basis: None,
+        confidence_level: None,
+        verification_status: None,
     }
 }
 
@@ -2498,6 +2655,10 @@ async fn test_business_identifier_crud_roundtrip() {
             value: "info@acme.com".into(),
             platform: Some("google-workspace".into()),
             notes: Some("primary".into()),
+            attributed_by: None,
+            attribution_basis: None,
+            confidence_level: None,
+            verification_status: None,
         },
     )
     .await
@@ -2519,6 +2680,10 @@ async fn test_business_identifier_crud_roundtrip() {
             value: "contact@acme.com".into(),
             platform: Some("google-workspace".into()),
             notes: None,
+            attributed_by: None,
+            attribution_basis: None,
+            confidence_level: None,
+            verification_status: None,
         },
     )
     .await
@@ -2543,7 +2708,7 @@ async fn test_business_identifier_multi_kind_ordering() {
     let case_id = make_case(&pool, "BID-02").await;
     let entity_id = make_business(&pool, &case_id, "Globex Corp").await;
 
-    // Scrambled kinds — list should come back sorted by kind ASC, created_at ASC.
+    // Scrambled kinds â€” list should come back sorted by kind ASC, created_at ASC.
     biz_add_identifier(&pool, entity_id, &make_biz_identifier_input("url", "https://globex.com/about"))
         .await.unwrap();
     biz_add_identifier(&pool, entity_id, &make_biz_identifier_input("domain", "globex.com"))
@@ -2654,20 +2819,20 @@ fn test_business_identifier_commands_have_rename_all_snake_case() {
         "pub async fn business_identifier_delete",
     ] {
         let cmd_idx = source.find(cmd).unwrap_or_else(|| {
-            panic!("could not locate `{cmd}` in link_analysis_cmd.rs — did it get renamed or moved?")
+            panic!("could not locate `{cmd}` in link_analysis_cmd.rs â€” did it get renamed or moved?")
         });
         let window_start = cmd_idx.saturating_sub(400);
         let preamble = &source[window_start..cmd_idx];
         assert!(
             preamble.contains(expected_attr),
-            "{cmd} is missing {expected_attr} — this will silently break the \
+            "{cmd} is missing {expected_attr} â€” this will silently break the \
              Tauri v2 camelCase-to-snake_case parameter binding and the frontend \
              call will pass NULL for every multi-word argument."
         );
     }
 }
 
-// ─── Pass 2 — Business OSINT integration tests ───────────────────────────────
+// â”€â”€â”€ Pass 2 â€” Business OSINT integration tests â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 /// End-to-end: create a business entity, add 5 mixed-kind identifiers, fetch
 /// them back, call build_business_osint_payload, assert the payload is correct.
@@ -2704,6 +2869,10 @@ async fn test_business_pass1_to_pass2_identifier_flow_end_to_end() {
             value: "acme.com".into(),
             platform: Some("godaddy".into()),
             notes: None,
+            attributed_by: None,
+            attribution_basis: None,
+            confidence_level: None,
+            verification_status: None,
         },
     )
     .await
@@ -2717,6 +2886,10 @@ async fn test_business_pass1_to_pass2_identifier_flow_end_to_end() {
             value: "info@acme.com".into(),
             platform: Some("google-workspace".into()),
             notes: None,
+            attributed_by: None,
+            attribution_basis: None,
+            confidence_level: None,
+            verification_status: None,
         },
     )
     .await
@@ -2730,6 +2903,10 @@ async fn test_business_pass1_to_pass2_identifier_flow_end_to_end() {
             value: "+15555551234".into(),
             platform: None,
             notes: None,
+            attributed_by: None,
+            attribution_basis: None,
+            confidence_level: None,
+            verification_status: None,
         },
     )
     .await
@@ -2743,6 +2920,10 @@ async fn test_business_pass1_to_pass2_identifier_flow_end_to_end() {
             value: "DE-12345678".into(),
             platform: None,
             notes: Some("Delaware corp".into()),
+            attributed_by: None,
+            attribution_basis: None,
+            confidence_level: None,
+            verification_status: None,
         },
     )
     .await
@@ -2756,6 +2937,10 @@ async fn test_business_pass1_to_pass2_identifier_flow_end_to_end() {
             value: "https://acme.com/about".into(),
             platform: None,
             notes: None,
+            attributed_by: None,
+            attribution_basis: None,
+            confidence_level: None,
+            verification_status: None,
         },
     )
     .await
@@ -2785,7 +2970,7 @@ async fn test_business_pass1_to_pass2_identifier_flow_end_to_end() {
         Some("Primary fraud front company")
     );
 
-    // All 5 are distinct — no dedup, no truncation.
+    // All 5 are distinct â€” no dedup, no truncation.
     assert_eq!(deduped_count, 5);
     assert_eq!(payload.identifiers.len(), 5);
 
@@ -2802,7 +2987,7 @@ async fn test_business_pass1_to_pass2_identifier_flow_end_to_end() {
     assert_eq!(payload.identifiers[3].value, "DE-12345678");
 }
 
-// ─── Person employer commands (employer combobox feature) ─────────────────────
+// â”€â”€â”€ Person employer commands (employer combobox feature) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 /// End-to-end: seed a case + one person + two businesses, call
 /// set_person_employers with both business ids + one free-text name, then
@@ -2875,7 +3060,7 @@ fn test_ai_osint_business_has_rename_all_and_session_guard_before_consent_check(
     let cmd = "pub async fn ai_osint_business";
 
     let cmd_idx = source.find(cmd).unwrap_or_else(|| {
-        panic!("could not locate `{cmd}` in ai_cmd.rs — did it get renamed or moved?")
+        panic!("could not locate `{cmd}` in ai_cmd.rs â€” did it get renamed or moved?")
     });
 
     // Check rename_all in the 400 bytes of preamble before the fn signature.
@@ -2883,7 +3068,7 @@ fn test_ai_osint_business_has_rename_all_and_session_guard_before_consent_check(
     let preamble = &source[window_start..cmd_idx];
     assert!(
         preamble.contains(expected_attr),
-        "ai_osint_business is missing {expected_attr} — this will silently break the \
+        "ai_osint_business is missing {expected_attr} â€” this will silently break the \
          Tauri v2 camelCase-to-snake_case parameter binding"
     );
 
@@ -2898,7 +3083,7 @@ fn test_ai_osint_business_has_rename_all_and_session_guard_before_consent_check(
     assert!(
         require_pos < consent_pos,
         "require_session (SEC-1 gate) must appear BEFORE osint_consent_granted in \
-         ai_osint_business — SEC-1 non-negotiable"
+         ai_osint_business â€” SEC-1 non-negotiable"
     );
 }
 
@@ -2917,14 +3102,14 @@ fn test_person_employer_commands_have_rename_all_snake_case() {
     ] {
         let cmd_idx = source.find(cmd).unwrap_or_else(|| {
             panic!(
-                "could not locate `{cmd}` in link_analysis_cmd.rs — did it get renamed or moved?"
+                "could not locate `{cmd}` in link_analysis_cmd.rs â€” did it get renamed or moved?"
             )
         });
         let window_start = cmd_idx.saturating_sub(400);
         let preamble = &source[window_start..cmd_idx];
         assert!(
             preamble.contains(expected_attr),
-            "{cmd} is missing {expected_attr} — this will silently break the \
+            "{cmd} is missing {expected_attr} â€” this will silently break the \
              Tauri v2 camelCase-to-snake_case parameter binding and the frontend \
              call will pass NULL for every multi-word argument."
         );

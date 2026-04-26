@@ -35,9 +35,12 @@ import {
   personIdentifierFormSchema,
   type PersonIdentifierFormValues,
   PERSON_IDENTIFIER_KINDS,
+  IDENTIFIER_CONFIDENCE_LEVELS,
+  IDENTIFIER_VERIFICATION_STATUSES,
 } from "@/lib/person-schema";
 
 import { SourceToolBadge } from "@/components/source-tool-badge";
+import { AttributionChips } from "@/components/attribution-chips";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -239,6 +242,11 @@ export function PersonIdentifierEditor({
               value: values.value.trim(),
               platform: values.platform?.trim() || null,
               notes: values.notes?.trim() || null,
+              // Phase B (migration 0008) attribution fields.
+              attributed_by: values.attributed_by?.trim() || null,
+              attribution_basis: values.attribution_basis?.trim() || null,
+              confidence_level: values.confidence_level ?? null,
+              verification_status: values.verification_status ?? null,
             })
           }
           onCancel={() => setAdding(false)}
@@ -263,6 +271,12 @@ export function PersonIdentifierEditor({
                         value: id.value,
                         platform: id.platform ?? "",
                         notes: id.notes ?? "",
+                        // Phase B (migration 0008) attribution fields —
+                        // empty-string in form → trimmed back to null on submit.
+                        attributed_by: id.attributed_by ?? "",
+                        attribution_basis: id.attribution_basis ?? "",
+                        confidence_level: id.confidence_level ?? undefined,
+                        verification_status: id.verification_status ?? undefined,
                       }}
                       isPending={updateMutation.isPending}
                       onSubmit={(values) =>
@@ -273,6 +287,12 @@ export function PersonIdentifierEditor({
                             value: values.value.trim(),
                             platform: values.platform?.trim() || null,
                             notes: values.notes?.trim() || null,
+                            attributed_by: values.attributed_by?.trim() || null,
+                            attribution_basis:
+                              values.attribution_basis?.trim() || null,
+                            confidence_level: values.confidence_level ?? null,
+                            verification_status:
+                              values.verification_status ?? null,
                           },
                         })
                       }
@@ -358,6 +378,13 @@ function IdentifierRow({
             {identifier.notes}
           </p>
         )}
+        <AttributionChips
+          confidence={identifier.confidence_level}
+          verification={identifier.verification_status}
+          attributedBy={identifier.attributed_by}
+          basis={identifier.attribution_basis}
+          compact
+        />
       </div>
       {!readOnly && (
         <div className="flex gap-1 shrink-0">
@@ -407,6 +434,12 @@ function IdentifierFormRow({
       value: "",
       platform: "",
       notes: "",
+      // Phase B (migration 0008) attribution defaults — empty so the form
+      // round-trips v1 rows without coercing them to defaults.
+      attributed_by: "",
+      attribution_basis: "",
+      confidence_level: undefined,
+      verification_status: undefined,
       ...defaultValues,
     },
   });
@@ -521,6 +554,128 @@ function IdentifierFormRow({
             </FormItem>
           )}
         />
+
+        {/* Phase B (migration 0008): collapsed attribution section. */}
+        <details className="rounded-md border bg-background px-3 py-2">
+          <summary className="cursor-pointer select-none text-xs font-medium">
+            Attribution &amp; methodology
+            <span className="ml-2 text-[11px] font-normal text-muted-foreground">
+              (recommended)
+            </span>
+          </summary>
+          <div className="mt-3 space-y-3">
+            <FormField
+              control={form.control}
+              name="attributed_by"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel className="text-xs">
+                    Author{" "}
+                    <span className="font-normal text-amber-600">
+                      (recommended)
+                    </span>
+                  </FormLabel>
+                  <FormControl>
+                    <Input
+                      className="h-9"
+                      placeholder="who attributed this identifier"
+                      {...field}
+                      value={field.value ?? ""}
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name="attribution_basis"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel className="text-xs">Attribution basis</FormLabel>
+                  <FormControl>
+                    <Textarea
+                      rows={2}
+                      placeholder="Self-reported, OSINT via whois, court record, …"
+                      {...field}
+                      value={field.value ?? ""}
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <FormField
+                control={form.control}
+                name="confidence_level"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel className="text-xs">Confidence</FormLabel>
+                    <Select
+                      onValueChange={(val) =>
+                        field.onChange(val === "__none__" ? undefined : val)
+                      }
+                      value={field.value ?? "__none__"}
+                    >
+                      <FormControl>
+                        <SelectTrigger className="h-9">
+                          <SelectValue />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        <SelectItem value="__none__">
+                          — not recorded —
+                        </SelectItem>
+                        {IDENTIFIER_CONFIDENCE_LEVELS.map((level) => (
+                          <SelectItem key={level} value={level}>
+                            {level}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <FormField
+                control={form.control}
+                name="verification_status"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel className="text-xs">Verification</FormLabel>
+                    <Select
+                      onValueChange={(val) =>
+                        field.onChange(val === "__none__" ? undefined : val)
+                      }
+                      value={field.value ?? "__none__"}
+                    >
+                      <FormControl>
+                        <SelectTrigger className="h-9">
+                          <SelectValue />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        <SelectItem value="__none__">
+                          — not recorded —
+                        </SelectItem>
+                        {IDENTIFIER_VERIFICATION_STATUSES.map((status) => (
+                          <SelectItem key={status} value={status}>
+                            {status}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            </div>
+          </div>
+        </details>
 
         <div className="flex justify-end gap-2">
           <Button

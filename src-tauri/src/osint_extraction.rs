@@ -3,9 +3,13 @@
 //! After Agent Zero returns per-tool `raw_output_truncated`, this module parses
 //! the output per tool and produces a `Vec<DiscoveredIdentifier>`. The Rust
 //! side then dedupes that list against the entity's existing active rows in
-//! `business_identifiers` / `person_identifiers` and inserts any new ones
-//! with a `notes = "Auto-discovered via OSINT <tool> on <iso_date>"` stamp so
-//! provenance is preserved and the investigator can still edit or delete them.
+//! `business_identifiers` / `person_identifiers` and inserts any new ones with
+//! structured attribution: `discovered_via_tool=<tool>`,
+//! `attributed_by="OSINT auto-discovery"`, `attribution_basis="Surfaced by
+//! <tool>"`, `confidence_level="Low"`, `verification_status="Unverified"`.
+//! (Pre-Phase-B rows used a free-text "Auto-discovered via OSINT <tool> on
+//! <date>" notes stamp; that's gone for new rows but preserved on legacy rows
+//! via migration 0006's backfill.)
 //!
 //! The parsers are deliberately conservative: we only keep values that match
 //! the strict regex for the declared kind, and we skip any value that starts

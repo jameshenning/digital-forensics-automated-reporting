@@ -18,6 +18,12 @@
 import { z } from "zod";
 import { LINK_ENDPOINT_KINDS } from "@/lib/link-analysis-enums";
 
+/**
+ * Phase B (migration 0008) confidence allowlist for link assertions.
+ * Mirrors Rust `VALID_CONFIDENCE_LEVELS` in db/links.rs.
+ */
+export const LINK_CONFIDENCE_LEVELS = ["Low", "Medium", "High"] as const;
+
 export const linkFormSchema = z
   .object({
     source_type: z.enum(LINK_ENDPOINT_KINDS, {
@@ -46,6 +52,29 @@ export const linkFormSchema = z
     notes: z
       .string()
       .max(2000, "Notes must be at most 2000 characters")
+      .optional(),
+    // Phase B (migration 0008) attribution fields — all optional, char caps
+    // mirror the Rust validators in db/links.rs.
+    attributed_by: z
+      .string()
+      .max(200, "Author must be at most 200 characters")
+      .optional(),
+    basis: z
+      .string()
+      .max(5000, "Basis must be at most 5000 characters")
+      .optional(),
+    confidence_level: z.enum(LINK_CONFIDENCE_LEVELS).optional(),
+    method_reference: z
+      .string()
+      .max(500, "Method reference must be at most 500 characters")
+      .optional(),
+    alternatives_considered: z
+      .string()
+      .max(5000, "Alternatives must be at most 5000 characters")
+      .optional(),
+    evidence_refs: z
+      .string()
+      .max(1000, "Evidence refs must be at most 1000 characters")
       .optional(),
   })
   .superRefine((data, ctx) => {

@@ -22,6 +22,7 @@ import { queryKeys } from "@/lib/query";
 import { toastError, toastSuccess } from "@/lib/error-toast";
 import type { LinkFormValues } from "@/lib/link-schema";
 
+import { AttributionChips } from "@/components/attribution-chips";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -110,6 +111,10 @@ export function LinksPanel({ caseId }: LinksPanelProps) {
   });
 
   function handleAdd(values: LinkFormValues) {
+    // Empty-string-to-null normalization on the optional attribution fields
+    // mirrors AnalysisForm — Rust `normalize_optional` would also collapse
+    // these, but doing it here keeps the wire payload tidy and the
+    // round-trip Read struct's Option<String> values consistent.
     const input: LinkInput = {
       source_type: values.source_type,
       source_id: values.source_id,
@@ -119,6 +124,12 @@ export function LinksPanel({ caseId }: LinksPanelProps) {
       directional: values.directional ?? 1,
       weight: values.weight ?? 1.0,
       notes: values.notes?.trim() || null,
+      attributed_by: values.attributed_by?.trim() || null,
+      basis: values.basis?.trim() || null,
+      confidence_level: values.confidence_level ?? null,
+      method_reference: values.method_reference?.trim() || null,
+      alternatives_considered: values.alternatives_considered?.trim() || null,
+      evidence_refs: values.evidence_refs?.trim() || null,
     };
     addMutation.mutate(input);
   }
@@ -151,27 +162,37 @@ export function LinksPanel({ caseId }: LinksPanelProps) {
           return (
             <div
               key={link.link_id}
-              className="flex items-center justify-between rounded-md border px-3 py-2 text-sm gap-3"
+              className="flex items-start justify-between rounded-md border px-3 py-2 text-sm gap-3"
             >
-              <div className="flex items-center gap-2 min-w-0 flex-wrap">
-                <span className="font-medium truncate max-w-[140px]">
-                  {srcName}
-                </span>
-                <Arrow className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-                {link.link_label && (
-                  <span className="text-xs text-muted-foreground italic">
-                    [{link.link_label}]
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2 min-w-0 flex-wrap">
+                  <span className="font-medium truncate max-w-[140px]">
+                    {srcName}
                   </span>
-                )}
-                <Arrow className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-                <span className="font-medium truncate max-w-[140px]">
-                  {tgtName}
-                </span>
-                {link.weight !== 1 && (
-                  <span className="text-xs text-muted-foreground">
-                    w={link.weight}
+                  <Arrow className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                  {link.link_label && (
+                    <span className="text-xs text-muted-foreground italic">
+                      [{link.link_label}]
+                    </span>
+                  )}
+                  <Arrow className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                  <span className="font-medium truncate max-w-[140px]">
+                    {tgtName}
                   </span>
-                )}
+                  {link.weight !== 1 && (
+                    <span className="text-xs text-muted-foreground">
+                      w={link.weight}
+                    </span>
+                  )}
+                </div>
+                {/* Phase B (migration 0008) attribution chips. Renders nothing
+                    when no attribution metadata is present (v1 rows). */}
+                <AttributionChips
+                  confidence={link.confidence_level}
+                  attributedBy={link.attributed_by}
+                  basis={link.basis}
+                  compact
+                />
               </div>
               <AlertDialog>
                 <AlertDialogTrigger asChild>

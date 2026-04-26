@@ -36,6 +36,13 @@ const VALUE_MAX_LEN: usize = 500;
 const PLATFORM_MAX_LEN: usize = 100;
 const NOTES_MAX_LEN: usize = 2000;
 
+/// Phase B (migration 0008) attribution allowlists. Mirrors person_identifiers.
+const VALID_CONFIDENCE_LEVELS: &[&str] = &["Low", "Medium", "High"];
+const VALID_VERIFICATION_STATUSES: &[&str] = &["Unverified", "Tentative", "Confirmed"];
+
+const ATTRIBUTED_BY_MAX_LEN: usize = 200;
+const ATTRIBUTION_BASIS_MAX_LEN: usize = 5000;
+
 // ─── Public data types ────────────────────────────────────────────────────────
 
 /// Full business_identifier row. `created_at`/`updated_at` are `String` for
@@ -56,6 +63,15 @@ pub struct BusinessIdentifier {
     /// notes stamp.
     #[serde(default)]
     pub discovered_via_tool: Option<String>,
+    // ── Migration 0008 attribution fields (all nullable for v1 compat) ──
+    #[serde(default)]
+    pub attributed_by: Option<String>,
+    #[serde(default)]
+    pub attribution_basis: Option<String>,
+    #[serde(default)]
+    pub confidence_level: Option<String>,
+    #[serde(default)]
+    pub verification_status: Option<String>,
     pub is_deleted: i64,
     pub created_at: String,
     pub updated_at: String,
@@ -74,6 +90,15 @@ pub struct BusinessIdentifierInput {
     pub platform: Option<String>,
     #[serde(default)]
     pub notes: Option<String>,
+    // ── Migration 0008 attribution fields ──
+    #[serde(default)]
+    pub attributed_by: Option<String>,
+    #[serde(default)]
+    pub attribution_basis: Option<String>,
+    #[serde(default)]
+    pub confidence_level: Option<String>,
+    #[serde(default)]
+    pub verification_status: Option<String>,
 }
 
 // ─── Validation ───────────────────────────────────────────────────────────────
@@ -135,6 +160,53 @@ fn validate_input(input: &BusinessIdentifierInput) -> Result<(), AppError> {
         }
     }
 
+    // Migration 0008 attribution-field validation.
+    check_optional_len(&input.attributed_by, "attributed_by", ATTRIBUTED_BY_MAX_LEN)?;
+    check_optional_len(
+        &input.attribution_basis,
+        "attribution_basis",
+        ATTRIBUTION_BASIS_MAX_LEN,
+    )?;
+    if let Some(c) = input.confidence_level.as_deref() {
+        if !VALID_CONFIDENCE_LEVELS.contains(&c) {
+            return Err(AppError::ValidationError {
+                field: "confidence_level".into(),
+                message: format!(
+                    "confidence_level must be one of: {}",
+                    VALID_CONFIDENCE_LEVELS.join(", ")
+                ),
+            });
+        }
+    }
+    if let Some(v) = input.verification_status.as_deref() {
+        if !VALID_VERIFICATION_STATUSES.contains(&v) {
+            return Err(AppError::ValidationError {
+                field: "verification_status".into(),
+                message: format!(
+                    "verification_status must be one of: {}",
+                    VALID_VERIFICATION_STATUSES.join(", ")
+                ),
+            });
+        }
+    }
+
+    Ok(())
+}
+
+/// Reject an optional string that, when Some, exceeds `max_len` chars.
+fn check_optional_len(
+    value: &Option<String>,
+    field: &'static str,
+    max_len: usize,
+) -> Result<(), AppError> {
+    if let Some(v) = value {
+        if v.chars().count() > max_len {
+            return Err(AppError::ValidationError {
+                field: field.into(),
+                message: format!("{field} must not exceed {max_len} characters"),
+            });
+        }
+    }
     Ok(())
 }
 
@@ -197,13 +269,22 @@ pub async fn add_identifier(
     let value = input.value.trim();
     let platform = normalize_optional(&input.platform);
     let notes = normalize_optional(&input.notes);
+    let attributed_by = normalize_optional(&input.attributed_by);
+    let attribution_basis = normalize_optional(&input.attribution_basis);
+    let confidence_level = normalize_optional(&input.confidence_level);
+    let verification_status = normalize_optional(&input.verification_status);
 
     let row = sqlx::query_as::<_, BusinessIdentifier>(
         r#"
-        INSERT INTO business_identifiers (entity_id, kind, value, platform, notes, discovered_via_tool)
-        VALUES (?, ?, ?, ?, ?, NULL)
+        INSERT INTO business_identifiers (
+            entity_id, kind, value, platform, notes, discovered_via_tool,
+            attributed_by, attribution_basis, confidence_level, verification_status
+        )
+        VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?, ?)
         RETURNING identifier_id, entity_id, kind, value, platform, notes,
-                  discovered_via_tool, is_deleted, created_at, updated_at
+                  discovered_via_tool,
+                  attributed_by, attribution_basis, confidence_level, verification_status,
+                  is_deleted, created_at, updated_at
         "#,
     )
     .bind(entity_id)
@@ -211,6 +292,10 @@ pub async fn add_identifier(
     .bind(value)
     .bind(&platform)
     .bind(&notes)
+    .bind(&attributed_by)
+    .bind(&attribution_basis)
+    .bind(&confidence_level)
+    .bind(&verification_status)
     .fetch_one(pool)
     .await?;
 
@@ -225,7 +310,9 @@ pub async fn get_identifier(
     sqlx::query_as::<_, BusinessIdentifier>(
         r#"
         SELECT identifier_id, entity_id, kind, value, platform, notes,
-               discovered_via_tool, is_deleted, created_at, updated_at
+               discovered_via_tool,
+               attributed_by, attribution_basis, confidence_level, verification_status,
+               is_deleted, created_at, updated_at
         FROM business_identifiers
         WHERE identifier_id = ?
         "#,
@@ -246,7 +333,9 @@ pub async fn list_for_entity(
     let rows = sqlx::query_as::<_, BusinessIdentifier>(
         r#"
         SELECT identifier_id, entity_id, kind, value, platform, notes,
-               discovered_via_tool, is_deleted, created_at, updated_at
+               discovered_via_tool,
+               attributed_by, attribution_basis, confidence_level, verification_status,
+               is_deleted, created_at, updated_at
         FROM business_identifiers
         WHERE entity_id = ? AND is_deleted = 0
         ORDER BY kind ASC, created_at ASC
@@ -291,6 +380,10 @@ pub async fn update_identifier(
     let value = input.value.trim();
     let platform = normalize_optional(&input.platform);
     let notes = normalize_optional(&input.notes);
+    let attributed_by = normalize_optional(&input.attributed_by);
+    let attribution_basis = normalize_optional(&input.attribution_basis);
+    let confidence_level = normalize_optional(&input.confidence_level);
+    let verification_status = normalize_optional(&input.verification_status);
 
     let row = sqlx::query_as::<_, BusinessIdentifier>(
         r#"
@@ -299,16 +392,26 @@ pub async fn update_identifier(
             value = ?,
             platform = ?,
             notes = ?,
+            attributed_by = ?,
+            attribution_basis = ?,
+            confidence_level = ?,
+            verification_status = ?,
             updated_at = CURRENT_TIMESTAMP
         WHERE identifier_id = ? AND is_deleted = 0
         RETURNING identifier_id, entity_id, kind, value, platform, notes,
-                  discovered_via_tool, is_deleted, created_at, updated_at
+                  discovered_via_tool,
+                  attributed_by, attribution_basis, confidence_level, verification_status,
+                  is_deleted, created_at, updated_at
         "#,
     )
     .bind(kind)
     .bind(value)
     .bind(&platform)
     .bind(&notes)
+    .bind(&attributed_by)
+    .bind(&attribution_basis)
+    .bind(&confidence_level)
+    .bind(&verification_status)
     .bind(identifier_id)
     .fetch_optional(pool)
     .await?
@@ -350,9 +453,17 @@ pub async fn soft_delete(pool: &SqlitePool, identifier_id: i64) -> Result<(), Ap
 /// each candidate through `validate_input`; candidates that fail validation
 /// are skipped silently (best-effort enrichment — one malformed entry must
 /// not abort the batch). Caps at `max_new` to prevent an OSINT run from
-/// bloating the identifier list. Each inserted row gets a
-/// `notes = "Auto-discovered via OSINT <tool> on <iso_date>"` stamp so the
-/// investigator can trace provenance and decide whether to keep or remove it.
+/// bloating the identifier list.
+///
+/// Phase B (migration 0008): each inserted row carries structured attribution
+/// defaults — `attributed_by="OSINT auto-discovery"`,
+/// `attribution_basis="Surfaced by <tool>"`, `confidence_level="Low"`,
+/// `verification_status="Unverified"`. The pre-Phase-B "Auto-discovered via
+/// OSINT <tool> on <date>" notes stamp is no longer written for new rows;
+/// existing rows keep their notes via migration 0006's backfill.
+///
+/// `iso_date` is retained for caller API compat but is no longer baked into
+/// notes.
 ///
 /// Returns `(attempted, inserted)`: how many candidates were considered after
 /// dedup (up to the cap) and how many actually landed.  The caller uses the
@@ -364,6 +475,7 @@ pub async fn insert_discovered_batch(
     iso_date: &str,
     max_new: usize,
 ) -> Result<(usize, usize), AppError> {
+    let _ = iso_date; // kept for API compat — see doc comment above
     // Verify the parent up front so we fail fast without hitting validation
     // for each item. Same check add_identifier does — redundant here, but
     // catches the case where the entity was retyped between the OSINT call
@@ -408,13 +520,18 @@ pub async fn insert_discovered_batch(
             continue;
         }
 
+        // Phase B (migration 0008): structured attribution defaults on
+        // auto-discovered rows. The old free-text notes stamp is no longer
+        // written for new rows.
         let input = BusinessIdentifierInput {
             kind: kind.clone(),
             value: value.clone(),
             platform: platform.clone(),
-            notes: Some(format!(
-                "Auto-discovered via OSINT {source_tool} on {iso_date}"
-            )),
+            notes: None,
+            attributed_by: Some("OSINT auto-discovery".into()),
+            attribution_basis: Some(format!("Surfaced by {source_tool}")),
+            confidence_level: Some("Low".into()),
+            verification_status: Some("Unverified".into()),
         };
 
         // Validate — silently skip candidates that fail (e.g., wrong kind for
@@ -427,7 +544,10 @@ pub async fn insert_discovered_batch(
         let trimmed_kind = input.kind.trim();
         let trimmed_value = input.value.trim();
         let norm_platform = normalize_optional(&input.platform);
-        let norm_notes = normalize_optional(&input.notes);
+        let norm_attributed_by = normalize_optional(&input.attributed_by);
+        let norm_attribution_basis = normalize_optional(&input.attribution_basis);
+        let norm_confidence = normalize_optional(&input.confidence_level);
+        let norm_verification = normalize_optional(&input.verification_status);
 
         // Direct INSERT (rather than going through `add_identifier`) so we
         // can populate `discovered_via_tool` on the same row — that column
@@ -435,18 +555,26 @@ pub async fn insert_discovered_batch(
         let result: Result<BusinessIdentifier, sqlx::Error> =
             sqlx::query_as::<_, BusinessIdentifier>(
                 r#"
-                INSERT INTO business_identifiers (entity_id, kind, value, platform, notes, discovered_via_tool)
-                VALUES (?, ?, ?, ?, ?, ?)
+                INSERT INTO business_identifiers (
+                    entity_id, kind, value, platform, notes, discovered_via_tool,
+                    attributed_by, attribution_basis, confidence_level, verification_status
+                )
+                VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?, ?)
                 RETURNING identifier_id, entity_id, kind, value, platform, notes,
-                          discovered_via_tool, is_deleted, created_at, updated_at
+                          discovered_via_tool,
+                          attributed_by, attribution_basis, confidence_level, verification_status,
+                          is_deleted, created_at, updated_at
                 "#,
             )
             .bind(entity_id)
             .bind(trimmed_kind)
             .bind(trimmed_value)
             .bind(&norm_platform)
-            .bind(&norm_notes)
             .bind(source_tool)
+            .bind(&norm_attributed_by)
+            .bind(&norm_attribution_basis)
+            .bind(&norm_confidence)
+            .bind(&norm_verification)
             .fetch_one(pool)
             .await;
 
@@ -573,6 +701,10 @@ mod tests {
             value: value.into(),
             platform: None,
             notes: None,
+            attributed_by: None,
+            attribution_basis: None,
+            confidence_level: None,
+            verification_status: None,
         }
     }
 
@@ -586,6 +718,10 @@ mod tests {
             value: "info@acme.com".into(),
             platform: Some("google-workspace".into()),
             notes: Some("primary contact".into()),
+            attributed_by: None,
+            attribution_basis: None,
+            confidence_level: None,
+            verification_status: None,
         };
         let added = add_identifier(&pool, entity_id, &input).await.unwrap();
         assert!(added.identifier_id > 0);
@@ -707,6 +843,10 @@ mod tests {
                 value: "contact@acme.com".into(),
                 platform: Some("google-workspace".into()),
                 notes: Some("updated 2026-04".into()),
+                attributed_by: None,
+                attribution_basis: None,
+                confidence_level: None,
+                verification_status: None,
             },
         )
         .await
@@ -784,6 +924,10 @@ mod tests {
             value: "acme.com".into(),
             platform: Some("   ".into()),
             notes: Some("".into()),
+            attributed_by: None,
+            attribution_basis: None,
+            confidence_level: None,
+            verification_status: None,
         };
         let added = add_identifier(&pool, entity_id, &input).await.unwrap();
         assert_eq!(added.platform, None);
@@ -844,6 +988,10 @@ mod tests {
                 value: emoji,
                 platform: None,
                 notes: None,
+                attributed_by: None,
+                attribution_basis: None,
+                confidence_level: None,
+                verification_status: None,
             },
         )
         .await
@@ -860,6 +1008,10 @@ mod tests {
                 value: too_long,
                 platform: None,
                 notes: None,
+                attributed_by: None,
+                attribution_basis: None,
+                confidence_level: None,
+                verification_status: None,
             },
         )
         .await
@@ -914,6 +1066,10 @@ mod tests {
                 value: "acme.com".into(),
                 platform: None,
                 notes: None,
+                attributed_by: None,
+                attribution_basis: None,
+                confidence_level: None,
+                verification_status: None,
             },
         )
         .await
@@ -938,7 +1094,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn discovered_batch_stamps_provenance_in_notes() {
+    async fn discovered_batch_populates_structured_attribution() {
+        // Phase B (migration 0008): provenance + attribution defaults live in
+        // dedicated columns. The free-text notes stamp is gone for new rows.
         let pool = make_forensics_pool().await;
         let entity_id = seed_business(&pool).await;
 
@@ -951,16 +1109,16 @@ mod tests {
 
         let rows = list_for_entity(&pool, entity_id).await.unwrap();
         let row = rows.iter().find(|r| r.value == "new.acme.com").unwrap();
-        let notes = row.notes.as_deref().unwrap_or("");
-        assert!(
-            notes.contains("Auto-discovered via OSINT")
-                && notes.contains("subfinder")
-                && notes.contains("2026-04-16"),
-            "notes should carry tool + date provenance, got: {notes}"
-        );
-        // Migration 0006: the dedicated column must also carry the tool name
-        // so the UI can render a source-tool badge without parsing notes.
+
+        assert!(row.notes.is_none(), "notes must be NULL for auto rows now");
         assert_eq!(row.discovered_via_tool.as_deref(), Some("subfinder"));
+        assert_eq!(row.attributed_by.as_deref(), Some("OSINT auto-discovery"));
+        assert_eq!(
+            row.attribution_basis.as_deref(),
+            Some("Surfaced by subfinder")
+        );
+        assert_eq!(row.confidence_level.as_deref(), Some("Low"));
+        assert_eq!(row.verification_status.as_deref(), Some("Unverified"));
     }
 
     #[tokio::test]

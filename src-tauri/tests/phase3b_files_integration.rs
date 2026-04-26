@@ -221,6 +221,13 @@ CREATE TABLE IF NOT EXISTS entity_links (
     notes TEXT,
     is_deleted INTEGER DEFAULT 0,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    -- migration 0008: attribution principles
+    attributed_by TEXT,
+    basis TEXT,
+    confidence_level TEXT,
+    method_reference TEXT,
+    alternatives_considered TEXT,
+    evidence_refs TEXT,
     FOREIGN KEY (case_id) REFERENCES cases (case_id) ON DELETE RESTRICT
 );
 
@@ -283,6 +290,44 @@ CREATE TABLE IF NOT EXISTS case_shares (
     shared_by TEXT NOT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (case_id) REFERENCES cases (case_id) ON DELETE RESTRICT
+);
+
+-- migration 0004 + 0006 + 0008: person_identifiers
+CREATE TABLE IF NOT EXISTS person_identifiers (
+    identifier_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    entity_id INTEGER NOT NULL,
+    kind TEXT NOT NULL,
+    value TEXT NOT NULL,
+    platform TEXT,
+    notes TEXT,
+    discovered_via_tool TEXT,
+    attributed_by TEXT,
+    attribution_basis TEXT,
+    confidence_level TEXT,
+    verification_status TEXT,
+    is_deleted INTEGER DEFAULT 0,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (entity_id) REFERENCES entities (entity_id) ON DELETE RESTRICT
+);
+
+-- migration 0005 + 0006 + 0008: business_identifiers
+CREATE TABLE IF NOT EXISTS business_identifiers (
+    identifier_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    entity_id INTEGER NOT NULL,
+    kind TEXT NOT NULL,
+    value TEXT NOT NULL,
+    platform TEXT,
+    notes TEXT,
+    discovered_via_tool TEXT,
+    attributed_by TEXT,
+    attribution_basis TEXT,
+    confidence_level TEXT,
+    verification_status TEXT,
+    is_deleted INTEGER DEFAULT 0,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (entity_id) REFERENCES entities (entity_id) ON DELETE RESTRICT
 );
 "#;
 

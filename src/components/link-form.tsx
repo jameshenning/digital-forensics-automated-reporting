@@ -15,7 +15,11 @@
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 
-import { linkFormSchema, type LinkFormValues } from "@/lib/link-schema";
+import {
+  linkFormSchema,
+  LINK_CONFIDENCE_LEVELS,
+  type LinkFormValues,
+} from "@/lib/link-schema";
 import { LINK_ENDPOINT_KINDS } from "@/lib/link-analysis-enums";
 import type { Entity, Evidence } from "@/lib/bindings";
 
@@ -65,6 +69,15 @@ export function LinkForm({
       directional: 1,
       weight: 1.0,
       notes: "",
+      // Phase B (migration 0008) attribution fields default to empty;
+      // empty strings are coerced to null on submit by the wrapping mutation
+      // (matches Phase A AnalysisForm behavior).
+      attributed_by: "",
+      basis: "",
+      confidence_level: undefined,
+      method_reference: "",
+      alternatives_considered: "",
+      evidence_refs: "",
     },
   });
 
@@ -302,6 +315,150 @@ export function LinkForm({
             </FormItem>
           )}
         />
+
+        {/* Phase B (migration 0008): collapsed attribution section. Mirrors
+            AnalysisForm's "Validation & methodology" pattern. Investigators who
+            don't need attribution data can ignore this; investigators preparing
+            cross-examination-grade reports fill it in. */}
+        <details className="rounded-md border bg-muted/30 px-4 py-3">
+          <summary className="cursor-pointer select-none text-sm font-medium">
+            Attribution &amp; methodology
+            <span className="ml-2 text-xs font-normal text-muted-foreground">
+              (recommended for cross-examination readiness)
+            </span>
+          </summary>
+          <div className="mt-4 space-y-4">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <FormField
+                control={form.control}
+                name="attributed_by"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>
+                      Author{" "}
+                      <span className="font-normal text-amber-600">(recommended)</span>
+                    </FormLabel>
+                    <FormControl>
+                      <Input
+                        placeholder="who asserted this connection"
+                        {...field}
+                        value={field.value ?? ""}
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <FormField
+                control={form.control}
+                name="confidence_level"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Confidence</FormLabel>
+                    <Select
+                      onValueChange={(val) =>
+                        field.onChange(val === "__none__" ? undefined : val)
+                      }
+                      value={field.value ?? "__none__"}
+                    >
+                      <FormControl>
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        <SelectItem value="__none__">— not recorded —</SelectItem>
+                        {LINK_CONFIDENCE_LEVELS.map((level) => (
+                          <SelectItem key={level} value={level}>
+                            {level}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            </div>
+
+            <FormField
+              control={form.control}
+              name="basis"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Basis</FormLabel>
+                  <FormControl>
+                    <Textarea
+                      placeholder="Why is this connection asserted? (e.g. shared email in evidence E-001)"
+                      rows={2}
+                      {...field}
+                      value={field.value ?? ""}
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <FormField
+                control={form.control}
+                name="method_reference"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Method reference</FormLabel>
+                    <FormControl>
+                      <Input
+                        placeholder="NIST SP 800-86 §X, internal SOP, …"
+                        {...field}
+                        value={field.value ?? ""}
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <FormField
+                control={form.control}
+                name="evidence_refs"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Evidence refs</FormLabel>
+                    <FormControl>
+                      <Input
+                        placeholder="E-001, E-007, …"
+                        {...field}
+                        value={field.value ?? ""}
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            </div>
+
+            <FormField
+              control={form.control}
+              name="alternatives_considered"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Alternatives considered</FormLabel>
+                  <FormControl>
+                    <Textarea
+                      placeholder="Competing explanations examined and ruled out"
+                      rows={2}
+                      {...field}
+                      value={field.value ?? ""}
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+          </div>
+        </details>
 
         {/* Actions */}
         <div className="flex gap-3 pt-2">

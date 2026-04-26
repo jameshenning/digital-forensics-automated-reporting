@@ -28,6 +28,8 @@ use crate::{
         entities,
         evidence as evidence_db,
         hashes,
+        links as links_db,
+        person_identifiers,
         tools,
     },
     error::AppError,
@@ -124,6 +126,8 @@ struct ReportPayload {
     all_hashes: Vec<HashReport>,
     all_tools: Vec<ToolReport>,
     analysis_notes: Vec<AnalysisReport>,
+    /// Phase B (migration 0008): rendered in the new "Entity Connections" section.
+    links: Vec<LinkReport>,
     generated_at: String,
 }
 
@@ -141,6 +145,50 @@ struct PersonReport {
     notes: Option<String>,
     /// Extracted from entity.metadata_json.osint_findings[].tool_name if present.
     osint_tools_run: Vec<String>,
+    /// Multi-valued identifiers from `person_identifiers` (Phase B).
+    identifiers: Vec<IdentifierReport>,
+}
+
+/// Phase B (migration 0008): per-identifier attribution payload used by the
+/// report renderer for both person_identifiers and (in a future expansion)
+/// business_identifiers.
+#[allow(dead_code)]
+struct IdentifierReport {
+    kind: String,
+    value: String,
+    platform: Option<String>,
+    notes: Option<String>,
+    /// Tool that surfaced an auto-discovered identifier (migration 0006).
+    discovered_via_tool: Option<String>,
+    // Migration 0008 attribution fields.
+    attributed_by: Option<String>,
+    attribution_basis: Option<String>,
+    confidence_level: Option<String>,
+    verification_status: Option<String>,
+}
+
+/// Phase B (migration 0008): a single asserted connection with full
+/// attribution context. Rendered in the new "Entity Connections" section.
+#[allow(dead_code)]
+struct LinkReport {
+    link_id: i64,
+    source_type: String,
+    source_id: String,
+    source_label: String,
+    target_type: String,
+    target_id: String,
+    target_label: String,
+    link_label: Option<String>,
+    directional: bool,
+    weight: f64,
+    notes: Option<String>,
+    // Migration 0008 attribution fields.
+    attributed_by: Option<String>,
+    basis: Option<String>,
+    confidence_level: Option<String>,
+    method_reference: Option<String>,
+    alternatives_considered: Option<String>,
+    evidence_refs: Option<String>,
 }
 
 #[allow(dead_code)]
@@ -328,40 +376,108 @@ async fn gather_report_payload(
 
     // Persons — filter entities to entity_type = 'person'
     let entity_list = entities::list_for_case(&state.db.forensics, case_id).await?;
-    let persons: Vec<PersonReport> = entity_list
-        .into_iter()
-        .filter(|e| e.entity_type == "person")
-        .map(|p| {
-            // Extract OSINT tool names from metadata_json.osint_findings[] if present.
-            let osint_tools_run: Vec<String> = p
-                .metadata_json
-                .as_deref()
-                .and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok())
-                .and_then(|v| v.get("osint_findings").cloned())
-                .and_then(|v| v.as_array().cloned())
-                .map(|arr| {
-                    arr.into_iter()
-                        .filter_map(|f| {
-                            f.get("tool_name")
-                                .and_then(|t| t.as_str())
-                                .map(|s| s.to_string())
-                        })
-                        .collect()
-                })
-                .unwrap_or_default();
 
-            PersonReport {
-                entity_id: p.entity_id,
-                display_name: p.display_name,
-                subtype: p.subtype,
-                organizational_rank: p.organizational_rank,
-                email: p.email,
-                phone: p.phone,
-                username: p.username,
-                employer: p.employer,
-                dob: p.dob,
-                notes: p.notes,
-                osint_tools_run,
+    // Build a lookup of entity_id → display_name for link rendering below.
+    // We need this before consuming `entity_list` into the persons Vec.
+    let mut entity_label_by_id: std::collections::HashMap<String, String> =
+        std::collections::HashMap::new();
+    for e in &entity_list {
+        entity_label_by_id.insert(e.entity_id.to_string(), e.display_name.clone());
+    }
+
+    // Phase B: gather person_identifiers per person ahead of constructing the
+    // PersonReport vec. One query per person — list_for_entity is small (5–50
+    // rows typically) so the overhead is negligible.
+    let mut persons: Vec<PersonReport> = Vec::new();
+    for p in entity_list.into_iter().filter(|e| e.entity_type == "person") {
+        let osint_tools_run: Vec<String> = p
+            .metadata_json
+            .as_deref()
+            .and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok())
+            .and_then(|v| v.get("osint_findings").cloned())
+            .and_then(|v| v.as_array().cloned())
+            .map(|arr| {
+                arr.into_iter()
+                    .filter_map(|f| {
+                        f.get("tool_name")
+                            .and_then(|t| t.as_str())
+                            .map(|s| s.to_string())
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        let identifier_rows =
+            person_identifiers::list_for_entity(&state.db.forensics, p.entity_id).await?;
+        let identifiers: Vec<IdentifierReport> = identifier_rows
+            .into_iter()
+            .map(|r| IdentifierReport {
+                kind: r.kind,
+                value: r.value,
+                platform: r.platform,
+                notes: r.notes,
+                discovered_via_tool: r.discovered_via_tool,
+                attributed_by: r.attributed_by,
+                attribution_basis: r.attribution_basis,
+                confidence_level: r.confidence_level,
+                verification_status: r.verification_status,
+            })
+            .collect();
+
+        persons.push(PersonReport {
+            entity_id: p.entity_id,
+            display_name: p.display_name,
+            subtype: p.subtype,
+            organizational_rank: p.organizational_rank,
+            email: p.email,
+            phone: p.phone,
+            username: p.username,
+            employer: p.employer,
+            dob: p.dob,
+            notes: p.notes,
+            osint_tools_run,
+            identifiers,
+        });
+    }
+
+    // Phase B: gather entity_links for the case + resolve endpoint labels.
+    let link_rows = links_db::list_for_case(&state.db.forensics, case_id).await?;
+    let links: Vec<LinkReport> = link_rows
+        .into_iter()
+        .map(|l| {
+            // Resolve a human-readable label per endpoint. Entity endpoints
+            // resolve via `entity_label_by_id`; evidence endpoints render the
+            // raw evidence_id (which is already human-readable, e.g. "E-001").
+            let label_for = |ty: &str, id: &str| -> String {
+                if ty == "entity" {
+                    entity_label_by_id
+                        .get(id)
+                        .cloned()
+                        .unwrap_or_else(|| format!("entity #{id}"))
+                } else {
+                    id.to_string()
+                }
+            };
+            let source_label = label_for(&l.source_type, &l.source_id);
+            let target_label = label_for(&l.target_type, &l.target_id);
+            LinkReport {
+                link_id: l.link_id,
+                source_type: l.source_type,
+                source_id: l.source_id,
+                source_label,
+                target_type: l.target_type,
+                target_id: l.target_id,
+                target_label,
+                link_label: l.link_label,
+                directional: l.directional != 0,
+                weight: l.weight,
+                notes: l.notes,
+                attributed_by: l.attributed_by,
+                basis: l.basis,
+                confidence_level: l.confidence_level,
+                method_reference: l.method_reference,
+                alternatives_considered: l.alternatives_considered,
+                evidence_refs: l.evidence_refs,
             }
         })
         .collect();
@@ -388,6 +504,7 @@ async fn gather_report_payload(
         all_hashes,
         all_tools,
         analysis_notes,
+        links,
         generated_at: Utc::now().format("%Y-%m-%dT%H:%M:%S%.6fZ").to_string(),
     })
 }
@@ -544,6 +661,9 @@ fn render_markdown(p: &ReportPayload) -> Result<String, AppError> {
             } else {
                 out.push_str("- **OSINT runs executed**: none\n");
             }
+
+            // Phase B (migration 0008): identifier sub-list with attribution.
+            render_person_identifiers(&mut out, &person.identifiers);
 
             if let Some(notes) = &person.notes {
                 if !notes.trim().is_empty() {
@@ -849,6 +969,9 @@ fn render_markdown(p: &ReportPayload) -> Result<String, AppError> {
         out.push_str("---\n\n");
     }
 
+    // ── Entity Connections (Phase B, migration 0008) ──────────────────────────
+    render_entity_connections(&mut out, &p.links);
+
     // ── Conclusion ────────────────────────────────────────────────────────────
     out.push_str("## Conclusion\n\n");
     out.push_str(&generate_conclusion(p));
@@ -961,6 +1084,201 @@ fn generate_executive_summary(p: &ReportPayload) -> String {
         p.status, p.priority
     ));
     summary
+}
+
+// ─── Phase B (migration 0008) attribution renderers ──────────────────────────
+
+/// Render a person's identifier sub-list with attribution chips. Skipped
+/// entirely when the person has no identifiers (keeps the report compact for
+/// v1 cases that pre-date Phase B).
+fn render_person_identifiers(out: &mut String, identifiers: &[IdentifierReport]) {
+    if identifiers.is_empty() {
+        return;
+    }
+
+    let total = identifiers.len();
+    let confirmed = identifiers
+        .iter()
+        .filter(|i| i.verification_status.as_deref() == Some("Confirmed"))
+        .count();
+    let unverified = identifiers
+        .iter()
+        .filter(|i| {
+            i.verification_status.as_deref() == Some("Unverified")
+                || i.verification_status.is_none()
+        })
+        .count();
+
+    out.push_str("\n#### Identifiers\n\n");
+    out.push_str(&format!(
+        "_{} identifier{} total · {} confirmed · {} unverified_\n\n",
+        total,
+        if total == 1 { "" } else { "s" },
+        confirmed,
+        unverified,
+    ));
+
+    for ident in identifiers {
+        let platform_suffix = ident
+            .platform
+            .as_deref()
+            .filter(|p| !p.trim().is_empty())
+            .map(|p| format!(" ({})", esc_md(p)))
+            .unwrap_or_default();
+        out.push_str(&format!(
+            "- **{}**: `{}`{}\n",
+            esc_md(&ident.kind),
+            esc_md(&ident.value),
+            platform_suffix,
+        ));
+
+        // Attribution chip line: Author · Confidence · Verification.
+        let author = ident
+            .attributed_by
+            .as_deref()
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or("not recorded");
+        let confidence = ident
+            .confidence_level
+            .as_deref()
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or("not recorded");
+        let verification = ident
+            .verification_status
+            .as_deref()
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or("Unverified");
+        out.push_str(&format!(
+            "  _Author: {} · Confidence: {} · Status: {}_\n",
+            esc_md(author),
+            esc_md(confidence),
+            esc_md(verification),
+        ));
+
+        if let Some(basis) = ident
+            .attribution_basis
+            .as_deref()
+            .filter(|s| !s.trim().is_empty())
+        {
+            out.push_str(&format!("  _Basis: {}_\n", esc_md(basis)));
+        }
+        if let Some(tool) = ident
+            .discovered_via_tool
+            .as_deref()
+            .filter(|s| !s.trim().is_empty())
+        {
+            out.push_str(&format!("  _Source tool: {}_\n", esc_md(tool)));
+        }
+    }
+    out.push('\n');
+}
+
+/// Render the new "## Entity Connections" section, listing every active
+/// entity_link with full attribution.  Skipped entirely when the case has
+/// no links (which is most pre-Phase-B v1 data).
+fn render_entity_connections(out: &mut String, links: &[LinkReport]) {
+    if links.is_empty() {
+        return;
+    }
+
+    out.push_str("## Entity Connections\n\n");
+    out.push_str(
+        "The following connections between entities and evidence have been \
+         asserted by the investigator. Each connection records the basis of \
+         the attribution and the level of confidence assigned. Connections \
+         marked **low-confidence** or that include explicit \
+         **alternatives considered** should be re-examined under \
+         cross-examination.\n\n",
+    );
+
+    let total = links.len();
+    let high_confidence = links
+        .iter()
+        .filter(|l| l.confidence_level.as_deref() == Some("High"))
+        .count();
+    let with_alternatives = links
+        .iter()
+        .filter(|l| {
+            l.alternatives_considered
+                .as_deref()
+                .map(|s| !s.trim().is_empty())
+                .unwrap_or(false)
+        })
+        .count();
+    out.push_str(&format!(
+        "_{} connection{} total · {} high-confidence · {} with alternatives considered_\n\n",
+        total,
+        if total == 1 { "" } else { "s" },
+        high_confidence,
+        with_alternatives,
+    ));
+
+    for (i, link) in links.iter().enumerate() {
+        let direction_arrow = if link.directional { "→" } else { "↔" };
+        let label_suffix = link
+            .link_label
+            .as_deref()
+            .filter(|s| !s.trim().is_empty())
+            .map(|s| format!(" — {}", esc_md(s)))
+            .unwrap_or_default();
+        out.push_str(&format!(
+            "### {}. {} {} {}{}\n",
+            i + 1,
+            esc_md(&link.source_label),
+            direction_arrow,
+            esc_md(&link.target_label),
+            label_suffix,
+        ));
+
+        // Attribution chip line.
+        let author = link
+            .attributed_by
+            .as_deref()
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or("not recorded");
+        let confidence = link
+            .confidence_level
+            .as_deref()
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or("not recorded");
+        out.push_str(&format!(
+            "_Author: {} · Confidence: {}_\n\n",
+            esc_md(author),
+            esc_md(confidence),
+        ));
+
+        if let Some(basis) = link.basis.as_deref().filter(|s| !s.trim().is_empty()) {
+            out.push_str(&format!("**Basis**: {}\n\n", esc_md(basis)));
+        }
+        if let Some(method) = link
+            .method_reference
+            .as_deref()
+            .filter(|s| !s.trim().is_empty())
+        {
+            out.push_str(&format!("**Method reference**: {}\n\n", esc_md(method)));
+        }
+        if let Some(alt) = link
+            .alternatives_considered
+            .as_deref()
+            .filter(|s| !s.trim().is_empty())
+        {
+            out.push_str(&format!(
+                "> **Alternatives considered:** {}\n\n",
+                esc_md(alt)
+            ));
+        }
+        if let Some(refs) = link
+            .evidence_refs
+            .as_deref()
+            .filter(|s| !s.trim().is_empty())
+        {
+            out.push_str(&format!("_Evidence refs: {}_\n\n", esc_md(refs)));
+        }
+        if let Some(notes) = link.notes.as_deref().filter(|s| !s.trim().is_empty()) {
+            out.push_str(&format!("**Notes**: {}\n\n", esc_md(notes)));
+        }
+    }
+    out.push_str("---\n\n");
 }
 
 fn generate_conclusion(p: &ReportPayload) -> String {

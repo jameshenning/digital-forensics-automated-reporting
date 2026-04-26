@@ -29,10 +29,29 @@ const VALID_NODE_TYPES: &[&str] = &["entity", "evidence"];
 const LINK_LABEL_MAX_LEN: usize = 100;
 const WEIGHT_MAX: f64 = 1000.0;
 
+/// Phase B (migration 0008) attribution allowlist. Matches Phase A's
+/// `analysis_notes.confidence_level` enum so the UI can reuse the same chip
+/// component across analytical findings and link assertions.
+const VALID_CONFIDENCE_LEVELS: &[&str] = &["Low", "Medium", "High"];
+
+// Character-counted caps (Unicode-safe). 200 for short identity-like fields,
+// 500 for short narrative, 5000 for long narrative — same scale as the
+// Phase A validation fields on analysis_notes.
+const ATTRIBUTED_BY_MAX_LEN: usize = 200;
+const BASIS_MAX_LEN: usize = 5000;
+const METHOD_REFERENCE_MAX_LEN: usize = 500;
+const ALTERNATIVES_MAX_LEN: usize = 5000;
+const EVIDENCE_REFS_MAX_LEN: usize = 1000;
+
 // ─── Public data types ────────────────────────────────────────────────────────
 
 /// Full entity_links row, maps 1:1 to the `entity_links` table.
 /// `created_at` is a `String` for v1 compat — see `db::cases::Case`.
+///
+/// Attribution fields (migration 0008, Phase B): every field is `Option<String>`
+/// because v1 rows have no attribution recorded. The UI / report layer renders
+/// "not recorded" placeholders rather than silently backfilling so v1 data is
+/// presented honestly.
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct Link {
     pub link_id: i64,
@@ -47,6 +66,19 @@ pub struct Link {
     pub notes: Option<String>,
     pub is_deleted: i64,
     pub created_at: String,
+    // ── Migration 0008 attribution fields (all nullable for v1 compat) ──
+    #[serde(default)]
+    pub attributed_by: Option<String>,
+    #[serde(default)]
+    pub basis: Option<String>,
+    #[serde(default)]
+    pub confidence_level: Option<String>,
+    #[serde(default)]
+    pub method_reference: Option<String>,
+    #[serde(default)]
+    pub alternatives_considered: Option<String>,
+    #[serde(default)]
+    pub evidence_refs: Option<String>,
 }
 
 /// Writable fields for creating a new link.
@@ -62,6 +94,24 @@ pub struct LinkInput {
     /// `None` → 1.0
     pub weight: Option<f64>,
     pub notes: Option<String>,
+    // ── Migration 0008 attribution fields (all optional) ──
+    #[serde(default)]
+    pub attributed_by: Option<String>,
+    #[serde(default)]
+    pub basis: Option<String>,
+    /// One of `VALID_CONFIDENCE_LEVELS` ("Low" | "Medium" | "High"), or `None`
+    /// to leave attribution-confidence unrecorded. Unlike Phase A, we do NOT
+    /// default to "Medium" here — confidence on a connection assertion is more
+    /// load-bearing than on an analytical finding, and silently defaulting
+    /// would misrepresent v1 rows that genuinely have no recorded confidence.
+    #[serde(default)]
+    pub confidence_level: Option<String>,
+    #[serde(default)]
+    pub method_reference: Option<String>,
+    #[serde(default)]
+    pub alternatives_considered: Option<String>,
+    #[serde(default)]
+    pub evidence_refs: Option<String>,
 }
 
 // ─── Validation helpers ───────────────────────────────────────────────────────
@@ -101,6 +151,61 @@ async fn validate_entity_endpoint(
             id: entity_id_str.to_string(),
         });
     }
+    Ok(())
+}
+
+/// Reject an optional string that, when Some, exceeds `max_len` chars.
+/// Mirrors the helper in `db::analysis` — empty Some("") is allowed through
+/// here; the frontend coerces empty inputs to None before IPC.
+fn check_optional_len(
+    value: &Option<String>,
+    field: &'static str,
+    max_len: usize,
+) -> Result<(), AppError> {
+    if let Some(v) = value {
+        if v.chars().count() > max_len {
+            return Err(AppError::ValidationError {
+                field: field.into(),
+                message: format!("{field} must not exceed {max_len} characters"),
+            });
+        }
+    }
+    Ok(())
+}
+
+/// Validate the optional `confidence_level` against the allowlist.
+/// Unlike Phase A we never *default* the value — `None` stays `None`.
+fn validate_confidence_level(value: &Option<String>) -> Result<(), AppError> {
+    if let Some(v) = value {
+        if !VALID_CONFIDENCE_LEVELS.contains(&v.as_str()) {
+            return Err(AppError::ValidationError {
+                field: "confidence_level".into(),
+                message: format!(
+                    "confidence_level must be one of: {}",
+                    VALID_CONFIDENCE_LEVELS.join(", ")
+                ),
+            });
+        }
+    }
+    Ok(())
+}
+
+/// Validate all migration-0008 attribution fields on a `LinkInput`.
+fn validate_attribution(input: &LinkInput) -> Result<(), AppError> {
+    check_optional_len(&input.attributed_by, "attributed_by", ATTRIBUTED_BY_MAX_LEN)?;
+    check_optional_len(&input.basis, "basis", BASIS_MAX_LEN)?;
+    check_optional_len(
+        &input.method_reference,
+        "method_reference",
+        METHOD_REFERENCE_MAX_LEN,
+    )?;
+    check_optional_len(
+        &input.alternatives_considered,
+        "alternatives_considered",
+        ALTERNATIVES_MAX_LEN,
+    )?;
+    check_optional_len(&input.evidence_refs, "evidence_refs", EVIDENCE_REFS_MAX_LEN)?;
+    validate_confidence_level(&input.confidence_level)?;
     Ok(())
 }
 
@@ -199,15 +304,22 @@ pub async fn add_link(
         }
     }
 
+    // Migration 0008: attribution-field caps + confidence allowlist.
+    validate_attribution(input)?;
+
     let row = sqlx::query_as::<_, Link>(
         r#"
         INSERT INTO entity_links (
             case_id, source_type, source_id, target_type, target_id,
-            link_label, directional, weight, notes
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            link_label, directional, weight, notes,
+            attributed_by, basis, confidence_level,
+            method_reference, alternatives_considered, evidence_refs
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         RETURNING
             link_id, case_id, source_type, source_id, target_type, target_id,
-            link_label, directional, weight, notes, is_deleted, created_at
+            link_label, directional, weight, notes, is_deleted, created_at,
+            attributed_by, basis, confidence_level,
+            method_reference, alternatives_considered, evidence_refs
         "#,
     )
     .bind(case_id)
@@ -219,6 +331,12 @@ pub async fn add_link(
     .bind(directional)
     .bind(weight)
     .bind(&input.notes)
+    .bind(&input.attributed_by)
+    .bind(&input.basis)
+    .bind(&input.confidence_level)
+    .bind(&input.method_reference)
+    .bind(&input.alternatives_considered)
+    .bind(&input.evidence_refs)
     .fetch_one(pool)
     .await?;
 
@@ -230,7 +348,9 @@ pub async fn list_for_case(pool: &SqlitePool, case_id: &str) -> Result<Vec<Link>
     let rows = sqlx::query_as::<_, Link>(
         r#"
         SELECT link_id, case_id, source_type, source_id, target_type, target_id,
-               link_label, directional, weight, notes, is_deleted, created_at
+               link_label, directional, weight, notes, is_deleted, created_at,
+               attributed_by, basis, confidence_level,
+               method_reference, alternatives_considered, evidence_refs
         FROM entity_links
         WHERE case_id = ? AND is_deleted = 0
         ORDER BY created_at ASC
@@ -265,7 +385,9 @@ pub async fn get_link(pool: &SqlitePool, link_id: i64) -> Result<Link, AppError>
     sqlx::query_as::<_, Link>(
         r#"
         SELECT link_id, case_id, source_type, source_id, target_type, target_id,
-               link_label, directional, weight, notes, is_deleted, created_at
+               link_label, directional, weight, notes, is_deleted, created_at,
+               attributed_by, basis, confidence_level,
+               method_reference, alternatives_considered, evidence_refs
         FROM entity_links
         WHERE link_id = ?
         "#,

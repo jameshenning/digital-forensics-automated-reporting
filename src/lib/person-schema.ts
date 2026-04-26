@@ -108,6 +108,18 @@ export const PERSON_IDENTIFIER_KINDS = [
   "url",
 ] as const;
 
+/**
+ * Phase B (migration 0008) attribution allowlists shared with the
+ * business-identifier schema. Mirrors Rust `VALID_CONFIDENCE_LEVELS` /
+ * `VALID_VERIFICATION_STATUSES` in db/person_identifiers.rs.
+ */
+export const IDENTIFIER_CONFIDENCE_LEVELS = ["Low", "Medium", "High"] as const;
+export const IDENTIFIER_VERIFICATION_STATUSES = [
+  "Unverified",
+  "Tentative",
+  "Confirmed",
+] as const;
+
 export const personIdentifierFormSchema = z.object({
   kind: z.enum(PERSON_IDENTIFIER_KINDS, {
     error: "Select a valid kind",
@@ -127,6 +139,18 @@ export const personIdentifierFormSchema = z.object({
     .string()
     .max(2000, "Notes must be at most 2000 characters")
     .optional(),
+  // Phase B (migration 0008) attribution fields — all optional. Char caps
+  // mirror the Rust validators in db/person_identifiers.rs.
+  attributed_by: z
+    .string()
+    .max(200, "Author must be at most 200 characters")
+    .optional(),
+  attribution_basis: z
+    .string()
+    .max(5000, "Attribution basis must be at most 5000 characters")
+    .optional(),
+  confidence_level: z.enum(IDENTIFIER_CONFIDENCE_LEVELS).optional(),
+  verification_status: z.enum(IDENTIFIER_VERIFICATION_STATUSES).optional(),
 });
 
 export type PersonIdentifierFormValues = z.input<

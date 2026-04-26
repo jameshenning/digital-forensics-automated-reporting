@@ -256,7 +256,7 @@ CREATE INDEX IF NOT EXISTS idx_entities_case ON entities(case_id);
 CREATE INDEX IF NOT EXISTS idx_entities_case_type ON entities(case_id, entity_type);
 CREATE INDEX IF NOT EXISTS idx_entities_parent ON entities(parent_entity_id);
 
--- migration 0004: person_identifiers (+ 0006 discovered_via_tool)
+-- migration 0004: person_identifiers (+ 0006 discovered_via_tool, 0008 attribution)
 CREATE TABLE IF NOT EXISTS person_identifiers (
     identifier_id INTEGER PRIMARY KEY AUTOINCREMENT,
     entity_id INTEGER NOT NULL,
@@ -265,6 +265,10 @@ CREATE TABLE IF NOT EXISTS person_identifiers (
     platform TEXT,
     notes TEXT,
     discovered_via_tool TEXT,
+    attributed_by TEXT,
+    attribution_basis TEXT,
+    confidence_level TEXT,
+    verification_status TEXT,
     is_deleted INTEGER DEFAULT 0,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -278,7 +282,7 @@ CREATE INDEX IF NOT EXISTS idx_person_identifiers_kind
 CREATE INDEX IF NOT EXISTS idx_person_identifiers_discovered_via_tool
     ON person_identifiers(discovered_via_tool);
 
--- migration 0005: business_identifiers (+ 0006 discovered_via_tool)
+-- migration 0005: business_identifiers (+ 0006 discovered_via_tool, 0008 attribution)
 CREATE TABLE IF NOT EXISTS business_identifiers (
     identifier_id INTEGER PRIMARY KEY AUTOINCREMENT,
     entity_id INTEGER NOT NULL,
@@ -287,6 +291,10 @@ CREATE TABLE IF NOT EXISTS business_identifiers (
     platform TEXT,
     notes TEXT,
     discovered_via_tool TEXT,
+    attributed_by TEXT,
+    attribution_basis TEXT,
+    confidence_level TEXT,
+    verification_status TEXT,
     is_deleted INTEGER DEFAULT 0,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -313,6 +321,13 @@ CREATE TABLE IF NOT EXISTS entity_links (
     notes TEXT,
     is_deleted INTEGER DEFAULT 0,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    -- migration 0008: attribution principles
+    attributed_by TEXT,
+    basis TEXT,
+    confidence_level TEXT,
+    method_reference TEXT,
+    alternatives_considered TEXT,
+    evidence_refs TEXT,
     FOREIGN KEY (case_id) REFERENCES cases (case_id) ON DELETE RESTRICT
 );
 

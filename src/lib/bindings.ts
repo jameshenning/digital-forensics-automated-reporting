@@ -1087,6 +1087,14 @@ export type EntityInput = Omit<
 
 export type LinkEndpointKind = "entity" | "evidence";
 
+/**
+ * Phase B (migration 0008) verification allowlist. Mirrors Rust
+ * `VALID_VERIFICATION_STATUSES` in db/person_identifiers.rs.
+ * `ConfidenceLevel` already exists earlier in this file (defined for the
+ * Phase A analysis_notes payload) and is reused here.
+ */
+export type VerificationStatus = "Unverified" | "Tentative" | "Confirmed";
+
 export interface Link {
   link_id: number;
   case_id: string;
@@ -1100,6 +1108,13 @@ export interface Link {
   notes: string | null;
   is_deleted: number;
   created_at: string;
+  // Phase B (migration 0008) attribution fields — all nullable for v1 compat.
+  attributed_by: string | null;
+  basis: string | null;
+  confidence_level: ConfidenceLevel | null;
+  method_reference: string | null;
+  alternatives_considered: string | null;
+  evidence_refs: string | null;
 }
 
 export interface LinkInput {
@@ -1111,6 +1126,13 @@ export interface LinkInput {
   directional: number | null; // null → 1
   weight: number | null; // null → 1.0
   notes: string | null;
+  // Phase B (migration 0008) attribution fields — all optional/nullable.
+  attributed_by?: string | null;
+  basis?: string | null;
+  confidence_level?: ConfidenceLevel | null;
+  method_reference?: string | null;
+  alternatives_considered?: string | null;
+  evidence_refs?: string | null;
 }
 
 export type EventCategory =
@@ -1452,6 +1474,11 @@ export interface PersonIdentifier {
    * from the "Auto-discovered via OSINT <tool> on <date>" notes stamp.
    */
   discovered_via_tool: string | null;
+  // Phase B (migration 0008) attribution fields — all nullable for v1 compat.
+  attributed_by: string | null;
+  attribution_basis: string | null;
+  confidence_level: ConfidenceLevel | null;
+  verification_status: VerificationStatus | null;
   is_deleted: 0 | 1;
   created_at: string;
   updated_at: string;
@@ -1469,6 +1496,11 @@ export interface PersonIdentifierInput {
   value: string;
   platform: string | null;
   notes: string | null;
+  // Phase B (migration 0008) attribution fields — all optional/nullable.
+  attributed_by?: string | null;
+  attribution_basis?: string | null;
+  confidence_level?: ConfidenceLevel | null;
+  verification_status?: VerificationStatus | null;
 }
 
 /** List all active identifiers for a person entity (excludes soft-deleted). */
@@ -1541,6 +1573,11 @@ export interface BusinessIdentifier {
    * Added by migration 0006.
    */
   discovered_via_tool: string | null;
+  // Phase B (migration 0008) attribution fields — all nullable for v1 compat.
+  attributed_by: string | null;
+  attribution_basis: string | null;
+  confidence_level: ConfidenceLevel | null;
+  verification_status: VerificationStatus | null;
   is_deleted: 0 | 1;
   created_at: string;
   updated_at: string;
@@ -1557,6 +1594,11 @@ export interface BusinessIdentifierInput {
   value: string;
   platform: string | null;
   notes: string | null;
+  // Phase B (migration 0008) attribution fields — all optional/nullable.
+  attributed_by?: string | null;
+  attribution_basis?: string | null;
+  confidence_level?: ConfidenceLevel | null;
+  verification_status?: VerificationStatus | null;
 }
 
 /** List all active identifiers for a business entity (excludes soft-deleted). */
