@@ -9,7 +9,11 @@
  * Filter controls live ABOVE this component in the parent route.
  * This component is pure: it owns the Cytoscape lifecycle only.
  *
- * Cleanup: cy.destroy() in the useEffect cleanup — mandatory to avoid leaks.
+ * Lifecycle note: the Cytoscape instance is created ONCE when the
+ * container mounts and non-empty data first arrives. Subsequent data
+ * changes remove old elements and add new ones in place — this avoids
+ * the destroy/recreate race condition that produced null-pointer
+ * crashes from Cytoscape's internal animation frame loop.
  */
 
 import React from "react";
@@ -55,6 +59,7 @@ function applyFocusHighlight(
   focus: GraphFocus | null,
   data: GraphPayload,
 ): void {
+  if (!cy || cy.destroyed()) return;
   cy.elements().removeClass("dimmed highlighted");
   if (!focus) return;
 
@@ -117,10 +122,148 @@ function nodeHex(kind: string, entity_type: string | null): string {
   return "#888";
 }
 
+/** Build cytoscape element definitions from graph payload. */
+function buildElements(data: GraphPayload): cytoscape.ElementDefinition[] {
+  return [
+    ...data.nodes.map((n) => ({
+      data: {
+        id: n.id,
+        label: n.label,
+        kind: n.kind,
+        entity_type: n.entity_type ?? "",
+        nodeColor: nodeHex(n.kind, n.entity_type),
+      },
+      classes: [n.kind, n.entity_type ?? ""].filter(Boolean).join(" "),
+    })),
+    ...data.edges.map((e) => {
+      const isHasEdge = e.id.startsWith("has:");
+      const edgeClasses = [
+        e.directional ? "directed" : "undirected",
+        isHasEdge ? "has-identifier" : "",
+      ]
+        .filter(Boolean)
+        .join(" ");
+      return {
+        data: {
+          id: e.id,
+          source: e.source,
+          target: e.target,
+          label: e.label ?? "",
+          weight: e.weight,
+        },
+        classes: edgeClasses,
+      };
+    }),
+  ];
+}
+
+/** Cytoscape stylesheet shared across all instances. */
+const CY_STYLE: cytoscape.Stylesheet[] = [
+  {
+    selector: "node",
+    style: {
+      "background-color": "data(nodeColor)",
+      label: "data(label)",
+      color: "#e9ecef",
+      "font-size": 12,
+      "text-valign": "center",
+      "text-halign": "center",
+      "text-outline-color": "#12151a",
+      "text-outline-width": 2,
+      width: 42,
+      height: 42,
+    },
+  },
+  {
+    selector: "node[kind='evidence']",
+    style: {
+      shape: "rectangle" as cytoscape.Css.NodeShape,
+      width: 50,
+      height: 30,
+      "font-size": 10,
+    },
+  },
+  {
+    selector: "node[kind='identifier']",
+    style: {
+      shape: "diamond" as cytoscape.Css.NodeShape,
+      width: 30,
+      height: 30,
+      "font-size": 9,
+      "text-max-width": "120px",
+      "text-wrap": "ellipsis",
+      "border-width": 1,
+      "border-color": "#1f2937",
+    },
+  },
+  {
+    selector: "edge",
+    style: {
+      width: 1.5,
+      "line-color": "#7a8597",
+      "target-arrow-color": "#7a8597",
+      "target-arrow-shape": "none",
+      "curve-style": "bezier",
+      label: "data(label)",
+      color: "#adb5bd",
+      "font-size": 10,
+      "text-background-color": "#12151a",
+      "text-background-opacity": 0.8,
+      "text-background-padding": "2px",
+    },
+  },
+  {
+    selector: "edge.directed",
+    style: {
+      "target-arrow-shape": "triangle",
+    },
+  },
+  {
+    selector: "edge.has-identifier",
+    style: {
+      "line-color": "#4b5563",
+      "line-style": "dashed" as cytoscape.Css.LineStyle,
+      width: 1,
+      label: "",
+    },
+  },
+  {
+    selector: ".dimmed",
+    style: {
+      opacity: 0.18,
+      "text-opacity": 0.18,
+    },
+  },
+  {
+    selector: "node.highlighted",
+    style: {
+      "border-width": 3,
+      "border-color": "#fbbf24",
+    },
+  },
+  {
+    selector: "edge.highlighted",
+    style: {
+      "line-color": "#fbbf24",
+      "target-arrow-color": "#fbbf24",
+      width: 3,
+    },
+  },
+  {
+    selector: "node:selected",
+    style: {
+      "border-width": 3,
+      "border-color": "#60a5fa",
+    },
+  },
+];
+
 export function GraphCanvas({ caseId, filter, onNodeClick, focus }: GraphCanvasProps) {
   const token = getToken() ?? "";
   const containerRef = React.useRef<HTMLDivElement>(null);
   const cyRef = React.useRef<cytoscape.Core | null>(null);
+  const dataRef = React.useRef<GraphPayload | null>(null);
+  const focusRef = React.useRef<GraphFocus | null>(null);
 
   const { data, isLoading, isError } = useQuery({
     queryKey: queryKeys.graph.forCase(caseId, filter),
@@ -128,166 +271,14 @@ export function GraphCanvas({ caseId, filter, onNodeClick, focus }: GraphCanvasP
     enabled: !!token,
   });
 
-  // Build / rebuild Cytoscape instance when data changes
+  // ── Effect 1: create the Cytoscape instance once on mount ───────────────
   React.useEffect(() => {
-    // Always clean up the previous instance first
-    if (cyRef.current) {
-      cyRef.current.destroy();
-      cyRef.current = null;
-    }
-
-    if (!containerRef.current || !data || data.nodes.length === 0) return;
-
-    const elements: cytoscape.ElementDefinition[] = [
-      ...data.nodes.map((n) => ({
-        data: {
-          id: n.id,
-          label: n.label,
-          kind: n.kind,
-          entity_type: n.entity_type ?? "",
-          nodeColor: nodeHex(n.kind, n.entity_type),
-        },
-        classes: [n.kind, n.entity_type ?? ""].filter(Boolean).join(" "),
-      })),
-      ...data.edges.map((e) => {
-        // has_identifier edges (id starts with "has:") are visually
-        // softer than user-authored entity_links — same data class
-        // (the entity owns the identifier), but lower informational
-        // weight than an investigator-asserted link.
-        const isHasEdge = e.id.startsWith("has:");
-        const edgeClasses = [
-          e.directional ? "directed" : "undirected",
-          isHasEdge ? "has-identifier" : "",
-        ]
-          .filter(Boolean)
-          .join(" ");
-        return {
-          data: {
-            id: e.id,
-            source: e.source,
-            target: e.target,
-            label: e.label ?? "",
-            weight: e.weight,
-          },
-          classes: edgeClasses,
-        };
-      }),
-    ];
+    if (!containerRef.current) return;
 
     const cy = cytoscape({
       container: containerRef.current,
-      elements,
-      style: [
-        {
-          selector: "node",
-          style: {
-            "background-color": "data(nodeColor)",
-            label: "data(label)",
-            color: "#e9ecef",
-            "font-size": 12,
-            "text-valign": "center",
-            "text-halign": "center",
-            "text-outline-color": "#12151a",
-            "text-outline-width": 2,
-            width: 42,
-            height: 42,
-          },
-        },
-        {
-          selector: "node[kind='evidence']",
-          style: {
-            shape: "rectangle" as cytoscape.Css.NodeShape,
-            width: 50,
-            height: 30,
-            "font-size": 10,
-          },
-        },
-        {
-          selector: "node[kind='identifier']",
-          style: {
-            shape: "diamond" as cytoscape.Css.NodeShape,
-            width: 30,
-            height: 30,
-            "font-size": 9,
-            "text-max-width": "120px",
-            "text-wrap": "ellipsis",
-            "border-width": 1,
-            "border-color": "#1f2937",
-          },
-        },
-        {
-          selector: "edge",
-          style: {
-            width: 1.5,
-            "line-color": "#7a8597",
-            "target-arrow-color": "#7a8597",
-            "target-arrow-shape": "none",
-            "curve-style": "bezier",
-            label: "data(label)",
-            color: "#adb5bd",
-            "font-size": 10,
-            "text-background-color": "#12151a",
-            "text-background-opacity": 0.8,
-            "text-background-padding": "2px",
-          },
-        },
-        {
-          selector: "edge.directed",
-          style: {
-            "target-arrow-shape": "triangle",
-          },
-        },
-        {
-          selector: "edge.has-identifier",
-          style: {
-            "line-color": "#4b5563",
-            "line-style": "dashed" as cytoscape.Css.LineStyle,
-            width: 1,
-            label: "", // platform shows in inspector (feature #2), not on canvas
-          },
-        },
-        // Focus mode (feature #3): "dimmed" pushes everything off-path
-        // to background opacity; "highlighted" amber-rings the
-        // surviving nodes/edges so the path or neighborhood pops.
-        {
-          selector: ".dimmed",
-          style: {
-            opacity: 0.18,
-            "text-opacity": 0.18,
-          },
-        },
-        {
-          selector: "node.highlighted",
-          style: {
-            "border-width": 3,
-            "border-color": "#fbbf24",
-          },
-        },
-        {
-          selector: "edge.highlighted",
-          style: {
-            "line-color": "#fbbf24",
-            "target-arrow-color": "#fbbf24",
-            width: 3,
-          },
-        },
-        {
-          selector: "node:selected",
-          style: {
-            "border-width": 3,
-            "border-color": "#60a5fa",
-          },
-        },
-      ],
-      layout: {
-        name: "cose",
-        padding: 30,
-        animate: true,
-        nodeRepulsion: () => 4500,
-        idealEdgeLength: () => 100,
-        nodeOverlap: 20,
-        fit: true,
-      } as cytoscape.LayoutOptions,
+      elements: [],
+      style: CY_STYLE,
     });
 
     if (onNodeClick) {
@@ -299,21 +290,51 @@ export function GraphCanvas({ caseId, filter, onNodeClick, focus }: GraphCanvasP
     cyRef.current = cy;
 
     return () => {
-      cy.destroy();
+      try {
+        cy.destroy();
+      } catch {
+        /* ignore */
+      }
       cyRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data, onNodeClick]);
+  }, []);
 
-  // Apply focus highlighting whenever focus or the underlying data
-  // changes. Runs SECOND in declaration order, so when data changes
-  // and the build effect re-creates the cy instance above, this
-  // effect re-applies the existing focus on the new instance.
+  // ── Effect 2: populate / update elements when data changes ──────────────
   React.useEffect(() => {
     const cy = cyRef.current;
     if (!cy || !data) return;
-    applyFocusHighlight(cy, focus ?? null, data);
-  }, [focus, data]);
+
+    // Store current data for the focus effect
+    dataRef.current = data;
+
+    // Remove old elements and add new ones (avoids destroy/recreate race)
+    cy.elements().remove();
+    if (data.nodes.length > 0) {
+      cy.add(buildElements(data));
+      cy.layout({
+        name: "cose",
+        padding: 30,
+        animate: true,
+        nodeRepulsion: () => 4500,
+        idealEdgeLength: () => 100,
+        nodeOverlap: 20,
+        fit: true,
+      } as cytoscape.LayoutOptions).run();
+    }
+
+    // Re-apply any existing focus on the new elements
+    applyFocusHighlight(cy, focusRef.current, data);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data]);
+
+  // ── Effect 3: apply focus highlighting whenever focus changes ───────────
+  React.useEffect(() => {
+    focusRef.current = focus ?? null;
+    const cy = cyRef.current;
+    if (!cy || !dataRef.current) return;
+    applyFocusHighlight(cy, focusRef.current, dataRef.current);
+  }, [focus]);
 
   const isEmpty = data && data.nodes.length === 0;
 

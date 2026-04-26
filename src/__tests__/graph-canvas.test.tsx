@@ -24,6 +24,13 @@ vi.mock("cytoscape", () => ({
   default: vi.fn(() => ({
     on: vi.fn(),
     destroy: vi.fn(),
+    destroyed: vi.fn(() => false),
+    elements: vi.fn(() => ({ remove: vi.fn(), removeClass: vi.fn() })),
+    add: vi.fn(),
+    layout: vi.fn(() => ({ run: vi.fn() })),
+    nodes: vi.fn(() => ({ forEach: vi.fn() })),
+    edges: vi.fn(() => ({ forEach: vi.fn() })),
+    removeListeners: vi.fn(),
   })),
 }));
 

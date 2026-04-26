@@ -4,6 +4,7 @@ version = "2.0.0"
 description = "DFARS Desktop — digital forensics case management and reporting"
 authors = ["James Henning"]
 edition = "2021"
+default-run = "dfars-desktop"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
