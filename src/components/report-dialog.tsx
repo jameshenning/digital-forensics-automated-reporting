@@ -3,24 +3,28 @@
  *
  * Opened from the case detail page header.  Fetches a live markdown preview
  * from the backend via TanStack Query and renders it with react-markdown +
- * remark-gfm.  Two footer actions:
- *   - Download as Markdown  (calls case_report_generate, opens the file)
+ * remark-gfm.  Footer actions:
+ *   - Format selector (Markdown / HTML / PDF)
+ *   - Template selector (Standard / SWGDE Compliant) — visible when PDF
+ *   - Download button
  *   - Close
  *
  * The preview query is cached for the lifetime of the dialog mount and
  * is refetched when the dialog is reopened (cache is invalidated on close).
  */
 
+import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { openPath } from "@tauri-apps/plugin-opener";
-import { FileText, Loader2, AlertCircle, RefreshCw } from "lucide-react";
+import { FileText, Loader2, AlertCircle, RefreshCw, Download } from "lucide-react";
 
 import { caseReportPreview, caseReportGenerate } from "@/lib/bindings";
 import { getToken } from "@/lib/session";
 import { queryKeys } from "@/lib/query";
 import { toastError, toastSuccess } from "@/lib/error-toast";
+import type { ReportFormat, ReportTemplate } from "@/lib/report-schema";
 
 import {
   Dialog,
@@ -32,6 +36,14 @@ import {
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 // ---------------------------------------------------------------------------
 // Props
@@ -49,25 +61,32 @@ interface ReportDialogProps {
 
 export function ReportDialog({ caseId, open, onClose }: ReportDialogProps) {
   const token = getToken() ?? "";
+  const [format, setFormat] = useState<ReportFormat>("Markdown");
+  const [template, setTemplate] = useState<ReportTemplate>("Standard");
 
   const { data: markdown, isLoading, isError, error, refetch } = useQuery<string>({
     queryKey: queryKeys.reports.preview(caseId),
     queryFn: () => caseReportPreview({ token, case_id: caseId }),
     enabled: open && !!token,
-    // Keep the preview fresh for the lifetime of the dialog.
-    // Stale after 5 minutes so a long-open dialog doesn't show stale data.
     staleTime: 5 * 60 * 1000,
   });
 
   const generateMutation = useMutation({
     mutationFn: () =>
-      caseReportGenerate({ token, case_id: caseId, format: "Markdown" }),
+      caseReportGenerate({
+        token,
+        case_id: caseId,
+        format,
+        template: format === "Pdf" ? template : undefined,
+      }),
     onSuccess: (outputPath) => {
       toastSuccess("Report written.");
       void openPath(outputPath);
     },
     onError: toastError,
   });
+
+  const formatLabel = format === "Pdf" ? "PDF" : format;
 
   return (
     <Dialog open={open} onOpenChange={(o) => { if (!o) onClose(); }}>
@@ -128,11 +147,51 @@ export function ReportDialog({ caseId, open, onClose }: ReportDialogProps) {
           )}
         </div>
 
-        <DialogFooter className="px-6 py-4 border-t shrink-0 gap-2">
+        <DialogFooter className="px-6 py-4 border-t shrink-0 gap-3 flex-wrap items-end">
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="report-format" className="text-xs text-muted-foreground">
+              Format
+            </Label>
+            <Select
+              value={format}
+              onValueChange={(v) => setFormat(v as ReportFormat)}
+            >
+              <SelectTrigger id="report-format" className="w-36 h-9">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="Markdown">Markdown</SelectItem>
+                <SelectItem value="Html">HTML</SelectItem>
+                <SelectItem value="Pdf">PDF</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
+          {format === "Pdf" && (
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="report-template" className="text-xs text-muted-foreground">
+                Template
+              </Label>
+              <Select
+                value={template}
+                onValueChange={(v) => setTemplate(v as ReportTemplate)}
+              >
+                <SelectTrigger id="report-template" className="w-44 h-9">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="Standard">Standard</SelectItem>
+                  <SelectItem value="Swgde">SWGDE Compliant</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          )}
+
           <Button
             variant="default"
             onClick={() => generateMutation.mutate()}
             disabled={generateMutation.isPending || isLoading}
+            className="ml-auto"
           >
             {generateMutation.isPending ? (
               <>
@@ -140,7 +199,10 @@ export function ReportDialog({ caseId, open, onClose }: ReportDialogProps) {
                 Generating…
               </>
             ) : (
-              "Download as Markdown"
+              <>
+                <Download className="h-4 w-4 mr-2" aria-hidden="true" />
+                Download as {formatLabel}
+              </>
             )}
           </Button>
           <Button variant="outline" onClick={onClose}>

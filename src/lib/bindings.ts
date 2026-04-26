@@ -1015,12 +1015,14 @@ export function caseReportPreview(args: {
 /**
  * Generate and write the case report to disk.
  * Returns the absolute path to the generated file.
- * `format` must be 'Markdown' | 'Html'.
+ * `format` must be 'Markdown' | 'Html' | 'Pdf'.
+ * `template` is optional and only used when format is 'Pdf'.
  */
 export function caseReportGenerate(args: {
   token: string;
   case_id: string;
-  format: "Markdown" | "Html";
+  format: "Markdown" | "Html" | "Pdf";
+  template?: "Standard" | "Swgde";
 }): Promise<string> {
   return invoke<string>("case_report_generate", args);
 }

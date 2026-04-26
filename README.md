@@ -10,13 +10,13 @@ See `docs/v2-migration-spec.md` for the full architecture spec and `docs/sec-{1,
 
 - **Auth + MFA** — Argon2id passwords, TOTP via `totp-rs`, Argon2id-hashed single-use recovery codes, monotonic lockout timer
 - **Case management** — create/edit/delete cases with tags, investigator, agency, classification, and evidence-drive-path
-- **Evidence records** — evidence, chain of custody (with auto-assigned custody sequence per item), hash verifications, tool usage logs, analysis notes
+- **Evidence records** — evidence, chain of custody (with auto-assigned custody sequence per item), hash verifications, tool usage logs, analysis notes with validation levels 0–4 and peer review
 - **File uploads** — streaming SHA-256 hash-while-write, filename sanitization with Unicode NFC normalization, canonicalize-check against path traversal, integrity re-verification on download, OneDrive sync warning
 - **Link analysis** — entities, relationships, case events with a Cytoscape.js network graph and vis-timeline crime line
-- **Reports** — markdown report preview and export via `react-markdown`
+- **Reports** — markdown/HTML/PDF report preview and export; SWGDE-compliant structured PDF template with cover page, TOC, page numbers, classification banners, and all 10 mandatory sections
 - **AI integration** — optional Agent Zero client for enhance/classify/summarize/forensic-analyze (30s/30s/120s/300s timeouts, URL allowlist, per-endpoint body caps, one-time consent banner)
 - **External REST API** — 12-endpoint bearer-token `axum` server on `127.0.0.1:5099` for Agent Zero inbound pushes (timing-oracle mitigated, token-space isolated, per-route body limits, JSON depth guard)
-- **Audit logging** — pipe-delimited chain-of-custody audit files at `%APPDATA%\DFARS\audit\` plus rolling debug logs at `%LOCALAPPDATA%\DFARS\Logs\dfars-desktop.log`
+- **Audit logging** — pipe-delimited chain-of-custody audit files at `%APPDATA%\DFARS\audit\`; hash-chained tamper-evident SQLite audit entries; standalone `dfars-verify` CLI for offline chain verification
 
 ## Development
 
@@ -41,7 +41,7 @@ Produces a per-user NSIS installer at `src-tauri/target/release/bundle/nsis/DFAR
 # Rust (backend): 237 tests
 cd src-tauri && cargo test
 
-# Vitest (frontend): 443 tests
+# Vitest (frontend): 548 tests
 npm test
 ```
 
@@ -97,6 +97,18 @@ dfars-desktop/
 │   └── sec-9-final-release-review.md
 ├── src/                       — React 19 frontend (TanStack Router + Query, Shadcn/UI, Tailwind v4)
 ├── src-tauri/                 — Rust backend (Tauri 2, sqlx, axum, reqwest, argon2, totp-rs, lettre)
+│   └── src/
+│       └── main.rs            — Tauri entry + command registry
+│       └── lib.rs             — module tree + tracing init
+│       └── reports.rs         — Markdown/HTML/PDF report generation (including SWGDE template)
+│       └── agent_zero.rs      — Agent Zero reqwest client
+│       └── axum_server.rs     — 12-endpoint external REST API
+│       └── crypto.rs          — Fernet + keyring integration
+│       └── audit.rs           — flat-file audit trail
+│       └── db/                — sqlx query modules
+│       └── commands/          — Tauri command surface
+│       └── auth/              — argon2, TOTP, session, lockout, tokens
+│       └── tests/             — integration test suites (phase2–phase4)
 ├── scratch/fernet_compat/     — Iteration 0 synthetic test vectors proving Python↔Rust Fernet interop
 ├── public/                    — static assets
 ├── package.json               — npm scripts

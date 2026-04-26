@@ -14,7 +14,7 @@ use crate::{
     audit,
     auth::session::require_session,
     error::AppError,
-    reports::{self, ReportFormat},
+    reports::{self, ReportFormat, ReportTemplate},
     state::AppState,
 };
 
@@ -39,8 +39,10 @@ pub async fn case_report_preview(
 
 /// Generate and save a case report.
 ///
-/// `format` must be `"markdown"` or `"html"`.  Defaults to `"markdown"` if
+/// `format` must be `"markdown"`, `"html"`, or `"pdf"`.  Defaults to `"markdown"` if
 /// the value is unrecognized.
+/// `template` must be `"standard"` or `"swgde"`.  Defaults to `"standard"` if
+/// the value is unrecognized.  Only used when `format` is `"pdf"`.
 ///
 /// Returns the absolute path to the generated file as a `String`.
 #[tauri::command(rename_all = "snake_case")]
@@ -48,17 +50,24 @@ pub async fn case_report_generate(
     token: String,
     case_id: String,
     format: String,
+    template: Option<String>,
     state: State<'_, Arc<AppState>>,
 ) -> Result<String, AppError> {
     let session = require_session(&state, &token)?;
 
     let report_format = match format.to_lowercase().as_str() {
         "html" => ReportFormat::Html,
+        "pdf" => ReportFormat::Pdf,
         _ => ReportFormat::Markdown,
     };
 
+    let report_template = match template.as_deref() {
+        Some("swgde") => ReportTemplate::Swgde,
+        _ => ReportTemplate::Standard,
+    };
+
     let reports_dir = reports::default_reports_dir();
-    let out_path = reports::generate_report(&state, &case_id, report_format, &reports_dir).await?;
+    let out_path = reports::generate_report(&state, &case_id, report_format, report_template, &reports_dir).await?;
 
     let path_str = out_path.display().to_string();
 

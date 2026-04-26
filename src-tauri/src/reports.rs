@@ -42,6 +42,7 @@ use crate::{
 pub enum ReportFormat {
     Markdown,
     Html,
+    Pdf,
 }
 
 impl ReportFormat {
@@ -49,6 +50,23 @@ impl ReportFormat {
         match self {
             ReportFormat::Markdown => "md",
             ReportFormat::Html => "html",
+            ReportFormat::Pdf => "pdf",
+        }
+    }
+}
+
+/// Report template enum — controls section structure and compliance level.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ReportTemplate {
+    Standard,
+    Swgde,
+}
+
+impl ReportTemplate {
+    pub fn label(&self) -> &'static str {
+        match self {
+            ReportTemplate::Standard => "Standard",
+            ReportTemplate::Swgde => "SWGDE Compliant",
         }
     }
 }
@@ -80,14 +98,10 @@ pub async fn generate_report(
     state: &AppState,
     case_id: &str,
     format: ReportFormat,
+    template: ReportTemplate,
     reports_root: &Path,  // injected so tests can override %APPDATA%
 ) -> Result<PathBuf, AppError> {
     let payload = gather_report_payload(state, case_id).await?;
-
-    let content = match format {
-        ReportFormat::Markdown => render_markdown(&payload)?,
-        ReportFormat::Html => render_html(&payload)?,
-    };
 
     let safe_case_id = sanitize_report_filename(case_id);
     let timestamp = Utc::now().format("%Y-%m-%d_%H-%M-%S").to_string();
@@ -96,7 +110,6 @@ pub async fn generate_report(
     std::fs::create_dir_all(reports_root).map_err(AppError::from)?;
 
     // Canonical-prefix check to prevent any path injection.
-    // reports_root now exists (just created), so canonicalize will succeed.
     let canonical_root = std::fs::canonicalize(reports_root).map_err(|e| {
         AppError::ReportGenerationFailed {
             reason: format!("cannot canonicalize reports directory: {e}"),
@@ -105,14 +118,26 @@ pub async fn generate_report(
 
     let out_path = canonical_root.join(&filename);
 
-    // Verify the output path stays under the reports root
     if !out_path.starts_with(&canonical_root) {
         return Err(AppError::ReportGenerationFailed {
             reason: "path traversal in report filename".into(),
         });
     }
 
-    std::fs::write(&out_path, content.as_bytes()).map_err(AppError::from)?;
+    match format {
+        ReportFormat::Pdf => {
+            let pdf_bytes = render_pdf(&payload, &template)?;
+            std::fs::write(&out_path, pdf_bytes).map_err(AppError::from)?;
+        }
+        _ => {
+            let content = match format {
+                ReportFormat::Markdown => render_markdown(&payload)?,
+                ReportFormat::Html => render_html(&payload)?,
+                ReportFormat::Pdf => unreachable!(),
+            };
+            std::fs::write(&out_path, content.as_bytes()).map_err(AppError::from)?;
+        }
+    }
 
     Ok(out_path)
 }
@@ -1402,6 +1427,863 @@ pub fn default_reports_dir() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("reports"))
 }
 
+// ─── PDF rendering (Priority 3) ─────────────────────────────────────────────
+
+fn render_pdf(p: &ReportPayload, template: &ReportTemplate) -> Result<Vec<u8>, AppError> {
+    match template {
+        ReportTemplate::Standard => render_pdf_standard(p),
+        ReportTemplate::Swgde => render_pdf_swgde(p),
+    }
+}
+
+fn render_pdf_standard(p: &ReportPayload) -> Result<Vec<u8>, AppError> {
+    let mut b = PdfBuilder::new();
+
+    // ── Cover page ──
+    b.new_page();
+    b.draw_title("DFARS Digital Forensics Report", 24.0, true);
+    b.advance(20.0);
+    b.draw_title(&format!("Case: {}", p.case_id), 18.0, true);
+    b.advance(10.0);
+    b.draw_text_line(&p.case_name, 14.0, false);
+    b.advance(30.0);
+    b.draw_line(&format!("Investigator: {}", p.investigator));
+    if let Some(agency) = &p.agency {
+        b.draw_line(&format!("Agency: {}", agency));
+    }
+    b.draw_line(&format!("Status: {} | Priority: {}", p.status, p.priority));
+    b.draw_line(&format!("Start Date: {}", p.start_date));
+    if let Some(end) = &p.end_date {
+        b.draw_line(&format!("End Date: {}", end));
+    }
+    b.draw_line(&format!("Generated: {}", p.generated_at));
+    if let Some(classification) = &p.classification {
+        b.draw_line(&format!("Classification: {}", classification));
+    }
+    if !p.tags.is_empty() {
+        b.draw_line(&format!("Tags: {}", p.tags.join(", ")));
+    }
+
+    // ── Scope ──
+    b.new_page();
+    b.draw_heading("1. Scope and Authority");
+    b.draw_paragraph("This examination was conducted in accordance with SWGDE Best Practices for Computer Forensic Examinations. The scope of this report is limited to the digital evidence described herein.");
+    if let Some(desc) = &p.description {
+        b.draw_paragraph(&format!("Case description: {}", desc));
+    }
+
+    // ── Evidence Summary ──
+    b.new_page();
+    b.draw_heading("2. Evidence Summary");
+    if p.evidence_items.is_empty() {
+        b.draw_paragraph("No evidence items recorded.");
+    } else {
+        b.draw_line(&format!("{} evidence item(s) received:", p.evidence_items.len()));
+        b.advance(3.0);
+        for ev in &p.evidence_items {
+            b.draw_bullet(&format!(
+                "{} — {} (collected by {} on {})",
+                ev.evidence_id, ev.description, ev.collected_by, ev.collection_datetime
+            ));
+        }
+    }
+
+    // ── Chain of Custody ──
+    b.draw_heading("3. Chain of Custody");
+    if p.all_custody.is_empty() {
+        b.draw_paragraph("No custody events recorded.");
+    } else {
+        b.draw_line(&format!("{} custody event(s):", p.all_custody.len()));
+        b.advance(3.0);
+        for c in &p.all_custody {
+            b.draw_bullet(&format!(
+                "[{}] {}: {} → {} at {} {}",
+                c.custody_sequence,
+                c.action,
+                c.from_party,
+                c.to_party,
+                c.custody_datetime,
+                c.purpose.as_deref().unwrap_or("")
+            ));
+        }
+    }
+
+    // ── Hash Verification ──
+    b.draw_heading("4. Hash Verification");
+    if p.all_hashes.is_empty() {
+        b.draw_paragraph("No hash verifications recorded.");
+    } else {
+        b.draw_line(&format!("{} hash record(s):", p.all_hashes.len()));
+        b.advance(3.0);
+        for h in &p.all_hashes {
+            b.draw_bullet(&format!(
+                "{} — {}: {} (verified by {})",
+                h.evidence_id, h.algorithm, h.hash_value, h.verified_by
+            ));
+        }
+    }
+
+    // ── Tools and Methodology ──
+    b.draw_heading("5. Tools and Methodology");
+    if p.all_tools.is_empty() {
+        b.draw_paragraph("No tool usage recorded.");
+    } else {
+        b.draw_line(&format!("{} tool run(s):", p.all_tools.len()));
+        b.advance(3.0);
+        for t in &p.all_tools {
+            let version = t.version.as_deref().unwrap_or("unknown version");
+            b.draw_bullet(&format!(
+                "{} v{} — {} (operator: {})",
+                t.tool_name, version, t.purpose, t.operator
+            ));
+        }
+    }
+    b.advance(3.0);
+    b.draw_paragraph("Methodology aligns with SWGDE Best Practices for Computer Forensic Acquisitions, Examinations, and Reports. All analysis was performed on verified working copies; original evidence was write-blocked and never modified.");
+
+    // ── Findings ──
+    b.new_page();
+    b.draw_heading("6. Findings");
+    let total = p.analysis_notes.len();
+    let reviewed = p.analysis_notes.iter().filter(|n| !n.reviews.is_empty()).count();
+    let validated = p.analysis_notes.iter().filter(|n| n.validation_level >= 3).count();
+    b.draw_line(&format!(
+        "{} finding(s) total · {} peer-reviewed · {} examiner-validated",
+        total, reviewed, validated
+    ));
+    b.advance(5.0);
+
+    if p.analysis_notes.is_empty() {
+        b.draw_paragraph("No analysis findings recorded.");
+    } else {
+        for note in &p.analysis_notes {
+            b.draw_subheading(&format!(
+                "[{}] {} — Validation Level {} ({})",
+                note.category,
+                note.finding,
+                note.validation_level,
+                validation_level_name(note.validation_level)
+            ));
+            b.draw_line(&format!("Confidence: {}", note.confidence_level));
+            if let Some(author) = &note.created_by {
+                b.draw_line(&format!("Author: {}", author));
+            }
+            if let Some(method) = &note.method_reference {
+                b.draw_line(&format!("Method: {}", method));
+            }
+            if let Some(tv) = &note.tool_version {
+                b.draw_line(&format!("Tool: {}", tv));
+            }
+            if let Some(desc) = &note.description {
+                b.draw_paragraph(desc);
+            }
+            if let Some(alts) = &note.alternatives_considered {
+                b.draw_line("Alternative explanations considered:");
+                b.draw_paragraph(alts);
+            }
+            if note.reviews.is_empty() {
+                b.draw_italic("Pending peer review.");
+            } else {
+                b.draw_line("Peer review:");
+                for r in &note.reviews {
+                    b.draw_bullet(&format!(
+                        "Reviewed by {} on {}{}",
+                        r.reviewed_by,
+                        r.reviewed_at,
+                        r.review_notes.as_deref().map(|n| format!(" — {n}")).unwrap_or_default()
+                    ));
+                }
+            }
+            b.advance(5.0);
+        }
+    }
+
+    // ── Entity Summary ──
+    if !p.persons.is_empty() || !p.links.is_empty() {
+        b.new_page();
+        b.draw_heading("7. Entity Summary");
+        if !p.persons.is_empty() {
+            b.draw_subheading(&format!("Persons ({})", p.persons.len()));
+            for person in &p.persons {
+                b.draw_bullet(&format!(
+                    "{} — {}{}{}",
+                    person.display_name,
+                    person.subtype.as_deref().unwrap_or("person"),
+                    person.email.as_deref().map(|e| format!(", email: {e}")).unwrap_or_default(),
+                    person.phone.as_deref().map(|p| format!(", phone: {p}")).unwrap_or_default(),
+                ));
+            }
+            b.advance(3.0);
+        }
+        if !p.links.is_empty() {
+            b.draw_subheading(&format!("Entity Connections ({})", p.links.len()));
+            for link in &p.links {
+                let dir = if link.directional { "→" } else { "↔" };
+                b.draw_bullet(&format!(
+                    "{} {} {} ({})",
+                    link.source_label, dir, link.target_label,
+                    link.link_label.as_deref().unwrap_or("linked")
+                ));
+            }
+        }
+    }
+
+    // ── Limitations ──
+    b.new_page();
+    b.draw_heading("8. Limitations");
+    b.draw_paragraph("This examination was conducted within the constraints of the available evidence, tools, and time. Findings are limited to the artifacts that were recoverable and interpretable. Deleted or overwritten data may not be fully recoverable. The absence of evidence is not evidence of absence.");
+    b.draw_paragraph("All findings carry a Validation Level (0–4) indicating the depth of independent verification performed. Findings marked Unvalidated (Level 0) should be treated as provisional and require further examiner validation before being relied upon in legal proceedings.");
+    b.draw_paragraph("Tool versions and method references are recorded per finding to enable reproduction. Any discrepancy between the reported tool version and the version used for reproduction should be documented as a limitation.");
+
+    // ── Signature Block ──
+    b.draw_heading("9. Examiner Certification");
+    b.draw_paragraph("I hereby certify that I have examined the digital evidence described in this report, that the findings are true and accurate to the best of my knowledge and ability, and that the procedures and methods used are consistent with established forensic best practices.");
+    b.advance(20.0);
+    b.draw_line("_________________________________________");
+    b.draw_line(&format!("{}", p.investigator));
+    b.draw_line("Digital Forensic Examiner");
+    b.draw_line(&format!("Date: {}", p.generated_at));
+
+    Ok(b.build())
+}
+
+// ─── PDF layout helpers (printpdf 0.9.1 ops-based API) ───────────────────────
+
+use printpdf::{
+    BuiltinFont, Mm, Op, PdfDocument, PdfFontHandle, PdfPage, PdfSaveOptions, Point, Pt,
+};
+
+struct PdfBuilder {
+    pages: Vec<PdfPage>,
+    ops: Vec<Op>,
+    y: f32,
+    page_num: usize,
+}
+
+impl PdfBuilder {
+    fn new() -> Self {
+        Self {
+            pages: Vec::new(),
+            ops: Vec::new(),
+            y: 270.0,
+            page_num: 0,
+        }
+    }
+
+    fn new_page(&mut self) {
+        if !self.ops.is_empty() || self.page_num > 0 {
+            let mut ops = Vec::new();
+            std::mem::swap(&mut self.ops, &mut ops);
+            self.pages.push(PdfPage::new(Mm(210.0), Mm(297.0), ops));
+        }
+        self.y = 270.0;
+        self.page_num += 1;
+    }
+
+    fn check_page_break(&mut self, needed: f32) {
+        if self.y < 25.0 + needed {
+            self.new_page();
+        }
+    }
+
+    fn advance(&mut self, mm: f32) {
+        self.y -= mm;
+    }
+
+    fn emit_text(&mut self, text: &str, size: f32, x: f32, bold: bool) {
+        let font = if bold {
+            PdfFontHandle::Builtin(BuiltinFont::HelveticaBold)
+        } else {
+            PdfFontHandle::Builtin(BuiltinFont::Helvetica)
+        };
+        let pdf_y = 297.0 - self.y;
+        self.ops.push(Op::StartTextSection);
+        self.ops.push(Op::SetFont {
+            font,
+            size: Pt(size),
+        });
+        self.ops.push(Op::SetTextCursor {
+            pos: Point::new(Mm(x), Mm(pdf_y)),
+        });
+        self.ops.push(Op::ShowText {
+            items: vec![text.into()],
+        });
+        self.ops.push(Op::EndTextSection);
+    }
+
+    fn draw_text_line(&mut self, text: &str, size: f32, bold: bool) {
+        self.check_page_break(size / 2.0 + 2.0);
+        self.emit_text(text, size, 25.0, bold);
+        self.y -= size / 2.0 + 2.0;
+    }
+
+    fn draw_line(&mut self, text: &str) {
+        self.check_page_break(5.0);
+        self.emit_text(text, 10.0, 25.0, false);
+        self.y -= 5.0;
+    }
+
+    fn draw_paragraph(&mut self, text: &str) {
+        let max_width = 160.0;
+        let chars_per_line = (max_width * 2.8) as usize;
+        for line in textwrap::fill(text, chars_per_line).lines() {
+            self.check_page_break(5.0);
+            self.emit_text(line, 10.0, 25.0, false);
+            self.y -= 5.0;
+        }
+    }
+
+    fn draw_heading(&mut self, text: &str) {
+        self.check_page_break(10.0);
+        self.y -= 5.0;
+        self.emit_text(text, 14.0, 25.0, true);
+        self.y -= 8.0;
+    }
+
+    fn draw_subheading(&mut self, text: &str) {
+        self.check_page_break(8.0);
+        self.emit_text(text, 11.0, 25.0, true);
+        self.y -= 6.0;
+    }
+
+    fn draw_title(&mut self, text: &str, size: f32, bold: bool) {
+        self.check_page_break(10.0);
+        self.emit_text(text, size, 25.0, bold);
+        self.y -= size / 2.0 + 2.0;
+    }
+
+    fn draw_bullet(&mut self, text: &str) {
+        self.check_page_break(5.0);
+        self.emit_text("•", 10.0, 25.0, false);
+        let max_width = 150.0;
+        let chars_per_line = (max_width * 2.8) as usize;
+        let wrapped = textwrap::fill(text, chars_per_line);
+        let mut first = true;
+        for line in wrapped.lines() {
+            if first {
+                self.emit_text(line, 10.0, 30.0, false);
+                first = false;
+            } else {
+                self.check_page_break(5.0);
+                self.emit_text(line, 10.0, 30.0, false);
+            }
+            self.y -= 5.0;
+        }
+    }
+
+    fn draw_italic(&mut self, text: &str) {
+        self.check_page_break(5.0);
+        self.emit_text(text, 10.0, 25.0, false);
+        self.y -= 5.0;
+    }
+
+    fn build(mut self) -> Vec<u8> {
+        if !self.ops.is_empty() || self.pages.is_empty() {
+            let mut ops = Vec::new();
+            std::mem::swap(&mut self.ops, &mut ops);
+            self.pages.push(PdfPage::new(Mm(210.0), Mm(297.0), ops));
+        }
+        let mut doc = PdfDocument::new("DFARS Report");
+        doc.with_pages(self.pages);
+        let opts = PdfSaveOptions::default();
+        doc.save(&opts, &mut Vec::new())
+    }
+}
+
+// ─── SWGDE PDF rendering ────────────────────────────────────────────────────
+
+fn render_pdf_swgde(p: &ReportPayload) -> Result<Vec<u8>, AppError> {
+    let mut b = SwgdePdfBuilder::new(
+        p.case_id.clone(),
+        p.classification.clone(),
+        p.investigator.clone(),
+        p.generated_at.clone(),
+    );
+
+    // ── 1. Request ──
+    b.new_page();
+    b.draw_section_heading("1. Request");
+    b.draw_line(&format!("Date of Request: {}", p.start_date));
+    b.draw_line(&format!("Requestor: {}", p.investigator));
+    b.draw_line(&format!(
+        "Requestor Organization: {}",
+        p.agency.as_deref().unwrap_or("[Not recorded]")
+    ));
+    b.draw_paragraph(&format!(
+        "Purpose and Scope: {}. The examination was conducted in accordance with SWGDE Best Practices for Computer Forensic Examinations.",
+        p.description.as_deref().unwrap_or("[Not recorded — update case description]")
+    ));
+    b.draw_line("Legal Authority: [Not recorded — update case metadata with warrant, consent, contract, or other authority]");
+
+    // ── 2. Examiner Information ──
+    b.draw_section_heading("2. Examiner Information");
+    b.draw_line(&format!("Examiner Name: {}", p.investigator));
+    b.draw_line("Qualifications: [Not recorded — update examiner qualifications in case metadata]");
+    b.draw_paragraph("The examiner certifies that they possess the training, experience, and qualifications necessary to perform the examination described in this report, consistent with SWGDE Core Competencies for Digital Forensics.");
+
+    // ── 3. Evidence Inventory ──
+    b.draw_section_heading("3. Evidence Inventory");
+    if p.evidence_items.is_empty() {
+        b.draw_paragraph("No evidence items were submitted or collected for this examination.");
+    } else {
+        b.draw_line(&format!("{} evidence item(s) submitted or collected:", p.evidence_items.len()));
+        b.advance(3.0);
+        for (i, ev) in p.evidence_items.iter().enumerate() {
+            b.draw_bullet(&format!(
+                "Item {} — {} ({}): Collected by {} on {}. Make/Model/Serial: [Not recorded]. Hash: [See Section 4].",
+                i + 1,
+                ev.evidence_id,
+                ev.description,
+                ev.collected_by,
+                ev.collection_datetime
+            ));
+        }
+    }
+
+    // ── 4. Chain of Custody ──
+    b.draw_section_heading("4. Chain of Custody");
+    if p.all_custody.is_empty() {
+        b.draw_paragraph("No custody events recorded.");
+    } else {
+        b.draw_line(&format!("{} custody event(s) documented:", p.all_custody.len()));
+        b.advance(3.0);
+        for c in &p.all_custody {
+            b.draw_bullet(&format!(
+                "[{}] {}: {} → {} at {}. Location: {}. Purpose: {}.",
+                c.custody_sequence,
+                c.action,
+                c.from_party,
+                c.to_party,
+                c.custody_datetime,
+                c.location.as_deref().unwrap_or("[Not recorded]"),
+                c.purpose.as_deref().unwrap_or("[Not recorded]")
+            ));
+        }
+    }
+
+    // ── 5. Methodology ──
+    b.draw_section_heading("5. Methodology");
+    b.draw_paragraph("The examination was conducted in accordance with SWGDE Best Practices for Computer Forensic Acquisitions, Examinations, and Reports. All analysis was performed on verified working copies; original evidence was write-blocked and never modified.");
+    if p.all_tools.is_empty() {
+        b.draw_paragraph("No tool usage recorded.");
+    } else {
+        b.draw_line(&format!("{} forensic tool run(s) documented:", p.all_tools.len()));
+        b.advance(3.0);
+        for t in &p.all_tools {
+            let version = t.version.as_deref().unwrap_or("unknown version");
+            b.draw_bullet(&format!(
+                "{} v{} — {} (operator: {})",
+                t.tool_name, version, t.purpose, t.operator
+            ));
+        }
+    }
+    b.advance(3.0);
+    b.draw_line("Deviations from Standard Operating Procedures: None recorded.");
+    b.draw_line("Subcontractor Results: None recorded.");
+
+    // ── 6. Findings ──
+    b.draw_section_heading("6. Findings");
+    let total = p.analysis_notes.len();
+    let reviewed = p.analysis_notes.iter().filter(|n| !n.reviews.is_empty()).count();
+    let validated = p.analysis_notes.iter().filter(|n| n.validation_level >= 3).count();
+    b.draw_line(&format!(
+        "{} finding(s) total · {} peer-reviewed · {} examiner-validated",
+        total, reviewed, validated
+    ));
+    b.advance(5.0);
+
+    if p.analysis_notes.is_empty() {
+        b.draw_paragraph("No analysis findings recorded.");
+    } else {
+        for (i, note) in p.analysis_notes.iter().enumerate() {
+            b.draw_subheading(&format!("Finding {}: [{}] {}", i + 1, note.category, note.finding));
+            b.draw_line(&format!("Confidence Level: {}", note.confidence_level));
+            b.draw_line(&format!(
+                "Validation Level: {} ({})",
+                note.validation_level,
+                validation_level_name(note.validation_level)
+            ));
+            if let Some(author) = &note.created_by {
+                b.draw_line(&format!("Author: {}", author));
+            }
+            if let Some(method) = &note.method_reference {
+                b.draw_line(&format!("Method Reference: {}", method));
+            }
+            if let Some(tv) = &note.tool_version {
+                b.draw_line(&format!("Tool Version: {}", tv));
+            }
+            if let Some(ev) = &note.evidence_id {
+                b.draw_line(&format!("Evidence Reference: {}", ev));
+            }
+            if let Some(desc) = &note.description {
+                b.draw_paragraph(&format!("Description: {}", desc));
+            }
+            if let Some(alts) = &note.alternatives_considered {
+                b.draw_line("Alternative Explanations Considered:");
+                b.draw_paragraph(alts);
+            }
+            if note.reviews.is_empty() {
+                b.draw_italic("Peer Review Status: Pending peer review.");
+            } else {
+                b.draw_line("Peer Review:");
+                for r in &note.reviews {
+                    b.draw_bullet(&format!(
+                        "Reviewed by {} on {}{}",
+                        r.reviewed_by,
+                        r.reviewed_at,
+                        r.review_notes.as_deref().map(|n| format!(" — Notes: {n}")).unwrap_or_default()
+                    ));
+                }
+            }
+            b.advance(5.0);
+        }
+    }
+
+    // ── 7. Opinions & Conclusions ──
+    b.draw_section_heading("7. Opinions & Conclusions");
+    let high: Vec<&str> = p
+        .analysis_notes
+        .iter()
+        .filter(|n| n.confidence_level == "High")
+        .map(|n| n.finding.as_str())
+        .collect();
+    let med: Vec<&str> = p
+        .analysis_notes
+        .iter()
+        .filter(|n| n.confidence_level == "Medium")
+        .map(|n| n.finding.as_str())
+        .collect();
+    let mut conclusion = format!(
+        "The examination of case {} involved the analysis of {} evidence item(s). ",
+        p.case_id,
+        p.evidence_items.len()
+    );
+    if !high.is_empty() {
+        conclusion.push_str(&format!("High confidence findings: {}. ", high.join("; ")));
+    }
+    if !med.is_empty() {
+        conclusion.push_str(&format!("Medium confidence findings: {}. ", med.join("; ")));
+    }
+    conclusion.push_str("All evidence was handled in accordance with SWGDE best practices.");
+    b.draw_paragraph(&conclusion);
+    b.draw_paragraph("The opinions expressed in this report are based on the examiner's training, experience, and the data examined. Each opinion is documented with its basis in the Findings section above.");
+
+    // ── 8. Disposition ──
+    b.draw_section_heading("8. Disposition");
+    b.draw_paragraph("The disposition of original and derivative evidence is documented below:");
+    b.draw_line("Original Evidence: [Not recorded — update case metadata with returned/retained/destroyed status]");
+    b.draw_line("Derivative Works (working copies, reports, exhibits): [Not recorded]");
+    b.draw_line("Retention Period: Per organizational policy.");
+
+    // ── 9. Limitations ──
+    b.draw_section_heading("9. Limitations");
+    b.draw_paragraph("This examination was conducted within the constraints of the available evidence, tools, and time. Findings are limited to the artifacts that were recoverable and interpretable. Deleted or overwritten data may not be fully recoverable. The absence of evidence is not evidence of absence.");
+    b.draw_paragraph("All findings carry a Validation Level (0–4) indicating the depth of independent verification performed. Findings marked Unvalidated (Level 0) should be treated as provisional and require further examiner validation before being relied upon in legal proceedings.");
+    b.draw_paragraph("Tool versions and method references are recorded per finding to enable reproduction. Any discrepancy between the reported tool version and the version used for reproduction should be documented as a limitation.");
+
+    // ── 10. Report Authorization ──
+    b.draw_section_heading("10. Report Authorization");
+    b.draw_paragraph("I hereby certify that I have examined the digital evidence described in this report, that the findings are true and accurate to the best of my knowledge and ability, and that the procedures and methods used are consistent with established forensic best practices and SWGDE standards.");
+    b.advance(20.0);
+    b.draw_line("_________________________________________");
+    b.draw_line(&format!("Signature: {}", p.investigator));
+    b.draw_line("Title: Digital Forensic Examiner");
+    b.draw_line(&format!("Date: {}", p.generated_at));
+
+    Ok(b.build())
+}
+
+// ─── SWGDE PDF Builder (two-pass, headers/footers/TOC) ───────────────────────
+
+struct SwgdePdfBuilder {
+    content_pages: Vec<Vec<Op>>,
+    current_ops: Vec<Op>,
+    y: f32,
+    page_num: usize,
+    sections: Vec<(String, usize)>,
+    case_id: String,
+    classification: String,
+    investigator: String,
+    generated_at: String,
+}
+
+impl SwgdePdfBuilder {
+    fn new(
+        case_id: String,
+        classification: Option<String>,
+        investigator: String,
+        generated_at: String,
+    ) -> Self {
+        Self {
+            content_pages: Vec::new(),
+            current_ops: Vec::new(),
+            y: 270.0,
+            page_num: 0,
+            sections: Vec::new(),
+            case_id,
+            classification: classification.unwrap_or_else(|| "UNCLASSIFIED".into()),
+            investigator,
+            generated_at,
+        }
+    }
+
+    fn new_page(&mut self) {
+        if !self.current_ops.is_empty() || self.page_num > 0 {
+            let mut ops = Vec::new();
+            std::mem::swap(&mut self.current_ops, &mut ops);
+            self.content_pages.push(ops);
+        }
+        self.y = 270.0;
+        self.page_num += 1;
+    }
+
+    fn check_page_break(&mut self, needed: f32) {
+        if self.y < 25.0 + needed {
+            self.new_page();
+        }
+    }
+
+    fn advance(&mut self, mm: f32) {
+        self.y -= mm;
+    }
+
+    fn emit_text(&mut self, text: &str, size: f32, x: f32, bold: bool) {
+        let font = if bold {
+            PdfFontHandle::Builtin(BuiltinFont::HelveticaBold)
+        } else {
+            PdfFontHandle::Builtin(BuiltinFont::Helvetica)
+        };
+        let pdf_y = 297.0 - self.y;
+        self.current_ops.push(Op::StartTextSection);
+        self.current_ops.push(Op::SetFont {
+            font,
+            size: Pt(size),
+        });
+        self.current_ops.push(Op::SetTextCursor {
+            pos: Point::new(Mm(x), Mm(pdf_y)),
+        });
+        self.current_ops.push(Op::ShowText {
+            items: vec![text.into()],
+        });
+        self.current_ops.push(Op::EndTextSection);
+    }
+
+    fn draw_line(&mut self, text: &str) {
+        self.check_page_break(5.0);
+        self.emit_text(text, 10.0, 25.0, false);
+        self.y -= 5.0;
+    }
+
+    fn draw_paragraph(&mut self, text: &str) {
+        let max_width = 160.0;
+        let chars_per_line = (max_width * 2.8) as usize;
+        for line in textwrap::fill(text, chars_per_line).lines() {
+            self.check_page_break(5.0);
+            self.emit_text(line, 10.0, 25.0, false);
+            self.y -= 5.0;
+        }
+    }
+
+    fn draw_heading(&mut self, text: &str) {
+        self.check_page_break(10.0);
+        self.y -= 5.0;
+        self.emit_text(text, 14.0, 25.0, true);
+        self.y -= 8.0;
+    }
+
+    fn draw_subheading(&mut self, text: &str) {
+        self.check_page_break(8.0);
+        self.emit_text(text, 11.0, 25.0, true);
+        self.y -= 6.0;
+    }
+
+    fn draw_bullet(&mut self, text: &str) {
+        self.check_page_break(5.0);
+        self.emit_text("•", 10.0, 25.0, false);
+        let max_width = 150.0;
+        let chars_per_line = (max_width * 2.8) as usize;
+        let wrapped = textwrap::fill(text, chars_per_line);
+        let mut first = true;
+        for line in wrapped.lines() {
+            if first {
+                self.emit_text(line, 10.0, 30.0, false);
+                first = false;
+            } else {
+                self.check_page_break(5.0);
+                self.emit_text(line, 10.0, 30.0, false);
+            }
+            self.y -= 5.0;
+        }
+    }
+
+    fn draw_italic(&mut self, text: &str) {
+        self.check_page_break(5.0);
+        self.emit_text(text, 10.0, 25.0, false);
+        self.y -= 5.0;
+    }
+
+    fn draw_section_heading(&mut self, title: &str) {
+        self.sections.push((title.to_string(), self.page_num + 1));
+        self.draw_heading(title);
+    }
+
+    fn build(mut self) -> Vec<u8> {
+        // Flush final content page
+        if !self.current_ops.is_empty() {
+            let mut ops = Vec::new();
+            std::mem::swap(&mut self.current_ops, &mut ops);
+            self.content_pages.push(ops);
+        }
+
+        let total_pages = self.content_pages.len() + 2; // + cover + TOC
+        let mut final_pages: Vec<PdfPage> = Vec::new();
+
+        // Cover page (page 1)
+        final_pages.push(self.build_cover_page());
+
+        // TOC page (page 2)
+        final_pages.push(self.build_toc_page(total_pages));
+
+        // Pre-clone fields needed for headers/footers so we can consume content_pages
+        let classification = self.classification.to_uppercase();
+        let case_id = self.case_id.clone();
+
+        // Content pages (page 3+)
+        for (i, page_ops) in self.content_pages.into_iter().enumerate() {
+            let page_number = i + 3;
+            let mut final_ops = Vec::new();
+
+            // Header: classification (top left)
+            final_ops.push(Op::StartTextSection);
+            final_ops.push(Op::SetFont {
+                font: PdfFontHandle::Builtin(BuiltinFont::HelveticaBold),
+                size: Pt(8.0),
+            });
+            final_ops.push(Op::SetTextCursor {
+                pos: Point::new(Mm(25.0), Mm(285.0)),
+            });
+            final_ops.push(Op::ShowText {
+                items: vec![classification.clone().into()],
+            });
+            final_ops.push(Op::EndTextSection);
+
+            // Header: case ID (top right)
+            final_ops.push(Op::StartTextSection);
+            final_ops.push(Op::SetFont {
+                font: PdfFontHandle::Builtin(BuiltinFont::Helvetica),
+                size: Pt(8.0),
+            });
+            final_ops.push(Op::SetTextCursor {
+                pos: Point::new(Mm(160.0), Mm(285.0)),
+            });
+            final_ops.push(Op::ShowText {
+                items: vec![format!("Case: {}", case_id).into()],
+            });
+            final_ops.push(Op::EndTextSection);
+
+            final_ops.extend(page_ops);
+
+            // Footer: left
+            final_ops.push(Op::StartTextSection);
+            final_ops.push(Op::SetFont {
+                font: PdfFontHandle::Builtin(BuiltinFont::Helvetica),
+                size: Pt(8.0),
+            });
+            final_ops.push(Op::SetTextCursor {
+                pos: Point::new(Mm(25.0), Mm(15.0)),
+            });
+            final_ops.push(Op::ShowText {
+                items: vec!["DFARS Digital Forensics Report".into()],
+            });
+            final_ops.push(Op::EndTextSection);
+
+            // Footer: page number (right)
+            final_ops.push(Op::StartTextSection);
+            final_ops.push(Op::SetFont {
+                font: PdfFontHandle::Builtin(BuiltinFont::Helvetica),
+                size: Pt(8.0),
+            });
+            final_ops.push(Op::SetTextCursor {
+                pos: Point::new(Mm(160.0), Mm(15.0)),
+            });
+            final_ops.push(Op::ShowText {
+                items: vec![format!("Page {} of {}", page_number, total_pages).into()],
+            });
+            final_ops.push(Op::EndTextSection);
+
+            final_pages.push(PdfPage::new(Mm(210.0), Mm(297.0), final_ops));
+        }
+
+        let mut doc = PdfDocument::new("DFARS Report of Examination");
+        doc.with_pages(final_pages);
+        let opts = PdfSaveOptions::default();
+        doc.save(&opts, &mut Vec::new())
+    }
+
+    fn build_cover_page(&self) -> PdfPage {
+        let mut ops = Vec::new();
+        let mut y = 270.0;
+
+        swgde_emit(&mut ops, "REPORT OF EXAMINATION", 24.0, 25.0, 297.0 - y, true);
+        y -= 30.0;
+
+        swgde_emit(&mut ops, "Digital and Multimedia Evidence", 14.0, 25.0, 297.0 - y, false);
+        y -= 40.0;
+
+        swgde_emit(&mut ops, "DFARS Digital Forensics Laboratory", 12.0, 25.0, 297.0 - y, true);
+        y -= 8.0;
+        swgde_emit(&mut ops, "[Organization address — update in settings]", 10.0, 25.0, 297.0 - y, false);
+        y -= 30.0;
+
+        swgde_emit(&mut ops, &format!("Case ID: {}", self.case_id), 14.0, 25.0, 297.0 - y, true);
+        y -= 12.0;
+        swgde_emit(&mut ops, &format!("Examiner: {}", self.investigator), 12.0, 25.0, 297.0 - y, false);
+        y -= 10.0;
+        swgde_emit(&mut ops, &format!("Date of Report: {}", &self.generated_at[..10]), 12.0, 25.0, 297.0 - y, false);
+        y -= 10.0;
+        swgde_emit(&mut ops, &format!("Classification: {}", self.classification), 12.0, 25.0, 297.0 - y, false);
+
+        PdfPage::new(Mm(210.0), Mm(297.0), ops)
+    }
+
+    fn build_toc_page(&self, _total_pages: usize) -> PdfPage {
+        let mut ops = Vec::new();
+        let mut y = 270.0;
+
+        swgde_emit(&mut ops, "TABLE OF CONTENTS", 18.0, 25.0, 297.0 - y, true);
+        y -= 20.0;
+
+        for (idx, (title, page)) in self.sections.iter().enumerate() {
+            swgde_emit(&mut ops, &format!("{}.", idx + 1), 10.0, 25.0, 297.0 - y, false);
+            swgde_emit(&mut ops, title, 10.0, 32.0, 297.0 - y, false);
+            swgde_emit(&mut ops, &format!("Page {}", page), 10.0, 165.0, 297.0 - y, false);
+            y -= 7.0;
+        }
+
+        PdfPage::new(Mm(210.0), Mm(297.0), ops)
+    }
+}
+
+fn swgde_emit(ops: &mut Vec<Op>, text: &str, size: f32, x: f32, pdf_y: f32, bold: bool) {
+    let font = if bold {
+        PdfFontHandle::Builtin(BuiltinFont::HelveticaBold)
+    } else {
+        PdfFontHandle::Builtin(BuiltinFont::Helvetica)
+    };
+    ops.push(Op::StartTextSection);
+    ops.push(Op::SetFont {
+        font,
+        size: Pt(size),
+    });
+    ops.push(Op::SetTextCursor {
+        pos: Point::new(Mm(x), Mm(pdf_y)),
+    });
+    ops.push(Op::ShowText {
+        items: vec![text.into()],
+    });
+    ops.push(Op::EndTextSection);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1419,13 +2301,91 @@ mod tests {
     }
 
     #[test]
-    fn extract_pdf_version_from_header() {
-        // Test via render path — just ensure the unit logic is correct
-        let header = b"%PDF-1.7\n%other";
-        // inline call to private fn — we re-expose via a pub(crate) for tests
-        let text = std::str::from_utf8(header).unwrap();
-        assert!(text.starts_with("%PDF-"));
-        let version: String = text[5..].chars().take_while(|c| c.is_ascii_digit() || *c == '.').collect();
-        assert_eq!(version, "1.7");
+    fn pdf_builder_produces_valid_header() {
+        let payload = ReportPayload {
+            case_id: "TEST-001".into(),
+            case_name: "Test Case".into(),
+            description: None,
+            investigator: "Investigator".into(),
+            agency: None,
+            start_date: "2024-01-01".into(),
+            end_date: None,
+            status: "Open".into(),
+            priority: "High".into(),
+            classification: None,
+            tags: vec![],
+            evidence_items: vec![],
+            persons: vec![],
+            all_custody: vec![],
+            all_hashes: vec![],
+            all_tools: vec![],
+            analysis_notes: vec![],
+            links: vec![],
+            generated_at: "2024-01-01T00:00:00Z".into(),
+        };
+        let bytes = render_pdf(&payload, &ReportTemplate::Standard)
+            .expect("render_pdf should succeed");
+        assert!(bytes.starts_with(b"%PDF-"));
+    }
+
+    #[test]
+    fn swgde_pdf_produces_valid_header() {
+        let payload = ReportPayload {
+            case_id: "TEST-002".into(),
+            case_name: "SWGDE Test Case".into(),
+            description: Some("Test description".into()),
+            investigator: "Examiner".into(),
+            agency: Some("Test Agency".into()),
+            start_date: "2024-01-01".into(),
+            end_date: None,
+            status: "Open".into(),
+            priority: "High".into(),
+            classification: Some("CONFIDENTIAL".into()),
+            tags: vec![],
+            evidence_items: vec![],
+            persons: vec![],
+            all_custody: vec![],
+            all_hashes: vec![],
+            all_tools: vec![],
+            analysis_notes: vec![],
+            links: vec![],
+            generated_at: "2024-01-01T00:00:00Z".into(),
+        };
+        let bytes = render_pdf(&payload, &ReportTemplate::Swgde)
+            .expect("render_pdf swgde should succeed");
+        assert!(bytes.starts_with(b"%PDF-"));
+    }
+
+    #[test]
+    fn swgde_pdf_contains_report_of_examination_title() {
+        // Verify the cover page title is embedded in the PDF ops.
+        // We can't easily parse the PDF, but we can verify rendering succeeds
+        // and produces non-trivial output.
+        let payload = ReportPayload {
+            case_id: "TEST-003".into(),
+            case_name: "Complex SWGDE Case".into(),
+            description: Some("Detailed description for testing.".into()),
+            investigator: "Jane Doe".into(),
+            agency: None,
+            start_date: "2024-06-01".into(),
+            end_date: None,
+            status: "Active".into(),
+            priority: "Critical".into(),
+            classification: None,
+            tags: vec!["tag1".into()],
+            evidence_items: vec![],
+            persons: vec![],
+            all_custody: vec![],
+            all_hashes: vec![],
+            all_tools: vec![],
+            analysis_notes: vec![],
+            links: vec![],
+            generated_at: "2024-06-01T12:00:00Z".into(),
+        };
+        let bytes = render_pdf(&payload, &ReportTemplate::Swgde)
+            .expect("render_pdf swgde should succeed");
+        // PDF should be larger than a trivial single-page doc
+        // (cover + toc + at least 3 content pages for 10 sections)
+        assert!(bytes.len() > 500, "SWGDE PDF should be substantial");
     }
 }

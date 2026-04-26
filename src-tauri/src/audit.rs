@@ -57,6 +57,7 @@ pub const ONEDRIVE_WARNING_EMITTED: &str = "ONEDRIVE_WARNING_EMITTED";
 
 // ─── Report action codes (Phase 3b) ──────────────────────────────────────────
 pub const REPORT_GENERATED: &str = "REPORT_GENERATED";
+pub const RECORD_SHARED: &str = "RECORD_SHARED";
 
 // ─── Phase 5: AI + network action codes ──────────────────────────────────────
 pub const AI_ENHANCE_CALLED: &str = "AI_ENHANCE_CALLED";

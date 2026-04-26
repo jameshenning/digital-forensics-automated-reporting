@@ -51,7 +51,7 @@ use dfars_desktop_lib::{
         hashes::HashInput,
     },
     error::AppError,
-    reports::{self, ReportFormat},
+    reports::{self, ReportFormat, ReportTemplate},
     state::AppState,
     uploads::{
         self, check_onedrive_risk, sanitize_filename, upload_file,
@@ -1425,6 +1425,7 @@ async fn test_20b_report_save_to_disk() {
         &state,
         case_id,
         ReportFormat::Markdown,
+        ReportTemplate::Standard,
         reports_dir.path(),
     )
     .await
@@ -1436,4 +1437,56 @@ async fn test_20b_report_save_to_disk() {
         content.contains(case_id),
         "saved report must contain case_id"
     );
+}
+
+// ─── Test 20d: PDF report generation ──────────────────────────────────────────
+
+#[tokio::test]
+async fn test_20d_report_generates_pdf() {
+    let (state, pool) = build_state().await;
+    let reports_dir = tempfile::tempdir().unwrap();
+
+    let case_id = "CASE-3B-020D";
+    setup_case(&pool, case_id, None).await;
+
+    let out_path = reports::generate_report(
+        &state,
+        case_id,
+        ReportFormat::Pdf,
+        ReportTemplate::Standard,
+        reports_dir.path(),
+    )
+    .await
+    .expect("PDF report generation must succeed");
+
+    assert!(out_path.exists(), "PDF report file must exist on disk");
+    let bytes = std::fs::read(&out_path).unwrap();
+    assert!(bytes.starts_with(b"%PDF-"), "output must be a valid PDF");
+}
+
+// ─── Test 20e: SWGDE PDF report generation ────────────────────────────────────
+
+#[tokio::test]
+async fn test_20e_report_generates_swgde_pdf() {
+    let (state, pool) = build_state().await;
+    let reports_dir = tempfile::tempdir().unwrap();
+
+    let case_id = "CASE-3B-020E";
+    setup_case(&pool, case_id, None).await;
+
+    let out_path = reports::generate_report(
+        &state,
+        case_id,
+        ReportFormat::Pdf,
+        ReportTemplate::Swgde,
+        reports_dir.path(),
+    )
+    .await
+    .expect("SWGDE PDF report generation must succeed");
+
+    assert!(out_path.exists(), "SWGDE PDF report file must exist on disk");
+    let bytes = std::fs::read(&out_path).unwrap();
+    assert!(bytes.starts_with(b"%PDF-"), "output must be a valid PDF");
+    // SWGDE template should produce a larger file due to cover + TOC + headers/footers
+    assert!(bytes.len() > 500, "SWGDE PDF should contain multiple pages");
 }

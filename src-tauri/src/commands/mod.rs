@@ -49,5 +49,6 @@ pub mod integrations_cmd;
 pub mod link_analysis_cmd;
 pub mod records_cmd;
 pub mod reports_cmd;
+pub mod shares_cmd;
 pub mod system_cmd;
 pub mod updates_cmd;

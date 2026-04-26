@@ -13,6 +13,7 @@ pub mod links;
 pub mod person_employers;
 pub mod person_identifiers;
 pub mod business_identifiers;
+pub mod shares;
 pub mod tools;
 pub mod audit_entries;
 

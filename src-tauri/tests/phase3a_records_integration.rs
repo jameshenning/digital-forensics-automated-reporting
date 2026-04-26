@@ -40,6 +40,7 @@ use dfars_desktop_lib::{
                    list_for_case as evidence_list_for_case},
         hashes::{HashInput, add_hash, list_for_case as hash_list_for_case,
                  list_for_evidence as hash_list_for_evidence},
+        shares::{ShareInput, add_share, list_for_case as shares_list_for_case},
         tools::{ToolInput, add_tool, list_for_case as tool_list_for_case,
                 list_for_evidence as tool_list_for_evidence},
     },
@@ -1619,4 +1620,186 @@ async fn test_analysis_default_confidence() {
     .await
     .unwrap();
     assert_eq!(note.confidence_level, "Medium");
+}
+
+// ─── Test family 17: case_shares (share_record) ───────────────────────────────
+
+#[tokio::test]
+async fn test_17_share_record_happy_path() {
+    let (_state, pool) = build_state().await;
+    setup_case(&pool, "CASE-SHARE-01").await;
+
+    let share = add_share(
+        &pool,
+        &ShareInput {
+            case_id: "CASE-SHARE-01".into(),
+            record_type: "evidence".into(),
+            record_id: "EVIDENCE-001".into(),
+            record_summary: Some("USB drive image".into()),
+            action: "email".into(),
+            recipient: Some("prosecutor@da.gov".into()),
+            file_path: Some("C:\\Reports\\share.md".into()),
+            file_hash: "aabbccdd".into(),
+            narrative: "Shared per discovery request".into(),
+            shared_by: "examiner".into(),
+        },
+    )
+    .await
+    .expect("share_record should succeed");
+
+    assert_eq!(share.case_id, "CASE-SHARE-01");
+    assert_eq!(share.record_type, "evidence");
+    assert_eq!(share.record_id, "EVIDENCE-001");
+    assert_eq!(share.action, "email");
+    assert_eq!(share.recipient.as_deref(), Some("prosecutor@da.gov"));
+    assert_eq!(share.shared_by, "examiner");
+    assert!(share.share_id > 0);
+}
+
+#[tokio::test]
+async fn test_17b_share_record_invalid_record_type_rejected() {
+    let (_state, pool) = build_state().await;
+    setup_case(&pool, "CASE-SHARE-02").await;
+
+    let err = add_share(
+        &pool,
+        &ShareInput {
+            case_id: "CASE-SHARE-02".into(),
+            record_type: "photo".into(), // invalid
+            record_id: "EVIDENCE-001".into(),
+            record_summary: None,
+            action: "email".into(),
+            recipient: None,
+            file_path: None,
+            file_hash: "aabbccdd".into(),
+            narrative: "x".into(),
+            shared_by: "examiner".into(),
+        },
+    )
+    .await
+    .expect_err("invalid record_type must reject");
+
+    assert!(
+        matches!(err, AppError::ValidationError { ref field, .. } if field == "record_type")
+    );
+}
+
+#[tokio::test]
+async fn test_17c_share_record_invalid_action_rejected() {
+    let (_state, pool) = build_state().await;
+    setup_case(&pool, "CASE-SHARE-03").await;
+
+    let err = add_share(
+        &pool,
+        &ShareInput {
+            case_id: "CASE-SHARE-03".into(),
+            record_type: "report".into(),
+            record_id: "REPORT-001".into(),
+            record_summary: None,
+            action: "fax".into(), // invalid
+            recipient: None,
+            file_path: None,
+            file_hash: "aabbccdd".into(),
+            narrative: "x".into(),
+            shared_by: "examiner".into(),
+        },
+    )
+    .await
+    .expect_err("invalid action must reject");
+
+    assert!(
+        matches!(err, AppError::ValidationError { ref field, .. } if field == "action")
+    );
+}
+
+#[tokio::test]
+async fn test_17d_share_record_missing_case_fk_error() {
+    let (_state, pool) = build_state().await;
+    // Deliberately do NOT create the case
+
+    let err = add_share(
+        &pool,
+        &ShareInput {
+            case_id: "CASE-NOEXIST".into(),
+            record_type: "evidence".into(),
+            record_id: "EVIDENCE-001".into(),
+            record_summary: None,
+            action: "email".into(),
+            recipient: None,
+            file_path: None,
+            file_hash: "aabbccdd".into(),
+            narrative: "x".into(),
+            shared_by: "examiner".into(),
+        },
+    )
+    .await
+    .expect_err("missing case must fail FK");
+
+    assert!(
+        matches!(err, AppError::CaseNotFound { .. }),
+        "expected CaseNotFound for missing case_id, got: {err:?}"
+    );
+}
+
+#[tokio::test]
+async fn test_17e_shares_list_for_case_orders_desc() {
+    let (_state, pool) = build_state().await;
+    setup_case(&pool, "CASE-SHARE-04").await;
+
+    add_share(
+        &pool,
+        &ShareInput {
+            case_id: "CASE-SHARE-04".into(),
+            record_type: "evidence".into(),
+            record_id: "EVIDENCE-A".into(),
+            record_summary: None,
+            action: "email".into(),
+            recipient: None,
+            file_path: None,
+            file_hash: "hash1".into(),
+            narrative: "first".into(),
+            shared_by: "examiner".into(),
+        },
+    )
+    .await
+    .unwrap();
+
+    add_share(
+        &pool,
+        &ShareInput {
+            case_id: "CASE-SHARE-04".into(),
+            record_type: "analysis".into(),
+            record_id: "ANALYSIS-B".into(),
+            record_summary: None,
+            action: "print".into(),
+            recipient: None,
+            file_path: None,
+            file_hash: "hash2".into(),
+            narrative: "second".into(),
+            shared_by: "examiner".into(),
+        },
+    )
+    .await
+    .unwrap();
+
+    let shares = shares_list_for_case(&pool, "CASE-SHARE-04")
+        .await
+        .expect("list should succeed");
+
+    assert_eq!(shares.len(), 2);
+    // DESC ordering: second share first
+    assert_eq!(shares[0].record_id, "ANALYSIS-B");
+    assert_eq!(shares[1].record_id, "EVIDENCE-A");
+}
+
+#[tokio::test]
+async fn test_17f_shares_list_empty_case() {
+    let (_state, pool) = build_state().await;
+    setup_case(&pool, "CASE-SHARE-05").await;
+
+    let shares = shares_list_for_case(&pool, "CASE-SHARE-05")
+        .await
+        .expect("list should succeed");
+
+    assert!(shares.is_empty());
 }

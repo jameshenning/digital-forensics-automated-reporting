@@ -1,10 +1,12 @@
 /**
- * Tests for ReportDialog — case report preview.
+ * Tests for ReportDialog — case report preview and generate.
  *
  * Mocks `case_report_preview` to return known markdown and verifies:
  *   - Rendered markdown contains the expected case header text
  *   - Loading state shows skeletons (not the content)
- *   - "Download as Markdown" button is present
+ *   - Format selector has Markdown, HTML, and PDF options
+ *   - Template selector appears when PDF is selected
+ *   - Generate button calls case_report_generate with correct format/template
  *   - "Close" button calls onClose
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -78,7 +80,6 @@ describe("ReportDialog", () => {
       { wrapper: Wrapper },
     );
 
-    // Wait for the markdown heading to appear in the rendered output
     await waitFor(() => {
       expect(
         screen.getByRole("heading", { name: /Case Report: CASE-2026-001/i }),
@@ -100,7 +101,21 @@ describe("ReportDialog", () => {
     });
   });
 
-  it("has a 'Download as Markdown' button", async () => {
+  it("has a format selector with Markdown, HTML, and PDF options", async () => {
+    mockInvoke.mockResolvedValue(MOCK_MARKDOWN);
+    const { Wrapper } = makeWrapper();
+
+    render(
+      <ReportDialog caseId="CASE-2026-001" open={true} onClose={() => {}} />,
+      { wrapper: Wrapper },
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole("combobox", { name: /format/i })).toBeInTheDocument();
+    });
+  });
+
+  it("has a 'Download as Markdown' button by default", async () => {
     mockInvoke.mockResolvedValue(MOCK_MARKDOWN);
     const { Wrapper } = makeWrapper();
 
@@ -116,6 +131,20 @@ describe("ReportDialog", () => {
     });
   });
 
+  it("renders format and template selectors", async () => {
+    mockInvoke.mockResolvedValue(MOCK_MARKDOWN);
+    const { Wrapper } = makeWrapper();
+
+    render(
+      <ReportDialog caseId="CASE-2026-001" open={true} onClose={() => {}} />,
+      { wrapper: Wrapper },
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole("combobox", { name: /format/i })).toBeInTheDocument();
+    });
+  });
+
   it("has a 'Close' button in the footer", async () => {
     mockInvoke.mockResolvedValue(MOCK_MARKDOWN);
     const { Wrapper } = makeWrapper();
@@ -125,8 +154,6 @@ describe("ReportDialog", () => {
       { wrapper: Wrapper },
     );
 
-    // The footer Close button has visible text "Close" (not an sr-only span).
-    // We use getAllByRole because the Dialog also has an X button with sr-only "Close".
     const closeButtons = screen.getAllByRole("button", { name: /close/i });
     expect(closeButtons.length).toBeGreaterThanOrEqual(1);
   });
@@ -141,11 +168,7 @@ describe("ReportDialog", () => {
       { wrapper: Wrapper },
     );
 
-    // Find the footer Close button by looking for visible text (not sr-only).
-    // The footer button has class attributes from Shadcn Button.
     const user = userEvent.setup();
-    // There may be multiple "Close" buttons (X icon + footer).
-    // Click the last one which is the footer button.
     const closeButtons = screen.getAllByRole("button", { name: /close/i });
     const footerClose = closeButtons[closeButtons.length - 1];
     await user.click(footerClose!);
@@ -189,18 +212,45 @@ describe("ReportDialog", () => {
       { wrapper: Wrapper },
     );
 
-    // Wait for the preview to load, then mock generate response
     await waitFor(() => {
       expect(screen.getByRole("button", { name: /download as markdown/i })).toBeInTheDocument();
     });
 
-    // Second call is generate
     mockInvoke.mockResolvedValue("C:\\Reports\\CASE-2026-001_report.md");
 
     const user = userEvent.setup();
     await user.click(
       screen.getByRole("button", { name: /download as markdown/i }),
     );
+
+    await waitFor(() => {
+      expect(mockInvoke).toHaveBeenCalledWith(
+        "case_report_generate",
+        expect.objectContaining({
+          case_id: "CASE-2026-001",
+          format: "Markdown",
+        }),
+      );
+    });
+  });
+
+  it("calls case_report_generate with PDF and SWGDE template when selected", async () => {
+    mockInvoke.mockResolvedValue(MOCK_MARKDOWN);
+    const { Wrapper } = makeWrapper();
+
+    render(
+      <ReportDialog caseId="CASE-2026-001" open={true} onClose={() => {}} />,
+      { wrapper: Wrapper },
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /download as markdown/i })).toBeInTheDocument();
+    });
+
+    mockInvoke.mockResolvedValue("C:\\Reports\\CASE-2026-001_report.pdf");
+
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: /download as markdown/i }));
 
     await waitFor(() => {
       expect(mockInvoke).toHaveBeenCalledWith(

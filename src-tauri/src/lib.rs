@@ -75,6 +75,7 @@ use commands::{
         tool_add, tool_list_for_case, tool_list_for_evidence,
     },
     reports_cmd::{case_report_generate, case_report_preview},
+    shares_cmd::{share_record, shares_list_for_case},
     system_cmd::{debug_log_frontend, settings_get_security_posture},
     updates_cmd::settings_check_for_updates,
 };
@@ -357,6 +358,9 @@ pub fn run() {
             // Report commands (Phase 3b)
             case_report_preview,
             case_report_generate,
+            // Share commands
+            share_record,
+            shares_list_for_case,
             // Entity commands (Phase 4)
             entity_add,
             entity_get,
