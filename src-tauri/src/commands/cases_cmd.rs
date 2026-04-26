@@ -18,7 +18,10 @@ use tracing::info;
 use crate::{
     audit,
     auth::session::require_session,
-    db::cases::{CaseDetail, CaseInput, CaseSummary},
+    db::{
+        audit_entries::{self, AuditEntryInput},
+        cases::{CaseDetail, CaseInput, CaseSummary},
+    },
     error::AppError,
     state::AppState,
 };
@@ -99,6 +102,18 @@ pub async fn case_create(
             detail.case.case_name, detail.case.investigator, detail.case.priority,
         ),
     );
+    let _ = audit_entries::add_entry(
+        &state.db.forensics,
+        &AuditEntryInput {
+            case_id: Some(detail.case.case_id.clone()),
+            actor: format!("user:{}", session.username),
+            action: audit::CASE_CREATED.into(),
+            details: Some(format!(
+                "Name={:?} Investigator={:?} Priority={}",
+                detail.case.case_name, detail.case.investigator, detail.case.priority,
+            )),
+        },
+    ).await;
 
     Ok(detail)
 }
@@ -133,6 +148,18 @@ pub async fn case_update(
             detail.case.case_name, detail.case.status, detail.case.priority,
         ),
     );
+    let _ = audit_entries::add_entry(
+        &state.db.forensics,
+        &AuditEntryInput {
+            case_id: Some(case_id.clone()),
+            actor: format!("user:{}", session.username),
+            action: audit::CASE_UPDATED.into(),
+            details: Some(format!(
+                "Name={:?} Status={} Priority={}",
+                detail.case.case_name, detail.case.status, detail.case.priority,
+            )),
+        },
+    ).await;
 
     Ok(detail)
 }
@@ -167,6 +194,15 @@ pub async fn case_delete(
         audit::CASE_DELETED,
         &format!("case_id={case_id}"),
     );
+    let _ = audit_entries::add_entry(
+        &state.db.forensics,
+        &AuditEntryInput {
+            case_id: None, // global auth event
+            actor: format!("user:{}", session.username),
+            action: audit::CASE_DELETED.into(),
+            details: Some(format!("case_id={case_id}")),
+        },
+    ).await;
 
     Ok(())
 }

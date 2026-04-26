@@ -2098,3 +2098,50 @@ export function driveScan(args: {
 }): Promise<DriveScanResult> {
   return invoke<DriveScanResult>("drive_scan", args);
 }
+
+// ---------------------------------------------------------------------------
+// Migration 0010 — Hash-chained audit commands
+// ---------------------------------------------------------------------------
+
+export interface AuditEntry {
+  entry_id: number;
+  case_id: string | null;
+  timestamp: string;
+  actor: string;
+  action: string;
+  details: string | null;
+  prev_hash: string;
+  entry_hash: string;
+}
+
+export interface AuditExport {
+  case_id: string;
+  exported_at: string;
+  entry_count: number;
+  entries: AuditEntry[];
+  bundle_hash: string;
+}
+
+/** List audit entries for a case, ordered chronologically. */
+export function auditListForCase(args: {
+  token: string;
+  case_id: string;
+}): Promise<AuditEntry[]> {
+  return invoke<AuditEntry[]>("audit_list_for_case", args);
+}
+
+/** Verify the hash chain for a case. Returns true if intact. */
+export function auditVerifyChain(args: {
+  token: string;
+  case_id: string;
+}): Promise<boolean> {
+  return invoke<boolean>("audit_verify_chain", args);
+}
+
+/** Export a case's audit chain as a structured bundle. */
+export function auditExportCase(args: {
+  token: string;
+  case_id: string;
+}): Promise<AuditExport> {
+  return invoke<AuditExport>("audit_export_case", args);
+}

@@ -40,6 +40,7 @@
 /// ╚══════════════════════════════════════════════════════════════════════════════╝
 
 pub mod ai_cmd;
+pub mod audit_cmd;
 pub mod auth_cmd;
 pub mod cases_cmd;
 pub mod drives_cmd;

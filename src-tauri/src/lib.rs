@@ -37,6 +37,7 @@ use commands::{
         auth_setup_first_run, auth_tokens_create, auth_tokens_list, auth_tokens_revoke,
         auth_verify_mfa,
     },
+    audit_cmd::{audit_export_case, audit_list_for_case, audit_verify_chain},
     cases_cmd::{case_create, case_delete, case_get, case_update, cases_list},
     drives_cmd::{drive_scan, drives_list},
     files_cmd::{
@@ -412,6 +413,10 @@ pub fn run() {
             settings_test_smtp,
             settings_acknowledge_ai_consent,
             settings_acknowledge_osint_consent,
+            // Audit commands (migration 0010)
+            audit_list_for_case,
+            audit_verify_chain,
+            audit_export_case,
             // Update commands (Phase 6)
             settings_check_for_updates,
         ])

@@ -14,6 +14,7 @@ pub mod person_employers;
 pub mod person_identifiers;
 pub mod business_identifiers;
 pub mod tools;
+pub mod audit_entries;
 
 use sqlx::{sqlite::{SqliteConnectOptions, SqlitePoolOptions}, SqlitePool};
 use std::path::Path;

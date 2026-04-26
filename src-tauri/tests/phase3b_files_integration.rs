@@ -186,6 +186,21 @@ CREATE TABLE IF NOT EXISTS report_templates (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
+-- migration 0010: hash-chained audit log
+CREATE TABLE IF NOT EXISTS audit_entries (
+    entry_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    case_id TEXT,
+    timestamp TEXT NOT NULL,
+    actor TEXT NOT NULL,
+    action TEXT NOT NULL,
+    details TEXT,
+    prev_hash TEXT NOT NULL,
+    entry_hash TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_audit_case_id ON audit_entries(case_id);
+CREATE INDEX IF NOT EXISTS idx_audit_timestamp ON audit_entries(timestamp);
+CREATE INDEX IF NOT EXISTS idx_audit_action ON audit_entries(action);
+
 CREATE TABLE IF NOT EXISTS entities (
     entity_id INTEGER PRIMARY KEY AUTOINCREMENT,
     case_id TEXT NOT NULL,
