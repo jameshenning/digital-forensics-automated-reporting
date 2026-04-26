@@ -34,6 +34,13 @@ export const analysisFormSchema = z.object({
       error: "Select a valid confidence level",
     })
     .default("Medium"),
+  // ─── Validation level (migration 0009) ───────────────────────────────────
+  validation_level: z
+    .number()
+    .int()
+    .min(0, "Validation level must be at least 0")
+    .max(4, "Validation level must be at most 4")
+    .default(0),
   // ─── Validation fields (migration 0007) ──────────────────────────────────
   created_by: z
     .string()

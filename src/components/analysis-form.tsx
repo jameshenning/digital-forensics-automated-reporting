@@ -16,7 +16,7 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 
 import { analysisFormSchema, type AnalysisFormValues } from "@/lib/analysis-schema";
-import { ANALYSIS_CATEGORIES, CONFIDENCE_LEVELS } from "@/lib/record-enums";
+import { ANALYSIS_CATEGORIES, CONFIDENCE_LEVELS, VALIDATION_LEVELS } from "@/lib/record-enums";
 import type { Evidence } from "@/lib/bindings";
 
 import { Button } from "@/components/ui/button";
@@ -57,6 +57,7 @@ export function AnalysisForm({ evidenceList, isPending, onSubmit, onCancel }: An
       finding: "",
       description: "",
       confidence_level: "Medium",
+      validation_level: 0,
       created_by: "",
       method_reference: "",
       alternatives_considered: "",
@@ -134,8 +135,8 @@ export function AnalysisForm({ evidenceList, isPending, onSubmit, onCancel }: An
           />
         </div>
 
-        {/* finding + confidence_level row */}
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+        {/* finding + confidence_level + validation_level row */}
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-4">
           <div className="sm:col-span-2">
             <FormField
               control={form.control}
@@ -171,6 +172,34 @@ export function AnalysisForm({ evidenceList, isPending, onSubmit, onCancel }: An
                     {CONFIDENCE_LEVELS.map((l) => (
                       <SelectItem key={l} value={l}>
                         {l}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+
+          <FormField
+            control={form.control}
+            name="validation_level"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>Validation</FormLabel>
+                <Select
+                  onValueChange={(v) => field.onChange(Number(v))}
+                  defaultValue={String(field.value)}
+                >
+                  <FormControl>
+                    <SelectTrigger>
+                      <SelectValue placeholder="0 — Unvalidated" />
+                    </SelectTrigger>
+                  </FormControl>
+                  <SelectContent>
+                    {VALIDATION_LEVELS.map((l) => (
+                      <SelectItem key={l.value} value={String(l.value)}>
+                        {l.label}
                       </SelectItem>
                     ))}
                   </SelectContent>

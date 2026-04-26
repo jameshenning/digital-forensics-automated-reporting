@@ -46,6 +46,16 @@ export type AnalysisCategoryTuple = typeof ANALYSIS_CATEGORIES;
 export const CONFIDENCE_LEVELS = ["Low", "Medium", "High"] as const;
 export type ConfidenceLevelTuple = typeof CONFIDENCE_LEVELS;
 
+/** Validation levels per DFIR Forensic Validation methodology (0-4). */
+export const VALIDATION_LEVELS = [
+  { value: 0, label: "0 — Unvalidated" },
+  { value: 1, label: "1 — Tool-Validated" },
+  { value: 2, label: "2 — Cross-Validated" },
+  { value: 3, label: "3 — Examiner-Validated" },
+  { value: 4, label: "4 — Peer-Reviewed" },
+] as const;
+export type ValidationLevelTuple = typeof VALIDATION_LEVELS;
+
 // ---------------------------------------------------------------------------
 // Hash length lookup
 // ---------------------------------------------------------------------------

@@ -53,6 +53,18 @@ impl ReportFormat {
     }
 }
 
+/// Human-readable name for a validation level (0-4).
+fn validation_level_name(level: i64) -> &'static str {
+    match level {
+        0 => "Unvalidated",
+        1 => "Tool-Validated",
+        2 => "Cross-Validated",
+        3 => "Examiner-Validated",
+        4 => "Peer-Reviewed",
+        _ => "Unknown",
+    }
+}
+
 // ─── Public entry-points ──────────────────────────────────────────────────────
 
 /// Generate a markdown report and return it as a `String` without writing to disk.
@@ -252,6 +264,7 @@ struct AnalysisReport {
     method_reference: Option<String>,
     alternatives_considered: Option<String>,
     tool_version: Option<String>,
+    validation_level: i64,
     /// Reviews gathered separately via `analysis_reviews::list_for_case`
     /// and joined by note_id at gathering time. Ordered by review
     /// created_at ASC (chronological review history).
@@ -357,6 +370,7 @@ async fn gather_report_payload(
             method_reference: n.method_reference.clone(),
             alternatives_considered: n.alternatives_considered.clone(),
             tool_version: n.tool_version.clone(),
+            validation_level: n.validation_level,
             reviews: reviews_by_note.remove(&n.note_id).unwrap_or_default(),
         })
         .collect();
@@ -682,12 +696,14 @@ fn render_markdown(p: &ReportPayload) -> Result<String, AppError> {
     let total = p.analysis_notes.len();
     let reviewed = p.analysis_notes.iter().filter(|n| !n.reviews.is_empty()).count();
     let pending = total - reviewed;
+    let validated = p.analysis_notes.iter().filter(|n| n.validation_level >= 3).count();
     out.push_str(&format!(
-        "_{} finding{} total · {} peer-reviewed · {} pending review_\n\n",
+        "_{} finding{} total · {} peer-reviewed · {} pending review · {} examiner-validated_\n\n",
         total,
         if total == 1 { "" } else { "s" },
         reviewed,
         pending,
+        validated,
     ));
 
     // Per-note detail blocks — author, methodology, alternatives, and
@@ -707,6 +723,15 @@ fn render_markdown(p: &ReportPayload) -> Result<String, AppError> {
             "- **Confidence**: {}\n",
             esc_md(&note.confidence_level),
         ));
+        out.push_str(&format!(
+            "- **Validation Level**: {} ({})",
+            note.validation_level,
+            validation_level_name(note.validation_level),
+        ));
+        if note.validation_level == 0 {
+            out.push_str(" — *not independently validated*");
+        }
+        out.push_str("\n");
         if let Some(ev) = &note.evidence_id {
             out.push_str(&format!("- **Evidence**: {}\n", esc_md(ev)));
         }

@@ -498,6 +498,8 @@ export interface AnalysisNote {
   alternatives_considered: string | null;
   /** Tool + version that produced the finding. */
   tool_version: string | null;
+  /** Validation level (0-4) per DFIR Forensic Validation methodology. */
+  validation_level: number;
 }
 
 export interface AnalysisInput {
@@ -512,6 +514,8 @@ export interface AnalysisInput {
   method_reference?: string | null;
   alternatives_considered?: string | null;
   tool_version?: string | null;
+  /** Validation level (0-4). Defaults to 0 (Unvalidated) when omitted. */
+  validation_level?: number | null;
 }
 
 /** Analysis review — peer-review stamp on an analysis note.

@@ -6,7 +6,7 @@
  */
 import { describe, it, expect } from "vitest";
 import { analysisFormSchema } from "@/lib/analysis-schema";
-import { ANALYSIS_CATEGORIES, CONFIDENCE_LEVELS } from "@/lib/record-enums";
+import { ANALYSIS_CATEGORIES, CONFIDENCE_LEVELS, VALIDATION_LEVELS } from "@/lib/record-enums";
 
 function isValid(data: unknown): boolean {
   return analysisFormSchema.safeParse(data).success;
@@ -25,6 +25,7 @@ function validBase() {
     finding: "Suspicious file timestamp found",
     description: "",
     confidence_level: "Medium" as const,
+    validation_level: 0,
   };
 }
 
@@ -139,5 +140,39 @@ describe("analysisFormSchema — validation fields (migration 0007)", () => {
 
   it("rejects tool_version over 200 chars", () => {
     expect(isValid({ ...validBase(), tool_version: "A".repeat(201) })).toBe(false);
+  });
+});
+
+// ─── Migration 0009: validation level ───────────────────────────────────────
+
+describe("analysisFormSchema — validation_level (migration 0009)", () => {
+  it("defaults to 0 when omitted", () => {
+    const base = validBase();
+    const { validation_level: _, ...without } = base;
+    const result = analysisFormSchema.safeParse(without);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.validation_level).toBe(0);
+    }
+  });
+
+  it("accepts all valid validation levels 0-4", () => {
+    for (const level of VALIDATION_LEVELS.map((l) => l.value)) {
+      expect(isValid({ ...validBase(), validation_level: level })).toBe(true);
+    }
+  });
+
+  it("rejects validation_level below 0", () => {
+    expect(isValid({ ...validBase(), validation_level: -1 })).toBe(false);
+    expect(errorPaths({ ...validBase(), validation_level: -1 })).toContain("validation_level");
+  });
+
+  it("rejects validation_level above 4", () => {
+    expect(isValid({ ...validBase(), validation_level: 5 })).toBe(false);
+    expect(errorPaths({ ...validBase(), validation_level: 5 })).toContain("validation_level");
+  });
+
+  it("rejects non-integer validation_level", () => {
+    expect(isValid({ ...validBase(), validation_level: 2.5 })).toBe(false);
   });
 });

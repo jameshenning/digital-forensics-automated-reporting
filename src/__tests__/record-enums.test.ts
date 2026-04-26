@@ -7,6 +7,7 @@ import {
   HASH_ALGORITHMS,
   ANALYSIS_CATEGORIES,
   CONFIDENCE_LEVELS,
+  VALIDATION_LEVELS,
   hashLengthFor,
 } from "@/lib/record-enums";
 
@@ -68,6 +69,26 @@ describe("CONFIDENCE_LEVELS", () => {
 
   it("has exactly 3 entries", () => {
     expect(CONFIDENCE_LEVELS.length).toBe(3);
+  });
+});
+
+describe("VALIDATION_LEVELS", () => {
+  it("has exactly 5 entries (0-4)", () => {
+    expect(VALIDATION_LEVELS.length).toBe(5);
+  });
+
+  it("covers values 0 through 4", () => {
+    const values = VALIDATION_LEVELS.map((l) => l.value);
+    expect(values).toContain(0);
+    expect(values).toContain(1);
+    expect(values).toContain(2);
+    expect(values).toContain(3);
+    expect(values).toContain(4);
+  });
+
+  it("includes human-readable labels", () => {
+    expect(VALIDATION_LEVELS[0].label).toContain("Unvalidated");
+    expect(VALIDATION_LEVELS[4].label).toContain("Peer-Reviewed");
   });
 });
 

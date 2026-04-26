@@ -149,6 +149,7 @@ CREATE TABLE IF NOT EXISTS analysis_notes (
     method_reference TEXT,
     alternatives_considered TEXT,
     tool_version TEXT,
+    validation_level INTEGER NOT NULL DEFAULT 0 CHECK (validation_level BETWEEN 0 AND 4),
     FOREIGN KEY (case_id) REFERENCES cases (case_id) ON DELETE RESTRICT,
     FOREIGN KEY (evidence_id) REFERENCES evidence (evidence_id) ON DELETE SET NULL
 );
@@ -1169,6 +1170,7 @@ async fn test_analysis_note_with_validation_fields_round_trips() {
         method_reference: Some("NIST SP 800-86 §5.2".into()),
         alternatives_considered: Some("Could be file corruption — ruled out by SHA256 match.".into()),
         tool_version: Some("exiftool 12.76".into()),
+        validation_level: None,
     };
 
     let saved = add_analysis(&pool, "CASE-VAL-1", &input).await.unwrap();

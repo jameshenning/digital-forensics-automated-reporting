@@ -35,6 +35,15 @@ const VALID_CATEGORIES: &[&str] = &[
 
 const VALID_CONFIDENCE_LEVELS: &[&str] = &["Low", "Medium", "High"];
 
+/// Validation levels per DFIR Forensic Validation methodology.
+///   0 = Unvalidated        — not independently validated
+///   1 = Tool-Validated     — validated against known-good dataset or hash
+///   2 = Cross-Validated    — corroborated by secondary method or tool
+///   3 = Examiner-Validated — manual verification by primary examiner
+///   4 = Peer-Reviewed      — independently validated by second examiner
+const VALIDATION_LEVEL_MIN: i64 = 0;
+const VALIDATION_LEVEL_MAX: i64 = 4;
+
 const FINDING_MAX_LEN: usize = 500;
 const DESCRIPTION_MAX_LEN: usize = 5000;
 // Validation-field length caps — generous but bounded so a stray paste
@@ -71,6 +80,9 @@ pub struct AnalysisNote {
     pub alternatives_considered: Option<String>,
     #[serde(default)]
     pub tool_version: Option<String>,
+    /// Validation level (0-4) per DFIR Forensic Validation methodology.
+    /// Backfilled to 0 (Unvalidated) for pre-migration rows.
+    pub validation_level: i64,
 }
 
 /// Writable fields for adding a new analysis note.
@@ -103,6 +115,9 @@ pub struct AnalysisInput {
     /// Tool + version that produced the finding.
     #[serde(default)]
     pub tool_version: Option<String>,
+    /// Validation level (0-4). Defaults to 0 (Unvalidated) when omitted.
+    #[serde(default)]
+    pub validation_level: Option<i64>,
 }
 
 // ─── Validation helpers ───────────────────────────────────────────────────────
@@ -136,9 +151,24 @@ pub(crate) fn resolve_confidence(confidence: Option<&str>) -> Result<String, App
     Ok(c.to_string())
 }
 
-fn validate_analysis_input(input: &AnalysisInput) -> Result<String, AppError> {
+/// Validate and resolve validation_level (default: 0).
+pub(crate) fn resolve_validation_level(level: Option<i64>) -> Result<i64, AppError> {
+    let v = level.unwrap_or(0);
+    if !(VALIDATION_LEVEL_MIN..=VALIDATION_LEVEL_MAX).contains(&v) {
+        return Err(AppError::ValidationError {
+            field: "validation_level".into(),
+            message: format!(
+                "validation_level must be an integer between {VALIDATION_LEVEL_MIN} and {VALIDATION_LEVEL_MAX}"
+            ),
+        });
+    }
+    Ok(v)
+}
+
+fn validate_analysis_input(input: &AnalysisInput) -> Result<(String, i64), AppError> {
     validate_category(&input.category)?;
     let confidence = resolve_confidence(input.confidence_level.as_deref())?;
+    let validation_level = resolve_validation_level(input.validation_level)?;
 
     if input.finding.trim().is_empty() {
         return Err(AppError::ValidationError {
@@ -168,7 +198,7 @@ fn validate_analysis_input(input: &AnalysisInput) -> Result<String, AppError> {
     check_optional_len(&input.method_reference, "method_reference", METHOD_REFERENCE_MAX_LEN)?;
     check_optional_len(&input.alternatives_considered, "alternatives_considered", ALTERNATIVES_MAX_LEN)?;
     check_optional_len(&input.tool_version, "tool_version", TOOL_VERSION_MAX_LEN)?;
-    Ok(confidence)
+    Ok((confidence, validation_level))
 }
 
 /// Reject an optional string that, when Some, exceeds `max_len` chars.
@@ -201,14 +231,14 @@ pub async fn add_analysis(
     case_id: &str,
     input: &AnalysisInput,
 ) -> Result<AnalysisNote, AppError> {
-    let confidence = validate_analysis_input(input)?;
+    let (confidence, validation_level) = validate_analysis_input(input)?;
 
     let row_id = sqlx::query(
         r#"
         INSERT INTO analysis_notes (
             case_id, evidence_id, category, finding, description, confidence_level,
-            created_by, method_reference, alternatives_considered, tool_version
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            created_by, method_reference, alternatives_considered, tool_version, validation_level
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         "#,
     )
     .bind(case_id)
@@ -221,6 +251,7 @@ pub async fn add_analysis(
     .bind(&input.method_reference)
     .bind(&input.alternatives_considered)
     .bind(&input.tool_version)
+    .bind(validation_level)
     .execute(pool)
     .await?
     .last_insert_rowid();
@@ -230,7 +261,7 @@ pub async fn add_analysis(
         SELECT
             note_id, case_id, evidence_id, category, finding,
             description, confidence_level, created_at,
-            created_by, method_reference, alternatives_considered, tool_version
+            created_by, method_reference, alternatives_considered, tool_version, validation_level
         FROM analysis_notes
         WHERE note_id = ?
         "#,
@@ -252,7 +283,7 @@ pub async fn list_for_case(
         SELECT
             note_id, case_id, evidence_id, category, finding,
             description, confidence_level, created_at,
-            created_by, method_reference, alternatives_considered, tool_version
+            created_by, method_reference, alternatives_considered, tool_version, validation_level
         FROM analysis_notes
         WHERE case_id = ?
         ORDER BY created_at DESC
@@ -279,7 +310,7 @@ pub async fn list_for_evidence(
         SELECT
             note_id, case_id, evidence_id, category, finding,
             description, confidence_level, created_at,
-            created_by, method_reference, alternatives_considered, tool_version
+            created_by, method_reference, alternatives_considered, tool_version, validation_level
         FROM analysis_notes
         WHERE evidence_id = ?
         ORDER BY created_at DESC
@@ -295,7 +326,7 @@ pub async fn list_for_evidence(
 
 #[cfg(test)]
 mod tests {
-    use super::{resolve_confidence, validate_category};
+    use super::{resolve_confidence, resolve_validation_level, validate_category};
     use crate::error::AppError;
 
     #[test]
@@ -341,6 +372,30 @@ mod tests {
         let err = resolve_confidence(Some("Critical")).unwrap_err();
         assert!(
             matches!(err, AppError::ValidationError { ref field, .. } if field == "confidence_level")
+        );
+    }
+
+    #[test]
+    fn test_valid_validation_levels() {
+        for level in 0..=4 {
+            assert_eq!(resolve_validation_level(Some(level)).unwrap(), level);
+        }
+    }
+
+    #[test]
+    fn test_validation_level_default() {
+        assert_eq!(resolve_validation_level(None).unwrap(), 0);
+    }
+
+    #[test]
+    fn test_invalid_validation_level() {
+        let err = resolve_validation_level(Some(5)).unwrap_err();
+        assert!(
+            matches!(err, AppError::ValidationError { ref field, .. } if field == "validation_level")
+        );
+        let err = resolve_validation_level(Some(-1)).unwrap_err();
+        assert!(
+            matches!(err, AppError::ValidationError { ref field, .. } if field == "validation_level")
         );
     }
 }

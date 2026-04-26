@@ -91,6 +91,36 @@ function confidenceBadgeClass(level: string): string {
   }
 }
 
+function validationLevelBadgeClass(level: number): string {
+  switch (level) {
+    case 4:
+      return "bg-emerald-600/20 text-emerald-400 border-emerald-600/30";
+    case 3:
+      return "bg-blue-600/20 text-blue-400 border-blue-600/30";
+    case 2:
+      return "bg-violet-600/20 text-violet-400 border-violet-600/30";
+    case 1:
+      return "bg-orange-600/20 text-orange-400 border-orange-600/30";
+    default:
+      return "bg-red-600/20 text-red-400 border-red-600/30";
+  }
+}
+
+function validationLevelLabel(level: number): string {
+  switch (level) {
+    case 4:
+      return "4 — Peer-Reviewed";
+    case 3:
+      return "3 — Examiner-Validated";
+    case 2:
+      return "2 — Cross-Validated";
+    case 1:
+      return "1 — Tool-Validated";
+    default:
+      return "0 — Unvalidated";
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Convert form values → AnalysisInput
 // ---------------------------------------------------------------------------
@@ -114,6 +144,7 @@ function formValuesToInput(values: AnalysisFormValues): AnalysisInput {
     finding: values.finding,
     description: values.description || null,
     confidence_level: values.confidence_level ?? null,
+    validation_level: values.validation_level ?? 0,
     created_by: nullIfEmpty(values.created_by),
     method_reference: nullIfEmpty(values.method_reference),
     alternatives_considered: nullIfEmpty(values.alternatives_considered),
@@ -286,11 +317,19 @@ function AnalysisNoteCard({
     <div className="rounded-md border p-3 text-sm space-y-2">
       <div className="flex items-start justify-between gap-2">
         <p className="font-medium leading-snug">{note.finding}</p>
-        <span
-          className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium shrink-0 ${confidenceBadgeClass(note.confidence_level)}`}
-        >
-          {note.confidence_level}
-        </span>
+        <div className="flex items-center gap-1.5 shrink-0">
+          <span
+            className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium ${validationLevelBadgeClass(note.validation_level)}`}
+            title={validationLevelLabel(note.validation_level)}
+          >
+            VL{note.validation_level}
+          </span>
+          <span
+            className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium ${confidenceBadgeClass(note.confidence_level)}`}
+          >
+            {note.confidence_level}
+          </span>
+        </div>
       </div>
 
       {note.description && (

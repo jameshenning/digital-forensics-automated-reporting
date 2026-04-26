@@ -454,10 +454,11 @@ pub async fn analysis_add(
         &session.username,
         ANALYSIS_ADDED,
         &format!(
-            "note_id={} category={:?} confidence={:?} evidence_id={:?} created_by={:?}",
+            "note_id={} category={:?} confidence={:?} validation_level={} evidence_id={:?} created_by={:?}",
             note.note_id,
             note.category,
             note.confidence_level,
+            note.validation_level,
             note.evidence_id,
             note.created_by,
         ),
