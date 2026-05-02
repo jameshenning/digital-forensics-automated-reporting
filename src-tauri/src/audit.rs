@@ -70,6 +70,10 @@ pub const OSINT_CONSENT_ACKNOWLEDGED: &str = "OSINT_CONSENT_ACKNOWLEDGED";
 pub const AGENT_ZERO_CUSTOM_URL_ACTIVE: &str = "AGENT_ZERO_CUSTOM_URL_ACTIVE";
 pub const API_SERVER_NONLOOPBACK_BIND: &str = "API_SERVER_NONLOOPBACK_BIND";
 
+// ─── Local LLM (Ollama) action codes ──────────────────────────────────────────
+pub const OLLAMA_ENHANCE_CALLED: &str = "OLLAMA_ENHANCE_CALLED";
+pub const OLLAMA_CUSTOM_URL_ACTIVE: &str = "OLLAMA_CUSTOM_URL_ACTIVE";
+
 // ─── Phase 5: record action codes (for axum actor audit) ─────────────────────
 pub const EVIDENCE_ADDED: &str = "EVIDENCE_ADDED";
 pub const CUSTODY_ADDED: &str = "CUSTODY_ADDED";

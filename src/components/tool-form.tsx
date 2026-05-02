@@ -18,6 +18,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { Hash, Loader2, Check } from "lucide-react";
 
 import { toolFormSchema, type ToolFormValues } from "@/lib/tool-schema";
+import { AIEnhanceButton } from "@/components/ai-enhance-button";
 import { fileComputeSha256, type Evidence } from "@/lib/bindings";
 import { getToken } from "@/lib/session";
 
@@ -462,7 +463,10 @@ export function ToolForm({
           name="environment_notes"
           render={({ field }) => (
             <FormItem>
-              <FormLabel>Environment Notes</FormLabel>
+              <div className="flex items-center justify-between">
+                <FormLabel>Environment Notes</FormLabel>
+                <AIEnhanceButton text={field.value ?? ""} onResult={field.onChange} />
+              </div>
               <FormControl>
                 <Textarea
                   rows={2}
@@ -486,7 +490,10 @@ export function ToolForm({
           name="reproduction_notes"
           render={({ field }) => (
             <FormItem>
-              <FormLabel>Reproduction Notes</FormLabel>
+              <div className="flex items-center justify-between">
+                <FormLabel>Reproduction Notes</FormLabel>
+                <AIEnhanceButton text={field.value ?? ""} onResult={field.onChange} />
+              </div>
               <FormControl>
                 <Textarea
                   rows={3}

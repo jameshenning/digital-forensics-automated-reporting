@@ -213,6 +213,17 @@ pub enum AppError {
     /// Drive scan exceeded the file-count limit.
     #[error("drive scan aborted: file_count={file_count} exceeded limit={limit}")]
     DriveScanTooLarge { file_count: u64, limit: u64 },
+
+    // ─── Local LLM (Ollama) ───────────────────────────────────────────────────
+
+    #[error("Ollama is not configured: set URL and model in Settings → Integrations")]
+    OllamaNotConfigured,
+
+    #[error("Ollama server is not reachable at {url}. Start it with: docker compose up -d ollama")]
+    OllamaUnavailable { url: String },
+
+    #[error("Ollama server error {status}: {message}")]
+    OllamaServerError { status: u16, message: String },
 }
 
 impl From<sqlx::Error> for AppError {

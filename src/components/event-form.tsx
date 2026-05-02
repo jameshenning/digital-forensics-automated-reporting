@@ -15,6 +15,7 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 
 import { eventFormSchema, type EventFormValues } from "@/lib/event-schema";
+import { AIEnhanceButton } from "@/components/ai-enhance-button";
 import { EVENT_CATEGORIES } from "@/lib/link-analysis-enums";
 import type { Entity, Evidence } from "@/lib/bindings";
 
@@ -101,7 +102,10 @@ export function EventForm({
           name="description"
           render={({ field }) => (
             <FormItem>
-              <FormLabel>Description</FormLabel>
+              <div className="flex items-center justify-between">
+                <FormLabel>Description</FormLabel>
+                <AIEnhanceButton text={field.value ?? ""} onResult={field.onChange} />
+              </div>
               <FormControl>
                 <Textarea
                   placeholder="Detailed account of the event…"

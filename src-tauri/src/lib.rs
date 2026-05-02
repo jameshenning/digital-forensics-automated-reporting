@@ -10,6 +10,7 @@ pub mod drives;
 pub mod error;
 pub mod forensic_tools;
 pub mod mailer;
+pub mod ollama;
 pub mod osint_extraction;
 pub mod reports;
 pub mod state;
@@ -51,10 +52,11 @@ use commands::{
     },
     integrations_cmd::{
         settings_acknowledge_ai_consent, settings_acknowledge_osint_consent,
-        settings_get_agent_zero, settings_get_smtp,
-        settings_set_agent_zero, settings_set_smtp, settings_test_agent_zero,
-        settings_test_smtp,
+        settings_get_agent_zero, settings_get_ollama, settings_get_smtp,
+        settings_set_agent_zero, settings_set_ollama, settings_set_smtp,
+        settings_test_agent_zero, settings_test_ollama, settings_test_smtp,
     },
+    ollama_cmd::{ollama_enhance, ollama_health},
     link_analysis_cmd::{
         business_identifier_add, business_identifier_delete, business_identifier_list,
         business_identifier_update,
@@ -429,6 +431,12 @@ pub fn run() {
             settings_test_smtp,
             settings_acknowledge_ai_consent,
             settings_acknowledge_osint_consent,
+            // Local LLM (Ollama) commands
+            ollama_enhance,
+            ollama_health,
+            settings_get_ollama,
+            settings_set_ollama,
+            settings_test_ollama,
             // Audit commands (migration 0010)
             audit_list_for_case,
             audit_list_recent,

@@ -109,6 +109,13 @@ pub struct AppConfig {
     /// Service token Grafana uses to authenticate against DFARS Axum endpoints.
     /// Generated once when Grafana is first enabled. `None` until initialized.
     pub grafana_service_token: Option<String>,
+
+    // ─── Local LLM (Ollama) ───────────────────────────────────────────────────
+    /// Base URL for the local Ollama instance. Defaults to http://localhost:11434.
+    pub ollama_url: Option<String>,
+
+    /// Model name to use for Ollama text generation. Defaults to "mistral".
+    pub ollama_model: Option<String>,
 }
 
 fn default_idle_timeout_seconds() -> u32 {
@@ -150,6 +157,8 @@ impl Default for AppConfig {
             evidence_onedrive_risk_acknowledged: false,
             grafana_enabled: false,
             grafana_service_token: None,
+            ollama_url: None,
+            ollama_model: None,
         }
     }
 }

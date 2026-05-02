@@ -37,6 +37,21 @@ services:
     depends_on:
       - postgres
 
+  ollama:
+    image: ollama/ollama:latest
+    container_name: dfars-ollama
+    ports:
+      - "127.0.0.1:11434:11434"
+    volumes:
+      - dfars_ollama_data:/root/.ollama
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:11434/api/tags >/dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
 volumes:
   dfars_pg_data:
   dfars_grafana_data:
+  dfars_ollama_data:

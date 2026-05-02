@@ -26,6 +26,7 @@ import { getToken } from "@/lib/session";
 import { queryKeys } from "@/lib/query";
 import { PERSON_SUBTYPES } from "@/lib/link-analysis-enums";
 import { personFormSchema, type PersonFormValues } from "@/lib/person-schema";
+import { AIEnhanceButton } from "@/components/ai-enhance-button";
 
 import { EmployerCombobox } from "@/components/employer-combobox";
 import { PersonIdentifierEditor } from "@/components/person-identifier-editor";
@@ -388,7 +389,10 @@ export function PersonForm({
           name="notes"
           render={({ field }) => (
             <FormItem>
-              <FormLabel>Investigator notes</FormLabel>
+              <div className="flex items-center justify-between">
+                <FormLabel>Investigator notes</FormLabel>
+                <AIEnhanceButton text={field.value ?? ""} onResult={field.onChange} />
+              </div>
               <FormControl>
                 <Textarea
                   rows={4}

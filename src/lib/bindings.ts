@@ -79,7 +79,11 @@ export type AppErrorCode =
   | "BusinessLogoTooLarge"
   | "BusinessLogoNotAnImage"
   // Dark-web OSINT — Agent Zero Tor preflight failure
-  | "TorUnavailable";
+  | "TorUnavailable"
+  // Local LLM (Ollama) error codes
+  | "OllamaNotConfigured"
+  | "OllamaUnavailable"
+  | "OllamaServerError";
 
 export interface AppError {
   code: AppErrorCode;
@@ -1923,6 +1927,29 @@ export interface AgentZeroSettings {
   tor_enabled: boolean;
 }
 
+export interface OllamaSettings {
+  url: string | null;
+  model: string | null;
+  is_configured: boolean;
+}
+
+export interface OllamaInput {
+  url: string | null;
+  model: string | null;
+}
+
+export interface OllamaTestResult {
+  ok: boolean;
+  model_loaded: boolean;
+}
+
+export interface OllamaHealthResult {
+  reachable: boolean;
+  model_loaded: boolean;
+  url: string;
+  model: string;
+}
+
 export interface AgentZeroInput {
   url: string;
   api_key: string | null; // null = leave unchanged
@@ -1999,6 +2026,25 @@ export function aiEnhance(args: {
   text: string;
 }): Promise<string> {
   return invoke<string>("ai_enhance", args);
+}
+
+/**
+ * Enhance narrative text using a local Ollama LLM.
+ * Sends text to localhost:11434 (or configured URL). No data leaves the machine.
+ * Rejects with OllamaUnavailable if the Docker container is not running.
+ */
+export function ollamaEnhance(args: {
+  token: string;
+  text: string;
+}): Promise<string> {
+  return invoke<string>("ollama_enhance", args);
+}
+
+/** Quick health check for the Ollama server and configured model. */
+export function ollamaHealth(args: {
+  token: string;
+}): Promise<OllamaHealthResult> {
+  return invoke<OllamaHealthResult>("ollama_health", args);
 }
 
 /**
@@ -2200,6 +2246,28 @@ export function settingsTestAgentZero(args: {
   token: string;
 }): Promise<AgentZeroTestResult> {
   return invoke<AgentZeroTestResult>("settings_test_agent_zero", args);
+}
+
+/** Get Ollama (local LLM) settings. */
+export function settingsGetOllama(args: {
+  token: string;
+}): Promise<OllamaSettings> {
+  return invoke<OllamaSettings>("settings_get_ollama", args);
+}
+
+/** Save Ollama (local LLM) settings. */
+export function settingsSetOllama(args: {
+  token: string;
+  input: OllamaInput;
+}): Promise<void> {
+  return invoke<void>("settings_set_ollama", args);
+}
+
+/** Test the Ollama connection. */
+export function settingsTestOllama(args: {
+  token: string;
+}): Promise<OllamaTestResult> {
+  return invoke<OllamaTestResult>("settings_test_ollama", args);
 }
 
 /**

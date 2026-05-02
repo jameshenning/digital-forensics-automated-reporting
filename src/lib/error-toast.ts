@@ -123,6 +123,13 @@ const ERROR_MESSAGES: Record<AppErrorCode, string> = {
     "The SMTP server accepted the connection but rejected the message. Check your username, password, and 'from' address.",
   DriveScanTooLarge:
     "The drive has too many files to scan in a single operation. Try scanning a specific subdirectory instead.",
+  // Local LLM (Ollama) error codes
+  OllamaNotConfigured:
+    "Ollama is not configured. Go to Settings → Integrations → Local LLM to set the URL and model.",
+  OllamaUnavailable:
+    "Ollama server is not reachable. Start it with: docker compose up -d ollama",
+  OllamaServerError:
+    "Ollama returned an error response. Check the Ollama container logs for details.",
 };
 
 /**

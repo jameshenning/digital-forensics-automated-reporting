@@ -17,6 +17,7 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 
 import { custodyFormSchema, type CustodyFormValues } from "@/lib/custody-schema";
+import { AIEnhanceButton } from "@/components/ai-enhance-button";
 import { CUSTODY_ACTIONS } from "@/lib/record-enums";
 
 import { Button } from "@/components/ui/button";
@@ -191,7 +192,10 @@ export function CustodyForm({
           name="notes"
           render={({ field }) => (
             <FormItem>
-              <FormLabel>Notes</FormLabel>
+              <div className="flex items-center justify-between">
+                <FormLabel>Notes</FormLabel>
+                <AIEnhanceButton text={field.value ?? ""} onResult={field.onChange} />
+              </div>
               <FormControl>
                 <Textarea placeholder="Additional notes…" rows={3} {...field} />
               </FormControl>

@@ -23,6 +23,7 @@ use crate::auth::session::require_session;
 use crate::config::{self, AppConfig};
 use crate::error::AppError;
 use crate::mailer::{self, SmtpConfig};
+use crate::ollama::OllamaClient;
 use crate::state::AppState;
 
 // ─── Return types (never include plaintext secrets) ───────────────────────────
@@ -280,6 +281,108 @@ pub async fn settings_test_smtp(
         "This is a test email from DFARS Desktop v2.",
     )
     .await
+}
+
+// ─── Ollama (Local LLM) settings ─────────────────────────────────────────────
+
+#[derive(Debug, Serialize)]
+pub struct OllamaSettings {
+    pub url: Option<String>,
+    pub model: Option<String>,
+    pub is_configured: bool,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct OllamaInput {
+    pub url: Option<String>,
+    pub model: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct OllamaTestResult {
+    pub ok: bool,
+    pub model_loaded: bool,
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn settings_get_ollama(
+    token: String,
+    state: State<'_, Arc<AppState>>,
+) -> Result<OllamaSettings, AppError> {
+    require_session(&state, &token)?;
+    let cfg = fresh_config(&state);
+    let is_configured = cfg.ollama_url.is_some() || cfg.ollama_model.is_some();
+    Ok(OllamaSettings {
+        url: cfg.ollama_url.clone(),
+        model: cfg.ollama_model.clone(),
+        is_configured,
+    })
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn settings_set_ollama(
+    token: String,
+    input: OllamaInput,
+    state: State<'_, Arc<AppState>>,
+) -> Result<(), AppError> {
+    let session = require_session(&state, &token)?;
+
+    let mut cfg = state.config.clone();
+
+    if let Some(url) = &input.url {
+        if !url.is_empty() {
+            crate::ollama::validate_url_public(url, cfg.allow_custom_agent_zero_url)?;
+            cfg.ollama_url = Some(url.clone());
+        } else {
+            cfg.ollama_url = None;
+        }
+    }
+
+    if let Some(model) = &input.model {
+        if !model.is_empty() {
+            cfg.ollama_model = Some(model.clone());
+        } else {
+            cfg.ollama_model = None;
+        }
+    }
+
+    let config_path = state.config_path.clone();
+    config::save(&config_path, &cfg)?;
+
+    info!(username = %session.username, "Ollama settings updated");
+    audit::log_auth(
+        &format!("user:{}", session.username),
+        audit::SETTINGS_CHANGED,
+        "Ollama settings updated",
+    );
+
+    Ok(())
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn settings_test_ollama(
+    token: String,
+    state: State<'_, Arc<AppState>>,
+) -> Result<OllamaTestResult, AppError> {
+    require_session(&state, &token)?;
+
+    let cfg = fresh_config(&state);
+    let url = cfg.ollama_url.as_deref().unwrap_or("http://localhost:11434");
+    let model = cfg.ollama_model.as_deref().unwrap_or("mistral");
+
+    let client = OllamaClient::new(Some(url), Some(model), cfg.allow_custom_agent_zero_url)?;
+
+    let reachable = client.is_available().await.unwrap_or(false);
+    let model_loaded = if reachable {
+        client.model_loaded().await.unwrap_or(false)
+    } else {
+        false
+    };
+
+    Ok(OllamaTestResult {
+        ok: reachable,
+        model_loaded,
+    })
 }
 
 // ─── Consent (MUST-DO 8) ─────────────────────────────────────────────────────

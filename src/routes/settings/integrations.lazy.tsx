@@ -25,6 +25,7 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import {
   Bot,
+  Brain,
   Mail,
   Network,
   CheckCircle2,
@@ -41,6 +42,9 @@ import {
   settingsGetAgentZero,
   settingsSetAgentZero,
   settingsTestAgentZero,
+  settingsGetOllama,
+  settingsSetOllama,
+  settingsTestOllama,
   settingsGetSmtp,
   settingsSetSmtp,
   settingsTestSmtp,
@@ -990,6 +994,180 @@ function GrafanaSection() {
   );
 }
 
+// ---------------------------------------------------------------------------
+// Ollama (Local LLM) section
+// ---------------------------------------------------------------------------
+
+function OllamaSection() {
+  const token = getToken() ?? "";
+  const queryClient = useQueryClient();
+  const [testResult, setTestResult] = React.useState<
+    | { ok: true; model_loaded: boolean }
+    | { ok: false; message: string }
+    | null
+  >(null);
+
+  const { data: settings, isLoading } = useQuery({
+    queryKey: queryKeys.ollama.settings,
+    queryFn: () => settingsGetOllama({ token }),
+    enabled: !!token,
+    refetchOnWindowFocus: false,
+  });
+
+  const saveMutation = useMutation({
+    mutationFn: (input: { url: string | null; model: string | null }) =>
+      settingsSetOllama({ token, input }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.ollama.settings });
+      toastSuccess("Ollama settings saved");
+    },
+    onError: toastError,
+  });
+
+  const testMutation = useMutation({
+    mutationFn: () => settingsTestOllama({ token }),
+    onSuccess: (result) => {
+      setTestResult({ ok: true, model_loaded: result.model_loaded });
+    },
+    onError: (err) => {
+      setTestResult({ ok: false, message: errorToMessage(err) });
+    },
+  });
+
+  const [url, setUrl] = React.useState("");
+  const [model, setModel] = React.useState("");
+
+  React.useEffect(() => {
+    if (settings) {
+      setUrl(settings.url ?? "http://localhost:11434");
+      setModel(settings.model ?? "mistral");
+    }
+  }, [settings]);
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2 text-base">
+          <Brain className="h-4 w-4" />
+          Local LLM (Ollama)
+        </CardTitle>
+        <CardDescription>
+          Free, local AI text enhancement. Runs entirely on your machine — no
+          API keys, no data leaves the host.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {isLoading ? (
+          <div className="h-20 bg-muted rounded animate-pulse" />
+        ) : (
+          <>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="ollama-url">Ollama URL</Label>
+                <Input
+                  id="ollama-url"
+                  value={url}
+                  onChange={(e) => setUrl(e.target.value)}
+                  placeholder="http://localhost:11434"
+                />
+                <p className="text-xs text-muted-foreground">
+                  Must point to localhost, 127.0.0.1, or host.docker.internal.
+                </p>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="ollama-model">Model</Label>
+                <Input
+                  id="ollama-model"
+                  value={model}
+                  onChange={(e) => setModel(e.target.value)}
+                  placeholder="mistral"
+                />
+                <p className="text-xs text-muted-foreground">
+                  Default: mistral. Also try llama3 or gemma.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-3">
+              <Button
+                type="button"
+                onClick={() =>
+                  saveMutation.mutate({
+                    url: url || null,
+                    model: model || null,
+                  })
+                }
+                disabled={saveMutation.isPending}
+              >
+                {saveMutation.isPending ? (
+                  <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
+                ) : null}
+                Save
+              </Button>
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={() => {
+                  setTestResult(null);
+                  testMutation.mutate();
+                }}
+                disabled={testMutation.isPending}
+              >
+                {testMutation.isPending ? (
+                  <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
+                ) : (
+                  <CheckCircle2 className="h-4 w-4 mr-2" />
+                )}
+                Test Connection
+              </Button>
+            </div>
+
+            {testResult && (
+              <div>
+                {testResult.ok ? (
+                  <Alert className="border-success/50 bg-success/10">
+                    <CheckCircle2 className="h-4 w-4 text-success" />
+                    <AlertDescription className="text-success">
+                      <strong>Ollama is reachable.</strong>{" "}
+                      {testResult.model_loaded
+                        ? "Model is loaded and ready."
+                        : "Server is up, but the configured model is not yet pulled. Run: docker exec -it dfars-ollama ollama pull " +
+                          (model || "mistral")}
+                    </AlertDescription>
+                  </Alert>
+                ) : (
+                  <Alert className="border-destructive/50 bg-destructive/10">
+                    <AlertTriangle className="h-4 w-4 text-destructive" />
+                    <AlertDescription className="text-destructive">
+                      <strong>Connection failed.</strong>{" "}
+                      {testResult.message}
+                    </AlertDescription>
+                  </Alert>
+                )}
+              </div>
+            )}
+
+            <Alert className="border-primary/50 bg-primary/10">
+              <AlertTriangle className="h-4 w-4 text-primary" />
+              <AlertDescription className="text-primary">
+                <strong>First-time setup:</strong>{" "}
+                <code className="text-xs bg-background/60 px-1 rounded">
+                  docker compose up -d ollama
+                </code>{" "}
+                then{" "}
+                <code className="text-xs bg-background/60 px-1 rounded">
+                  docker exec -it dfars-ollama ollama pull mistral
+                </code>
+                . The model download is ~4 GB.
+              </AlertDescription>
+            </Alert>
+          </>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 function IntegrationsPage() {
   const { session } = useSession();
   if (!session) return null;
@@ -999,6 +1177,7 @@ function IntegrationsPage() {
 
       <main className="mx-auto max-w-3xl px-6 py-8 flex flex-col gap-6">
         <AgentZeroSection />
+        <OllamaSection />
         <NetworkBindingSection />
         <SmtpSection />
         <UploadSettingsSection />

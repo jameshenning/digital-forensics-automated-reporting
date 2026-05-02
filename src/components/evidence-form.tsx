@@ -14,6 +14,7 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 
 import { evidenceFormSchema, type EvidenceFormValues } from "@/lib/evidence-schema";
+import { AIEnhanceButton } from "@/components/ai-enhance-button";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -88,9 +89,10 @@ export function EvidenceForm({ isPending, onSubmit, onCancel }: EvidenceFormProp
           name="description"
           render={({ field }) => (
             <FormItem>
-              <FormLabel>
-                Description <span aria-hidden="true">*</span>
-              </FormLabel>
+              <div className="flex items-center justify-between">
+                <FormLabel>Description <span aria-hidden="true">*</span></FormLabel>
+                <AIEnhanceButton text={field.value ?? ""} onResult={field.onChange} />
+              </div>
               <FormControl>
                 <Textarea
                   placeholder="Describe the evidence item…"

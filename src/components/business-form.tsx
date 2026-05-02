@@ -36,6 +36,7 @@ import {
 } from "@/lib/business-schema";
 
 import { BusinessIdentifierEditor } from "@/components/business-identifier-editor";
+import { AIEnhanceButton } from "@/components/ai-enhance-button";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -310,7 +311,10 @@ export function BusinessForm({
           name="notes"
           render={({ field }) => (
             <FormItem>
-              <FormLabel>Notes</FormLabel>
+              <div className="flex items-center justify-between">
+                <FormLabel>Notes</FormLabel>
+                <AIEnhanceButton text={field.value ?? ""} onResult={field.onChange} />
+              </div>
               <FormControl>
                 <Textarea
                   placeholder="Known associates, operational details, case relevance..."

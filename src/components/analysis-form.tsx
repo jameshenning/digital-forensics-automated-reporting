@@ -16,6 +16,7 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 
 import { analysisFormSchema, type AnalysisFormValues } from "@/lib/analysis-schema";
+import { AIEnhanceButton } from "@/components/ai-enhance-button";
 import { ANALYSIS_CATEGORIES, CONFIDENCE_LEVELS, VALIDATION_LEVELS } from "@/lib/record-enums";
 import type { Evidence } from "@/lib/bindings";
 
@@ -216,7 +217,10 @@ export function AnalysisForm({ evidenceList, isPending, onSubmit, onCancel }: An
           name="description"
           render={({ field }) => (
             <FormItem>
-              <FormLabel>Detailed Description</FormLabel>
+              <div className="flex items-center justify-between">
+                <FormLabel>Detailed Description</FormLabel>
+                <AIEnhanceButton text={field.value ?? ""} onResult={field.onChange} />
+              </div>
               <FormControl>
                 <Textarea
                   placeholder="Supporting detail, methodology, artefacts referenced…"
@@ -315,7 +319,10 @@ export function AnalysisForm({ evidenceList, isPending, onSubmit, onCancel }: An
               name="alternatives_considered"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Alternative explanations considered</FormLabel>
+                  <div className="flex items-center justify-between">
+                <FormLabel>Alternative explanations considered</FormLabel>
+                <AIEnhanceButton text={field.value ?? ""} onResult={field.onChange} />
+              </div>
                   <FormControl>
                     <Textarea
                       placeholder="What other explanations did you examine and rule out, and why?"

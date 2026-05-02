@@ -48,6 +48,7 @@ pub mod files_cmd;
 pub mod grafana_cmd;
 pub mod integrations_cmd;
 pub mod link_analysis_cmd;
+pub mod ollama_cmd;
 pub mod records_cmd;
 pub mod reports_cmd;
 pub mod shares_cmd;

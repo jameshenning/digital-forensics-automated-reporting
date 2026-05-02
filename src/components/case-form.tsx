@@ -18,6 +18,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 
 import { caseFormSchema, type CaseFormValues } from "@/lib/case-schema";
 import { CASE_STATUSES, CASE_PRIORITIES } from "@/lib/case-enums";
+import { AIEnhanceButton } from "@/components/ai-enhance-button";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -279,7 +280,10 @@ export function CaseForm({
           name="description"
           render={({ field }) => (
             <FormItem>
-              <FormLabel>Description</FormLabel>
+              <div className="flex items-center justify-between">
+                <FormLabel>Description</FormLabel>
+                <AIEnhanceButton text={field.value ?? ""} onResult={field.onChange} />
+              </div>
               <FormControl>
                 <Textarea
                   placeholder="Narrative describing the case scope, subjects, circumstances, and key details…"

@@ -165,6 +165,11 @@ export const queryKeys = {
     status: ["agentZero", "status"] as const,
   },
 
+  /** Ollama (local LLM) integration settings */
+  ollama: {
+    settings: ["ollama", "settings"] as const,
+  },
+
   /** SMTP settings (Phase 5) */
   smtp: {
     settings: ["smtp", "settings"] as const,

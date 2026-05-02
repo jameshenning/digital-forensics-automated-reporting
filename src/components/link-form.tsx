@@ -22,6 +22,7 @@ import {
 } from "@/lib/link-schema";
 import { LINK_ENDPOINT_KINDS } from "@/lib/link-analysis-enums";
 import type { Entity, Evidence } from "@/lib/bindings";
+import { AIEnhanceButton } from "@/components/ai-enhance-button";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -387,7 +388,10 @@ export function LinkForm({
               name="basis"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Basis</FormLabel>
+                  <div className="flex items-center justify-between">
+                <FormLabel>Basis</FormLabel>
+                <AIEnhanceButton text={field.value ?? ""} onResult={field.onChange} />
+              </div>
                   <FormControl>
                     <Textarea
                       placeholder="Why is this connection asserted? (e.g. shared email in evidence E-001)"
@@ -444,7 +448,10 @@ export function LinkForm({
               name="alternatives_considered"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Alternatives considered</FormLabel>
+                  <div className="flex items-center justify-between">
+                <FormLabel>Alternatives considered</FormLabel>
+                <AIEnhanceButton text={field.value ?? ""} onResult={field.onChange} />
+              </div>
                   <FormControl>
                     <Textarea
                       placeholder="Competing explanations examined and ruled out"
