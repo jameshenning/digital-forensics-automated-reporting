@@ -13,6 +13,7 @@ use tracing::info;
 use crate::{
     audit,
     auth::session::require_session,
+    db::audit_entries::{self, AuditEntryInput},
     error::AppError,
     reports::{self, ReportFormat, ReportTemplate},
     state::AppState,
@@ -77,6 +78,15 @@ pub async fn case_report_generate(
         audit::REPORT_GENERATED,
         &format!("report saved to {path_str}"),
     );
+    let _ = audit_entries::add_entry(
+        &state.db.forensics,
+        &AuditEntryInput {
+            case_id: Some(case_id.clone()),
+            actor: format!("user:{}", session.username),
+            action: audit::REPORT_GENERATED.into(),
+            details: Some(format!("report saved to {path_str}")),
+        },
+    ).await;
 
     info!(
         username = %session.username,

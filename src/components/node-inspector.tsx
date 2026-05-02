@@ -429,7 +429,7 @@ function IdentifierBody({
         {isShared && (
           <Badge
             variant="outline"
-            className="border-amber-500/60 text-amber-700 dark:text-amber-300"
+            className="border-warning/60 text-warning"
           >
             shared by {view.owners.length}
           </Badge>

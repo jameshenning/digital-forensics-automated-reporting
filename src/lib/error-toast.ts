@@ -16,6 +16,8 @@ const ERROR_MESSAGES: Record<AppErrorCode, string> = {
   MfaRequired: "Multi-factor authentication is required.",
   InvalidMfaCode:
     "That code was not recognised. Check your authenticator app and try again.",
+  MfaLockout:
+    "Too many failed MFA attempts. Your session has been cleared. Please sign in again from the beginning.",
   NoRecoveryCodesRemaining:
     "All recovery codes have been used. Contact your administrator.",
   UserAlreadyExists:

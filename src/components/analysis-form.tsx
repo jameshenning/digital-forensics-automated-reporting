@@ -240,7 +240,7 @@ export function AnalysisForm({ evidenceList, isPending, onSubmit, onCancel }: An
               <FormLabel>
                 Author
                 <span
-                  className="ml-1.5 text-xs font-normal text-amber-500/80"
+                  className="ml-1.5 text-xs font-normal text-warning/80"
                   aria-hidden="true"
                 >
                   (recommended)

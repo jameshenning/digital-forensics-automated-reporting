@@ -12,6 +12,7 @@ use tracing::info;
 use crate::{
     auth,
     auth::session::require_session,
+    config,
     crypto::KeySource,
     error::AppError,
     state::AppState,
@@ -81,5 +82,30 @@ pub async fn debug_log_frontend(
         "warn"  => tracing::warn!(source = "frontend", "{}", message),
         _       => tracing::info!(source = "frontend", "{}", message),
     }
+    Ok(())
+}
+
+/// Return the configured idle timeout in seconds.
+#[tauri::command(rename_all = "snake_case")]
+pub async fn settings_get_idle_timeout(
+    token: String,
+    state: State<'_, Arc<AppState>>,
+) -> Result<u32, AppError> {
+    let _session = require_session(&state, &token)?;
+    Ok(state.config.idle_timeout_seconds)
+}
+
+/// Set the idle timeout in seconds (min 60, max 3600).
+#[tauri::command(rename_all = "snake_case")]
+pub async fn settings_set_idle_timeout(
+    token: String,
+    seconds: u32,
+    state: State<'_, Arc<AppState>>,
+) -> Result<(), AppError> {
+    let _session = require_session(&state, &token)?;
+    let clamped = seconds.clamp(60, 3600);
+    let mut cfg = state.config.clone();
+    cfg.idle_timeout_seconds = clamped;
+    config::save(&state.config_path, &cfg)?;
     Ok(())
 }

@@ -32,11 +32,13 @@ import {
   CopyCheck,
   Repeat,
   AlertTriangle,
+  Share2,
 } from "lucide-react";
 
 import type { ToolUsage } from "@/lib/bindings";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { ShareDialog } from "@/components/share-dialog";
 import {
   lookupTool,
   findDependentsInCase,
@@ -210,6 +212,7 @@ export interface ToolCardProps {
   usage: ToolUsage;
   /** All tool_name strings present in this case (for dependency chaining). */
   caseToolNames: string[];
+  caseId: string;
   /**
    * When true, suppresses the "case-wide" / evidence-ID badge in the header.
    * Useful when the card is already rendered under an evidence item and
@@ -225,6 +228,7 @@ export interface ToolCardProps {
 export function ToolCard({
   usage,
   caseToolNames,
+  caseId,
   hideScopeBadge = false,
 }: ToolCardProps) {
   const kb: ForensicTool | null = lookupTool(usage.tool_name);
@@ -234,6 +238,7 @@ export function ToolCard({
   // Reproduction section state — collapsed by default per the UX spec.
   const [reproOpen, setReproOpen] = React.useState(false);
   const [copied, setCopied] = React.useState(false);
+  const [shareOpen, setShareOpen] = React.useState(false);
 
   // Whether we have ANY reproduction content to show. If neither the KB nor
   // the operator filled in anything, we hide the toggle entirely.
@@ -298,6 +303,18 @@ export function ToolCard({
               {" · "}
               {fmtDatetime(usage.execution_datetime)}
             </p>
+          </div>
+          <div className="flex gap-1 shrink-0">
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-7 px-1.5 text-xs"
+              onClick={() => setShareOpen(true)}
+              title="Log share event"
+            >
+              <Share2 className="h-3.5 w-3.5" />
+              <span className="sr-only">Log share event</span>
+            </Button>
           </div>
         </div>
       </div>
@@ -607,6 +624,15 @@ export function ToolCard({
           </section>
         )}
       </div>
+
+      <ShareDialog
+        caseId={caseId}
+        recordType="tool"
+        recordId={String(usage.tool_id)}
+        recordSummary={`${usage.tool_name} — ${usage.purpose}`}
+        open={shareOpen}
+        onClose={() => setShareOpen(false)}
+      />
     </div>
   );
 }

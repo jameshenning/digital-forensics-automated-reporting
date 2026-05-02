@@ -26,6 +26,7 @@ const ERROR_CODES: AppErrorCode[] = [
   "MfaRequired",
   "InvalidMfaCode",
   "NoRecoveryCodesRemaining",
+  "MfaLockout",
   "UserAlreadyExists",
   "UserNotFound",
   "PasswordPolicy",

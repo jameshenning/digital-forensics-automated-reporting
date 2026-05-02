@@ -22,7 +22,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let pool = SqlitePoolOptions::new().connect(&url).await?;
 
     eprintln!("=== list_cases(10, 0) ===");
-    match list_cases(&pool, 10, 0).await {
+    match list_cases(&pool, 10, 0, None).await {
         Ok(summaries) => {
             eprintln!("OK: {} summaries", summaries.len());
             for s in &summaries {

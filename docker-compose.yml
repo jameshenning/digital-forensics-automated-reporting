@@ -18,5 +18,25 @@ services:
       timeout: 5s
       retries: 5
 
+  grafana:
+    image: grafana/grafana:11.0.0
+    container_name: dfars-grafana
+    ports:
+      - "127.0.0.1:3099:3000"
+    volumes:
+      - dfars_grafana_data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+    environment:
+      - GF_SECURITY_ALLOW_EMBEDDING=true
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_NAME=Main Org.
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Viewer
+      - GF_SERVER_ROOT_URL=http://localhost:3099
+      - GF_INSTALL_PLUGINS=marcusolsson-json-datasource
+    depends_on:
+      - postgres
+
 volumes:
   dfars_pg_data:
+  dfars_grafana_data:

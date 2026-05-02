@@ -185,6 +185,7 @@ export function EvidenceToolsPanel({ caseId, evidenceId }: EvidenceToolsPanelPro
               key={t.tool_id}
               usage={t}
               caseToolNames={caseToolNames}
+              caseId={caseId}
               hideScopeBadge
             />
           ))}

@@ -37,8 +37,8 @@ use commands::{
         auth_setup_first_run, auth_tokens_create, auth_tokens_list, auth_tokens_revoke,
         auth_verify_mfa,
     },
-    audit_cmd::{audit_export_case, audit_list_for_case, audit_verify_chain},
-    cases_cmd::{case_create, case_delete, case_get, case_update, cases_list},
+    audit_cmd::{audit_export_case, audit_list_for_case, audit_list_recent, audit_verify_chain},
+    cases_cmd::{case_create, case_delete, case_get, case_update, cases_list, cases_count, cases_stats},
     drives_cmd::{drive_scan, drives_list},
     files_cmd::{
         business_logo_delete, business_logo_upload,
@@ -47,6 +47,7 @@ use commands::{
         file_compute_sha256,
         person_photo_delete, person_photo_upload,
         settings_acknowledge_onedrive_risk,
+        settings_get_upload, settings_set_upload,
     },
     integrations_cmd::{
         settings_acknowledge_ai_consent, settings_acknowledge_osint_consent,
@@ -76,7 +77,12 @@ use commands::{
     },
     reports_cmd::{case_report_generate, case_report_preview},
     shares_cmd::{share_record, shares_list_for_case},
-    system_cmd::{debug_log_frontend, settings_get_security_posture},
+    grafana_cmd::{
+        grafana_get_settings, grafana_set_settings, grafana_start, grafana_stop, grafana_status,
+        case_dashboard_entity_stats, case_dashboard_evidence_stats, case_dashboard_link_stats,
+        case_dashboard_timeline, case_dashboard_graph,
+    },
+    system_cmd::{debug_log_frontend, settings_get_idle_timeout, settings_get_security_posture, settings_set_idle_timeout},
     updates_cmd::settings_check_for_updates,
 };
 
@@ -314,6 +320,8 @@ pub fn run() {
             case_create,
             case_update,
             case_delete,
+            cases_count,
+            cases_stats,
             // Evidence commands (Phase 3a)
             evidence_add,
             evidence_get,
@@ -345,6 +353,8 @@ pub fn run() {
             evidence_files_list,
             evidence_files_download,
             evidence_files_soft_delete,
+            settings_get_upload,
+            settings_set_upload,
             evidence_files_purge,
             settings_acknowledge_onedrive_risk,
             // Person photo commands (migration 0002 — Persons feature)
@@ -395,6 +405,8 @@ pub fn run() {
             business_identifier_delete,
             // System commands
             settings_get_security_posture,
+            settings_get_idle_timeout,
+            settings_set_idle_timeout,
             debug_log_frontend,
             // AI commands (Phase 5)
             ai_enhance,
@@ -419,8 +431,21 @@ pub fn run() {
             settings_acknowledge_osint_consent,
             // Audit commands (migration 0010)
             audit_list_for_case,
+            audit_list_recent,
             audit_verify_chain,
             audit_export_case,
+            // Grafana commands
+            grafana_get_settings,
+            grafana_set_settings,
+            grafana_start,
+            grafana_stop,
+            grafana_status,
+            // Native dashboard commands (Grafana replacement)
+            case_dashboard_entity_stats,
+            case_dashboard_evidence_stats,
+            case_dashboard_link_stats,
+            case_dashboard_timeline,
+            case_dashboard_graph,
             // Update commands (Phase 6)
             settings_check_for_updates,
         ])

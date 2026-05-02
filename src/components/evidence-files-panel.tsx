@@ -103,7 +103,7 @@ function IntegrityBadge({ status }: { status: IntegrityStatus }) {
   if (status === "verified") {
     return (
       <span
-        className="inline-flex items-center gap-1 text-xs text-emerald-700 dark:text-emerald-400"
+        className="inline-flex items-center gap-1 text-xs text-success"
         title="SHA-256 verified on last download"
       >
         <ShieldCheck className="h-3.5 w-3.5" aria-hidden="true" />
@@ -158,7 +158,7 @@ function Sha256Cell({ hash }: { hash: string }) {
     >
       {preview}&hellip;
       {copied ? (
-        <Check className="h-3 w-3 text-emerald-600" aria-hidden="true" />
+        <Check className="h-3 w-3 text-success" aria-hidden="true" />
       ) : (
         <Copy className="h-3 w-3" aria-hidden="true" />
       )}
@@ -303,7 +303,7 @@ function ExecutableConfirmDialog({
         onEscapeKeyDown={(e: KeyboardEvent) => e.preventDefault()}
       >
         <DialogHeader>
-          <DialogTitle className="text-amber-700 dark:text-amber-400">
+          <DialogTitle className="text-warning">
             This file is an executable
           </DialogTitle>
         </DialogHeader>
@@ -330,7 +330,7 @@ function ExecutableConfirmDialog({
             Cancel
           </Button>
           <Button
-            className="bg-amber-600 text-white hover:bg-amber-700"
+            className="bg-warning text-warning-foreground hover:bg-warning/90"
             onClick={() => {
               onConfirm();
               onClose();
@@ -710,12 +710,10 @@ export function EvidenceFilesPanel({
         queryKey: queryKeys.evidenceFiles.listForEvidence(evidenceId),
       });
 
-      // Soft-warn on files larger than 2 GiB
-      const twoGib = 2 * 1024 * 1024 * 1024;
-      if (uploaded.size_bytes > twoGib) {
+      // Use backend warning for large files (>2 GiB soft limit)
+      if (uploaded.warning) {
         toastSuccess(
-          `File uploaded (${formatBytes(uploaded.size_bytes)}). ` +
-          "Large file — verify sufficient disk space before continuing.",
+          `File uploaded (${formatBytes(uploaded.size_bytes)}). ${uploaded.warning}`,
         );
       } else {
         toastSuccess("File uploaded and hash recorded.");

@@ -158,7 +158,7 @@ function buildElements(data: GraphPayload): cytoscape.ElementDefinition[] {
 }
 
 /** Cytoscape stylesheet shared across all instances. */
-const CY_STYLE: cytoscape.Stylesheet[] = [
+const CY_STYLE: cytoscape.StylesheetJson = [
   {
     selector: "node",
     style: {

@@ -30,6 +30,7 @@ use crate::{
         hashes,
         links as links_db,
         person_identifiers,
+        shares as shares_db,
         tools,
     },
     error::AppError,
@@ -165,6 +166,8 @@ struct ReportPayload {
     analysis_notes: Vec<AnalysisReport>,
     /// Phase B (migration 0008): rendered in the new "Entity Connections" section.
     links: Vec<LinkReport>,
+    /// Shares and distribution audit trail.
+    shares: Vec<ShareReport>,
     generated_at: String,
 }
 
@@ -206,6 +209,19 @@ struct IdentifierReport {
 
 /// Phase B (migration 0008): a single asserted connection with full
 /// attribution context. Rendered in the new "Entity Connections" section.
+#[allow(dead_code)]
+struct ShareReport {
+    share_id: i64,
+    record_type: String,
+    record_id: String,
+    record_summary: Option<String>,
+    action: String,
+    recipient: Option<String>,
+    shared_by: String,
+    created_at: String,
+    narrative: Option<String>,
+}
+
 #[allow(dead_code)]
 struct LinkReport {
     link_id: i64,
@@ -521,6 +537,23 @@ async fn gather_report_payload(
         })
         .collect();
 
+    // Shares audit trail
+    let share_rows = shares_db::list_for_case(&state.db.forensics, case_id).await?;
+    let shares: Vec<ShareReport> = share_rows
+        .into_iter()
+        .map(|s| ShareReport {
+            share_id: s.share_id,
+            record_type: s.record_type,
+            record_id: s.record_id,
+            record_summary: s.record_summary,
+            action: s.action,
+            recipient: s.recipient,
+            shared_by: s.shared_by,
+            created_at: s.created_at,
+            narrative: Some(s.narrative).filter(|n| !n.trim().is_empty()),
+        })
+        .collect();
+
     Ok(ReportPayload {
         case_id: case.case_id.clone(),
         case_name: case.case_name.clone(),
@@ -544,6 +577,7 @@ async fn gather_report_payload(
         all_tools,
         analysis_notes,
         links,
+        shares,
         generated_at: Utc::now().format("%Y-%m-%dT%H:%M:%S%.6fZ").to_string(),
     })
 }
@@ -622,6 +656,9 @@ fn render_markdown(p: &ReportPayload) -> Result<String, AppError> {
     out.push_str("- [Chain of Custody](#chain-of-custody)\n");
     out.push_str("- [Hash Verification](#hash-verification)\n");
     out.push_str("- [Tool Usage](#tool-usage)\n");
+    if !p.shares.is_empty() {
+        out.push_str("- [Shares and Distribution](#shares-and-distribution)\n");
+    }
     out.push_str("- [Conclusion](#conclusion)\n");
     out.push_str("- [Appendices](#appendices)\n\n");
     out.push_str("---\n\n");
@@ -1022,6 +1059,9 @@ fn render_markdown(p: &ReportPayload) -> Result<String, AppError> {
     // ── Entity Connections (Phase B, migration 0008) ──────────────────────────
     render_entity_connections(&mut out, &p.links);
 
+    // ── Shares and Distribution ───────────────────────────────────────────────
+    render_shares_section(&mut out, &p.shares);
+
     // ── Conclusion ────────────────────────────────────────────────────────────
     out.push_str("## Conclusion\n\n");
     out.push_str(&generate_conclusion(p));
@@ -1331,6 +1371,42 @@ fn render_entity_connections(out: &mut String, links: &[LinkReport]) {
     out.push_str("---\n\n");
 }
 
+fn render_shares_section(out: &mut String, shares: &[ShareReport]) {
+    if shares.is_empty() {
+        return;
+    }
+
+    out.push_str("## Shares and Distribution\n\n");
+    out.push_str(
+        "The following share events document when forensic data left the application \
+         via email or print. This section satisfies chain-of-custody audit \
+         requirements for evidence disposition.\n\n",
+    );
+
+    out.push_str("| # | Action | Record Type | Record ID | Summary | Shared By | Date | Recipient | Narrative |\n");
+    out.push_str("|---|--------|-------------|-----------|---------|-----------|------|-----------|-----------|\n");
+
+    for (i, s) in shares.iter().enumerate() {
+        let summary = s.record_summary.as_deref().unwrap_or("—");
+        let recipient = s.recipient.as_deref().unwrap_or("—");
+        let narrative = s.narrative.as_deref().unwrap_or("—");
+        out.push_str(&format!(
+            "| {} | {} | {} | `{}` | {} | {} | {} | {} | {} |\n",
+            i + 1,
+            esc_md(&s.action),
+            esc_md(&s.record_type),
+            esc_md(&s.record_id),
+            esc_md(summary),
+            esc_md(&s.shared_by),
+            esc_md(&s.created_at),
+            esc_md(recipient),
+            esc_md(narrative),
+        ));
+    }
+
+    out.push('\n');
+}
+
 fn generate_conclusion(p: &ReportPayload) -> String {
     let mut conclusion = format!(
         "The examination of case {} involved the analysis of {} evidence items. ",
@@ -1628,15 +1704,40 @@ fn render_pdf_standard(p: &ReportPayload) -> Result<Vec<u8>, AppError> {
         }
     }
 
+    // ── Shares and Distribution ──
+    if !p.shares.is_empty() {
+        b.new_page();
+        b.draw_heading("8. Shares and Distribution");
+        b.draw_line(&format!("{} share event(s) documented:", p.shares.len()));
+        b.advance(3.0);
+        for s in &p.shares {
+            let summary = s.record_summary.as_deref().unwrap_or("");
+            let recipient = s.recipient.as_deref().unwrap_or("—");
+            b.draw_bullet(&format!(
+                "[{}] {} — {} ({}): {} by {} on {}. Recipient: {}.",
+                s.share_id,
+                s.action,
+                s.record_type,
+                s.record_id,
+                summary,
+                s.shared_by,
+                s.created_at,
+                recipient
+            ));
+        }
+    }
+
     // ── Limitations ──
     b.new_page();
-    b.draw_heading("8. Limitations");
+    let limitations_num = if p.shares.is_empty() { "8" } else { "9" };
+    b.draw_heading(&format!("{limitations_num}. Limitations"));
     b.draw_paragraph("This examination was conducted within the constraints of the available evidence, tools, and time. Findings are limited to the artifacts that were recoverable and interpretable. Deleted or overwritten data may not be fully recoverable. The absence of evidence is not evidence of absence.");
     b.draw_paragraph("All findings carry a Validation Level (0–4) indicating the depth of independent verification performed. Findings marked Unvalidated (Level 0) should be treated as provisional and require further examiner validation before being relied upon in legal proceedings.");
     b.draw_paragraph("Tool versions and method references are recorded per finding to enable reproduction. Any discrepancy between the reported tool version and the version used for reproduction should be documented as a limitation.");
 
     // ── Signature Block ──
-    b.draw_heading("9. Examiner Certification");
+    let cert_num = if p.shares.is_empty() { "9" } else { "10" };
+    b.draw_heading(&format!("{cert_num}. Examiner Certification"));
     b.draw_paragraph("I hereby certify that I have examined the digital evidence described in this report, that the findings are true and accurate to the best of my knowledge and ability, and that the procedures and methods used are consistent with established forensic best practices.");
     b.advance(20.0);
     b.draw_line("_________________________________________");
@@ -1975,14 +2076,38 @@ fn render_pdf_swgde(p: &ReportPayload) -> Result<Vec<u8>, AppError> {
     b.draw_line("Derivative Works (working copies, reports, exhibits): [Not recorded]");
     b.draw_line("Retention Period: Per organizational policy.");
 
-    // ── 9. Limitations ──
-    b.draw_section_heading("9. Limitations");
+    // ── 9. Shares and Distribution ──
+    if !p.shares.is_empty() {
+        b.draw_section_heading("9. Shares and Distribution");
+        b.draw_paragraph("The following share events document when forensic data left the application via email or print. This section satisfies chain-of-custody audit requirements for evidence disposition.");
+        b.draw_line(&format!("{} share event(s) documented:", p.shares.len()));
+        b.advance(3.0);
+        for s in &p.shares {
+            let summary = s.record_summary.as_deref().unwrap_or("");
+            let recipient = s.recipient.as_deref().unwrap_or("[Not recorded]");
+            b.draw_bullet(&format!(
+                "[{}] {} — {} ({}): {} by {} on {}. Recipient: {}.",
+                s.share_id,
+                s.action,
+                s.record_type,
+                s.record_id,
+                summary,
+                s.shared_by,
+                s.created_at,
+                recipient
+            ));
+        }
+    }
+
+    // ── 10. Limitations ──
+    b.draw_section_heading(if p.shares.is_empty() { "9. Limitations" } else { "10. Limitations" });
     b.draw_paragraph("This examination was conducted within the constraints of the available evidence, tools, and time. Findings are limited to the artifacts that were recoverable and interpretable. Deleted or overwritten data may not be fully recoverable. The absence of evidence is not evidence of absence.");
     b.draw_paragraph("All findings carry a Validation Level (0–4) indicating the depth of independent verification performed. Findings marked Unvalidated (Level 0) should be treated as provisional and require further examiner validation before being relied upon in legal proceedings.");
     b.draw_paragraph("Tool versions and method references are recorded per finding to enable reproduction. Any discrepancy between the reported tool version and the version used for reproduction should be documented as a limitation.");
 
-    // ── 10. Report Authorization ──
-    b.draw_section_heading("10. Report Authorization");
+    // ── Report Authorization ──
+    let auth_heading = if p.shares.is_empty() { "10. Report Authorization" } else { "11. Report Authorization" };
+    b.draw_section_heading(auth_heading);
     b.draw_paragraph("I hereby certify that I have examined the digital evidence described in this report, that the findings are true and accurate to the best of my knowledge and ability, and that the procedures and methods used are consistent with established forensic best practices and SWGDE standards.");
     b.advance(20.0);
     b.draw_line("_________________________________________");
@@ -2321,6 +2446,7 @@ mod tests {
             all_tools: vec![],
             analysis_notes: vec![],
             links: vec![],
+            shares: vec![],
             generated_at: "2024-01-01T00:00:00Z".into(),
         };
         let bytes = render_pdf(&payload, &ReportTemplate::Standard)
@@ -2349,6 +2475,7 @@ mod tests {
             all_tools: vec![],
             analysis_notes: vec![],
             links: vec![],
+            shares: vec![],
             generated_at: "2024-01-01T00:00:00Z".into(),
         };
         let bytes = render_pdf(&payload, &ReportTemplate::Swgde)
@@ -2380,6 +2507,7 @@ mod tests {
             all_tools: vec![],
             analysis_notes: vec![],
             links: vec![],
+            shares: vec![],
             generated_at: "2024-06-01T12:00:00Z".into(),
         };
         let bytes = render_pdf(&payload, &ReportTemplate::Swgde)

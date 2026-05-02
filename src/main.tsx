@@ -6,6 +6,7 @@ import { ReactQueryDevtools } from "@tanstack/react-query-devtools";
 
 import { routeTree } from "./routeTree.gen";
 import { debugLogFrontend } from "./lib/bindings";
+import { SessionLockProvider } from "./components/session-lock-provider";
 import "./styles/globals.css";
 
 // Global error bridge → Rust tracing log. Captures any frontend error/rejection
@@ -65,7 +66,9 @@ const queryClient = new QueryClient({
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>
     <QueryClientProvider client={queryClient}>
-      <RouterProvider router={router} />
+      <SessionLockProvider>
+        <RouterProvider router={router} />
+      </SessionLockProvider>
       {import.meta.env.DEV && <ReactQueryDevtools initialIsOpen={false} />}
     </QueryClientProvider>
   </React.StrictMode>,

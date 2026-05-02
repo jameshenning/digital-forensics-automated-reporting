@@ -250,6 +250,46 @@ CREATE TABLE IF NOT EXISTS case_shares (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (case_id) REFERENCES cases (case_id) ON DELETE RESTRICT
 );
+
+-- migration 0004: person identifiers
+CREATE TABLE IF NOT EXISTS person_identifiers (
+    identifier_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    entity_id INTEGER NOT NULL,
+    identifier_type TEXT NOT NULL,
+    identifier_value TEXT NOT NULL,
+    issued_by TEXT,
+    issued_date TEXT,
+    expiry_date TEXT,
+    notes TEXT,
+    is_primary INTEGER DEFAULT 0,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (entity_id) REFERENCES entities (entity_id) ON DELETE RESTRICT
+);
+
+-- migration 0005: business identifiers
+CREATE TABLE IF NOT EXISTS business_identifiers (
+    identifier_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    entity_id INTEGER NOT NULL,
+    identifier_type TEXT NOT NULL,
+    identifier_value TEXT NOT NULL,
+    issued_by TEXT,
+    issued_date TEXT,
+    expiry_date TEXT,
+    notes TEXT,
+    is_primary INTEGER DEFAULT 0,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (entity_id) REFERENCES entities (entity_id) ON DELETE RESTRICT
+);
+
+-- migration 0007: analysis reviews
+CREATE TABLE IF NOT EXISTS analysis_reviews (
+    review_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    note_id INTEGER NOT NULL REFERENCES analysis_notes(note_id),
+    reviewed_by TEXT NOT NULL,
+    reviewed_at TEXT NOT NULL,
+    review_notes TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
 "#;
 
 const AUTH_SCHEMA: &str = r#"
@@ -390,7 +430,7 @@ async fn test_01_crud_roundtrip() {
     assert_eq!(created.tags, vec!["cyber", "fraud"]);
 
     // List — should show 1 row
-    let list = list_cases(&pool, 100, 0).await.expect("list_cases failed");
+    let list = list_cases(&pool, 100, 0, None).await.expect("list_cases failed");
     assert_eq!(list.len(), 1);
     assert_eq!(list[0].case_id, "CASE-2026-001");
     assert_eq!(list[0].evidence_count, 0);
@@ -424,15 +464,15 @@ async fn test_01_crud_roundtrip() {
     assert_eq!(updated.tags, vec!["closed"]);
 
     // List again — still 1 row, name is updated
-    let list2 = list_cases(&pool, 100, 0).await.expect("list_cases failed");
+    let list2 = list_cases(&pool, 100, 0, None).await.expect("list_cases failed");
     assert_eq!(list2.len(), 1);
     assert_eq!(list2[0].case_id, "CASE-2026-001");
 
     // Delete
-    delete_case(&pool, "CASE-2026-001").await.expect("delete_case failed");
+    delete_case(&pool, "CASE-2026-001", false).await.expect("delete_case failed");
 
     // List — empty
-    let list3 = list_cases(&pool, 100, 0).await.expect("list_cases after delete");
+    let list3 = list_cases(&pool, 100, 0, None).await.expect("list_cases after delete");
     assert!(list3.is_empty(), "list should be empty after delete");
 }
 
@@ -474,7 +514,7 @@ async fn test_03_update_nonexistent() {
 async fn test_04_delete_nonexistent() {
     let (_state, pool) = build_state().await;
 
-    let err = delete_case(&pool, "GHOST-002")
+    let err = delete_case(&pool, "GHOST-002", false)
         .await
         .expect_err("delete of missing case must fail");
     assert!(
@@ -512,13 +552,84 @@ async fn test_05_delete_case_with_evidence() {
     .expect("insert evidence for test");
 
     // Now attempt to delete the case — must fail with CaseHasEvidence
-    let err = delete_case(&pool, "CASE-WITH-EVIDENCE")
+    let err = delete_case(&pool, "CASE-WITH-EVIDENCE", false)
         .await
         .expect_err("delete must fail when evidence exists");
     assert!(
         matches!(err, AppError::CaseHasEvidence { ref case_id } if case_id == "CASE-WITH-EVIDENCE"),
         "expected CaseHasEvidence, got: {err:?}"
     );
+}
+
+// ─── Test 5b: Cascade delete case with evidence ──────────────────────────────
+
+#[tokio::test]
+async fn test_05b_delete_case_with_evidence_cascade() {
+    let (_state, pool) = build_state().await;
+
+    // Create the case first
+    let input = minimal_input("CASE-CASCADE-001");
+    create_case(&pool, &input).await.expect("create_case");
+
+    // Insert an evidence row directly
+    sqlx::query(
+        r#"
+        INSERT INTO evidence (
+            evidence_id, case_id, description, collected_by, collection_datetime
+        ) VALUES (?, ?, ?, ?, ?)
+        "#,
+    )
+    .bind("EV-CASCADE-001")
+    .bind("CASE-CASCADE-001")
+    .bind("Test evidence item")
+    .bind("examiner")
+    .bind("2026-04-12T10:00:00")
+    .execute(&pool)
+    .await
+    .expect("insert evidence for test");
+
+    // Insert a hash verification row (child of evidence)
+    sqlx::query(
+        r#"
+        INSERT INTO hash_verification (
+            evidence_id, algorithm, hash_value, verified_by, verification_datetime
+        ) VALUES (?, ?, ?, ?, ?)
+        "#,
+    )
+    .bind("EV-CASCADE-001")
+    .bind("SHA-256")
+    .bind("abcd1234")
+    .bind("examiner")
+    .bind("2026-04-12T10:00:00")
+    .execute(&pool)
+    .await
+    .expect("insert hash for test");
+
+    // Cascade delete must succeed
+    delete_case(&pool, "CASE-CASCADE-001", true)
+        .await
+        .expect("cascade delete must succeed");
+
+    // Case is gone
+    let list = list_cases(&pool, 100, 0, None).await.unwrap();
+    assert!(list.is_empty(), "list should be empty after cascade delete");
+
+    // Evidence is gone
+    let ev: Vec<(String,)> = sqlx::query_as("SELECT evidence_id FROM evidence WHERE case_id = ?")
+        .bind("CASE-CASCADE-001")
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+    assert!(ev.is_empty(), "evidence should be deleted");
+
+    // Hash verification is gone
+    let hashes: Vec<(i64,)> =
+        sqlx::query_as("SELECT hash_id FROM hash_verification WHERE evidence_id = ?")
+            .bind("EV-CASCADE-001")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert!(hashes.is_empty(), "hash_verification should be deleted");
 }
 
 // ─── Test 6: Tag lifecycle ────────────────────────────────────────────────────
@@ -546,7 +657,7 @@ async fn test_06_tag_lifecycle() {
     );
 
     // List view shouldn't show tags (CaseSummary doesn't carry them)
-    let list = list_cases(&pool, 100, 0).await.unwrap();
+    let list = list_cases(&pool, 100, 0, None).await.unwrap();
     assert_eq!(list.len(), 1);
 
     // Get — sorted
@@ -797,15 +908,15 @@ async fn test_pagination() {
     }
 
     // limit=2 offset=0 — first 2
-    let page1 = list_cases(&pool, 2, 0).await.unwrap();
+    let page1 = list_cases(&pool, 2, 0, None).await.unwrap();
     assert_eq!(page1.len(), 2);
 
     // limit=2 offset=2 — next 2
-    let page2 = list_cases(&pool, 2, 2).await.unwrap();
+    let page2 = list_cases(&pool, 2, 2, None).await.unwrap();
     assert_eq!(page2.len(), 2);
 
     // limit=2 offset=4 — last 1
-    let page3 = list_cases(&pool, 2, 4).await.unwrap();
+    let page3 = list_cases(&pool, 2, 4, None).await.unwrap();
     assert_eq!(page3.len(), 1);
 
     // All 5 IDs across pages should be distinct
@@ -845,7 +956,7 @@ async fn test_evidence_count_in_list() {
         .unwrap();
     }
 
-    let list = list_cases(&pool, 100, 0).await.unwrap();
+    let list = list_cases(&pool, 100, 0, None).await.unwrap();
     assert_eq!(list.len(), 1);
     assert_eq!(
         list[0].evidence_count, 3,

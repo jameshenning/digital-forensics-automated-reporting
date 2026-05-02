@@ -16,6 +16,12 @@ use crate::error::AppError;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
+    // ─── Security ─────────────────────────────────────────────────────────────
+    /// Idle timeout in seconds before the session auto-locks.
+    /// Default 300 seconds (5 minutes).
+    #[serde(default = "default_idle_timeout_seconds")]
+    pub idle_timeout_seconds: u32,
+
     // ─── Network ──────────────────────────────────────────────────────────────
     /// IPv4 address the axum server binds to. Default "127.0.0.1" (loopback only).
     #[serde(default = "default_bind_host")]
@@ -94,6 +100,19 @@ pub struct AppConfig {
     pub max_upload_bytes: Option<u64>,
     #[serde(default)]
     pub evidence_onedrive_risk_acknowledged: bool,
+
+    // ─── Grafana integration ──────────────────────────────────────────────────
+    /// Whether the Grafana dashboard integration is enabled.
+    #[serde(default)]
+    pub grafana_enabled: bool,
+
+    /// Service token Grafana uses to authenticate against DFARS Axum endpoints.
+    /// Generated once when Grafana is first enabled. `None` until initialized.
+    pub grafana_service_token: Option<String>,
+}
+
+fn default_idle_timeout_seconds() -> u32 {
+    300
 }
 
 fn default_bind_host() -> String {
@@ -111,6 +130,7 @@ fn default_smtp_tls() -> bool {
 impl Default for AppConfig {
     fn default() -> Self {
         Self {
+            idle_timeout_seconds: default_idle_timeout_seconds(),
             bind_host: default_bind_host(),
             allow_network_bind: false,
             axum_port: default_axum_port(),
@@ -128,6 +148,8 @@ impl Default for AppConfig {
             smtp_tls: default_smtp_tls(),
             max_upload_bytes: None,
             evidence_onedrive_risk_acknowledged: false,
+            grafana_enabled: false,
+            grafana_service_token: None,
         }
     }
 }

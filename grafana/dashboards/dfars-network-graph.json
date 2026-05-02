@@ -1,0 +1,77 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": "-- Grafana --",
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "editable": true,
+  "gnetId": null,
+  "graphTooltip": 0,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "datasource": "DFARS",
+      "gridPos": { "h": 24, "w": 24, "x": 0, "y": 0 },
+      "id": 1,
+      "targets": [
+        {
+          "refId": "A",
+          "urlPath": "/cases/${caseId}/nodes",
+          "query": ".",
+          "columns": [
+            { "text": "id", "type": "string" },
+            { "text": "title", "type": "string" },
+            { "text": "subtitle", "type": "string" },
+            { "text": "mainStat", "type": "number" },
+            { "text": "color", "type": "string" }
+          ]
+        },
+        {
+          "refId": "B",
+          "urlPath": "/cases/${caseId}/edges",
+          "query": ".",
+          "columns": [
+            { "text": "id", "type": "string" },
+            { "text": "source", "type": "string" },
+            { "text": "target", "type": "string" },
+            { "text": "mainStat", "type": "string" }
+          ]
+        }
+      ],
+      "title": "Entity Network Graph",
+      "type": "nodeGraph"
+    }
+  ],
+  "schemaVersion": 36,
+  "style": "dark",
+  "tags": ["dfars", "network"],
+  "templating": {
+    "list": [
+      {
+        "current": { "value": "CASE-001", "text": "CASE-001" },
+        "hide": 0,
+        "label": "Case ID",
+        "name": "caseId",
+        "options": [],
+        "query": "CASE-001",
+        "skipUrlSync": false,
+        "type": "textbox"
+      }
+    ]
+  },
+  "time": { "from": "now-6h", "to": "now" },
+  "timepicker": {},
+  "timezone": "",
+  "title": "DFARS Network Graph",
+  "uid": "dfars-network-graph",
+  "version": 1
+}

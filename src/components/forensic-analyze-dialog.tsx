@@ -212,7 +212,7 @@ export function ForensicAnalyzeDialog({
               </p>
             </div>
 
-            <div className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-sm text-amber-700 dark:text-amber-400">
+            <div className="rounded-md border border-warning/40 bg-warning/10 p-3 text-sm text-warning">
               <strong>Note:</strong> Agent Zero will download evidence files from the
               DFARS server using a scoped API token. Analysis may take up to 5 minutes.
             </div>

@@ -12,7 +12,7 @@ use tauri::State;
 
 use crate::{
     auth::session::require_session,
-    db::audit_entries::{self, AuditEntry},
+    db::audit_entries::{self, AuditEntry, AuditEntryWithCaseName},
     error::AppError,
     state::AppState,
 };
@@ -41,6 +41,18 @@ pub async fn audit_list_for_case(
 ) -> Result<Vec<AuditEntry>, AppError> {
     let _session = require_session(&state, &token)?;
     audit_entries::list_for_case(&state.db.forensics, &case_id).await
+}
+
+/// List the most recent audit entries across all cases.
+#[tauri::command(rename_all = "snake_case")]
+pub async fn audit_list_recent(
+    token: String,
+    limit: Option<i64>,
+    state: State<'_, Arc<AppState>>,
+) -> Result<Vec<AuditEntryWithCaseName>, AppError> {
+    let _session = require_session(&state, &token)?;
+    let limit = limit.unwrap_or(20);
+    audit_entries::list_recent(&state.db.forensics, limit).await
 }
 
 /// Verify the hash chain for a case.

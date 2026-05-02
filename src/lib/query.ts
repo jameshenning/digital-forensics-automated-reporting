@@ -29,6 +29,8 @@ export const queryKeys = {
       ["cases", "list", limit, offset] as const,
     /** Full case detail by ID */
     detail: (caseId: string) => ["cases", "detail", caseId] as const,
+    /** Aggregated dashboard stats */
+    stats: ["cases", "stats"] as const,
   },
 
   /** Evidence query keys */
@@ -176,5 +178,32 @@ export const queryKeys = {
   /** Network binding status (Phase 5) */
   network: {
     status: ["network", "status"] as const,
+  },
+
+  /** Idle timeout setting */
+  idleTimeout: {
+    settings: ["idleTimeout", "settings"] as const,
+  },
+
+  /** Grafana integration settings */
+  grafana: {
+    settings: ["grafana", "settings"] as const,
+  },
+
+  /** Upload settings */
+  upload: {
+    settings: ["upload", "settings"] as const,
+  },
+
+  /** Share audit trail query keys */
+  shares: {
+    listForCase: (caseId: string) =>
+      ["shares", "list", "case", caseId] as const,
+  },
+
+  /** Audit (hash-chained tamper-evident) query keys */
+  audit: {
+    listForCase: (caseId: string) =>
+      ["audit", "list", "case", caseId] as const,
   },
 } as const;

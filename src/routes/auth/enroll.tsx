@@ -250,8 +250,8 @@ function EnrollPage() {
               </span>
             </div>
 
-            <Alert className="border-amber-500/50 bg-amber-500/10">
-              <AlertDescription className="text-amber-700 dark:text-amber-400">
+            <Alert className="border-warning/50 bg-warning/10">
+              <AlertDescription className="text-warning">
                 <strong>These codes are shown once and never again.</strong>{" "}
                 Save them somewhere safe. Each code can only be used once to
                 sign in if you lose access to your authenticator app.

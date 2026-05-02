@@ -41,7 +41,7 @@ use tracing::{error, info, warn};
 
 use crate::audit;
 use crate::auth::tokens::VerifiedToken;
-use crate::db::{analysis, cases, custody, evidence, evidence_files, hashes, tools};
+use crate::db::{analysis, cases, custody, evidence, evidence_files, grafana, hashes, tools};
 use crate::error::AppError;
 use crate::state::AppState;
 
@@ -329,6 +329,13 @@ fn build_router(state: Arc<AppState>) -> Router {
             "/api/v1/cases/:case_id/evidence/:evidence_id/files/:file_id/download",
             get(download_file),
         )
+        // Grafana read-only dashboards
+        .route("/api/v1/grafana/cases/:case_id/nodes", get(grafana_nodes))
+        .route("/api/v1/grafana/cases/:case_id/edges", get(grafana_edges))
+        .route("/api/v1/grafana/cases/:case_id/stats/entities", get(grafana_entity_stats))
+        .route("/api/v1/grafana/cases/:case_id/stats/evidence", get(grafana_evidence_stats))
+        .route("/api/v1/grafana/cases/:case_id/stats/links", get(grafana_link_stats))
+        .route("/api/v1/grafana/cases/:case_id/timeline", get(grafana_timeline))
         // Global middleware: bearer auth runs on every request.
         // Global body limit floor: 64 KiB.
         .layer(middleware::from_fn_with_state(
@@ -365,8 +372,26 @@ async fn bearer_auth_middleware(
     // MUST-DO 2: Reject session tokens at the axum layer.
     // Run a dummy Argon2 call first to avoid timing discrepancy
     // between "bad prefix" and "no preview match" paths.
-    if token.starts_with("sess_") || !token.starts_with("dfars_") {
-        // Close timing oracle: run dummy Argon2 regardless of prefix.
+    if token.starts_with("sess_") {
+        let _ = crate::auth::tokens::dummy_verify(&state).await;
+        return Err(ApiError::unauthorized());
+    }
+
+    // Grafana service token — validated against AppConfig, not the auth DB.
+    if token.starts_with("grafana_") {
+        match &state.config.grafana_service_token {
+            Some(expected) if expected == &token => {
+                return Ok(next.run(req).await);
+            }
+            _ => {
+                let _ = crate::auth::tokens::dummy_verify(&state).await;
+                return Err(ApiError::unauthorized());
+            }
+        }
+    }
+
+    // Standard API tokens (dfars_...)
+    if !token.starts_with("dfars_") {
         let _ = crate::auth::tokens::dummy_verify(&state).await;
         return Err(ApiError::unauthorized());
     }
@@ -465,7 +490,7 @@ async fn list_cases(
     Extension(_token): Extension<VerifiedToken>,
 ) -> ApiResult<Vec<cases::CaseSummary>> {
     // Default: return first 1000 cases (v1 parity — no pagination in the REST API).
-    let rows = cases::list_cases(&state.db.forensics, 1000, 0)
+    let rows = cases::list_cases(&state.db.forensics, 1000, 0, None)
         .await
         .map_err(ApiError::from)?;
     Ok(Json(rows))
@@ -771,6 +796,56 @@ async fn read_and_verify_file(
     let hash_verified = computed.eq_ignore_ascii_case(&ef.sha256);
 
     Ok((hash_verified, bytes))
+}
+
+// ─── Grafana dashboard handlers ───────────────────────────────────────────────
+
+async fn grafana_nodes(
+    State(state): State<Arc<AppState>>,
+    Path(case_id): Path<String>,
+) -> Result<Json<grafana::NodeGraphPayload>, ApiError> {
+    let payload = grafana::node_graph_for_case(&state.db.forensics, &case_id).await?;
+    Ok(Json(payload))
+}
+
+async fn grafana_edges(
+    State(state): State<Arc<AppState>>,
+    Path(case_id): Path<String>,
+) -> Result<Json<Vec<grafana::GrafanaEdge>>, ApiError> {
+    let payload = grafana::node_graph_for_case(&state.db.forensics, &case_id).await?;
+    Ok(Json(payload.edges))
+}
+
+async fn grafana_entity_stats(
+    State(state): State<Arc<AppState>>,
+    Path(case_id): Path<String>,
+) -> Result<Json<Vec<grafana::EntityTypeStat>>, ApiError> {
+    let stats = grafana::entity_type_stats(&state.db.forensics, &case_id).await?;
+    Ok(Json(stats))
+}
+
+async fn grafana_evidence_stats(
+    State(state): State<Arc<AppState>>,
+    Path(case_id): Path<String>,
+) -> Result<Json<Vec<grafana::EvidenceTypeStat>>, ApiError> {
+    let stats = grafana::evidence_type_stats(&state.db.forensics, &case_id).await?;
+    Ok(Json(stats))
+}
+
+async fn grafana_link_stats(
+    State(state): State<Arc<AppState>>,
+    Path(case_id): Path<String>,
+) -> Result<Json<Vec<grafana::LinkLabelStat>>, ApiError> {
+    let stats = grafana::link_label_stats(&state.db.forensics, &case_id).await?;
+    Ok(Json(stats))
+}
+
+async fn grafana_timeline(
+    State(state): State<Arc<AppState>>,
+    Path(case_id): Path<String>,
+) -> Result<Json<Vec<grafana::TimelineEvent>>, ApiError> {
+    let events = grafana::timeline_events(&state.db.forensics, &case_id).await?;
+    Ok(Json(events))
 }
 
 #[cfg(test)]

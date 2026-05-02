@@ -27,6 +27,9 @@ pub enum AppError {
     #[error("no recovery codes remaining")]
     NoRecoveryCodesRemaining,
 
+    #[error("MFA locked out after too many failed attempts")]
+    MfaLockout,
+
     #[error("user already exists")]
     UserAlreadyExists,
 

@@ -180,7 +180,7 @@ impl SessionState {
     /// Record an MFA failure for a pending session.
     ///
     /// Returns `Ok(())` if the session should continue (under the limit).
-    /// Returns `Err(AppError::Unauthorized)` if the failure limit is reached —
+    /// Returns `Err(AppError::MfaLockout)` if the failure limit is reached —
     /// callers must force the user back to the password step.
     /// SEC-1 SHOULD-DO 2+3.
     pub fn record_mfa_failure(&self, token: &str) -> Result<(), AppError> {
@@ -198,7 +198,7 @@ impl SessionState {
                         username = %username,
                         "pending session invalidated after {MAX_MFA_FAILURES} MFA failures"
                     );
-                    return Err(AppError::Unauthorized);
+                    return Err(AppError::MfaLockout);
                 }
                 Ok(())
             }
@@ -360,10 +360,42 @@ mod tests {
                 "should survive failure {i}"
             );
         }
-        // The Nth failure should invalidate.
-        assert!(ss.record_mfa_failure(&token).is_err());
+        // The Nth failure should return MfaLockout and invalidate the session.
+        let err = ss.record_mfa_failure(&token).unwrap_err();
+        assert!(
+            matches!(err, AppError::MfaLockout),
+            "expected MfaLockout, got {err:?}"
+        );
         // Session should be gone.
         assert!(ss.get_and_touch(&token).is_err());
+    }
+
+    #[test]
+    fn mfa_failure_count_tracked_per_session() {
+        let ss = make_sessions();
+        let token_a = ss.create_pending("alice", None);
+        let token_b = ss.create_pending("bob", None);
+
+        // Alice fails twice — should still be valid.
+        ss.record_mfa_failure(&token_a).unwrap();
+        ss.record_mfa_failure(&token_a).unwrap();
+        assert!(ss.get_and_touch(&token_a).is_ok());
+
+        // Bob fails once — should still be valid.
+        ss.record_mfa_failure(&token_b).unwrap();
+        assert!(ss.get_and_touch(&token_b).is_ok());
+
+        // Alice needs (MAX_MFA_FAILURES - 2 - 1) more ok failures,
+        // then the next one triggers lockout.
+        let remaining_ok = MAX_MFA_FAILURES - 2 - 1;
+        for _ in 0..remaining_ok {
+            ss.record_mfa_failure(&token_a).unwrap();
+        }
+        let err = ss.record_mfa_failure(&token_a).unwrap_err();
+        assert!(matches!(err, AppError::MfaLockout));
+
+        // Bob is unaffected.
+        assert!(ss.get_and_touch(&token_b).is_ok());
     }
 
     /// Deliverable 8 (SEC-1): Session inactive for >30 minutes must be evicted

@@ -36,6 +36,20 @@ pub struct AuditEntry {
     pub entry_hash: String,
 }
 
+/// Audit entry with the associated case name for display purposes.
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct AuditEntryWithCaseName {
+    pub entry_id: i64,
+    pub case_id: Option<String>,
+    pub case_name: Option<String>,
+    pub timestamp: String,
+    pub actor: String,
+    pub action: String,
+    pub details: Option<String>,
+    pub prev_hash: String,
+    pub entry_hash: String,
+}
+
 /// Input for writing a new audit entry.
 #[derive(Debug, Clone)]
 pub struct AuditEntryInput {
@@ -171,6 +185,36 @@ pub async fn list_global(
         ORDER BY entry_id ASC
         "#,
     )
+    .fetch_all(pool)
+    .await
+    .map_err(|e| AppError::Db(e.to_string()))?;
+    Ok(rows)
+}
+
+/// List the most recent audit entries across all cases, ordered newest first.
+pub async fn list_recent(
+    pool: &SqlitePool,
+    limit: i64,
+) -> Result<Vec<AuditEntryWithCaseName>, AppError> {
+    let rows = sqlx::query_as::<_, AuditEntryWithCaseName>(
+        r#"
+        SELECT
+            ae.entry_id,
+            ae.case_id,
+            c.case_name,
+            ae.timestamp,
+            ae.actor,
+            ae.action,
+            ae.details,
+            ae.prev_hash,
+            ae.entry_hash
+        FROM audit_entries ae
+        LEFT JOIN cases c ON ae.case_id = c.case_id
+        ORDER BY ae.entry_id DESC
+        LIMIT ?
+        "#,
+    )
+    .bind(limit)
     .fetch_all(pool)
     .await
     .map_err(|e| AppError::Db(e.to_string()))?;

@@ -51,7 +51,6 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert";
 import {
   AlertDialog,
-  AlertDialogAction,
   AlertDialogCancel,
   AlertDialogContent,
   AlertDialogDescription,
@@ -60,7 +59,6 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
-import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import {
   Dialog,
   DialogContent,
@@ -69,13 +67,8 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 
-import { EvidencePanel } from "@/components/evidence-panel";
-import { PersonsPanel } from "@/components/persons-panel";
-import { BusinessesPanel } from "@/components/businesses-panel";
-import { CustodyPanel } from "@/components/custody-panel";
-import { HashPanel } from "@/components/hash-panel";
-import { ToolsPanel } from "@/components/tools-panel";
-import { AnalysisPanel } from "@/components/analysis-panel";
+
+import { CaseWizard } from "@/components/case-wizard";
 // Lazy-load ReportDialog: it pulls in react-markdown + remark-gfm (~200 KB)
 // that are only needed when the investigator explicitly opens a report preview.
 const ReportDialog = lazy(() =>
@@ -173,6 +166,10 @@ interface DeleteDialogProps {
   caseName: string;
   isPending: boolean;
   hasEvidenceError: boolean;
+  cascade: boolean;
+  onCascadeChange: (checked: boolean) => void;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
   onConfirm: () => void;
 }
 
@@ -181,10 +178,14 @@ function DeleteDialog({
   caseName,
   isPending,
   hasEvidenceError,
+  cascade,
+  onCascadeChange,
+  open,
+  onOpenChange,
   onConfirm,
 }: DeleteDialogProps) {
   return (
-    <AlertDialog>
+    <AlertDialog open={open} onOpenChange={onOpenChange}>
       <AlertDialogTrigger asChild>
         <Button variant="destructive" size="sm">
           <Trash2 className="h-4 w-4 mr-1" />
@@ -201,24 +202,47 @@ function DeleteDialog({
                 action cannot be undone.
               </p>
               {hasEvidenceError && (
-                <div className="rounded-md border border-destructive/50 bg-destructive/10 p-3 text-sm text-destructive">
-                  <strong>Cannot delete:</strong> this case has linked evidence
-                  items. Delete all evidence items from the Evidence tab first.
-                </div>
+                <>
+                  <div className="rounded-md border border-destructive/50 bg-destructive/10 p-3 text-sm text-destructive">
+                    <strong>Cannot delete:</strong> this case has linked
+                    evidence, custody records, analysis notes, entities, or
+                    other linked data. You must either remove those items first
+                    or choose the cascade delete option below.
+                  </div>
+                  <label className="flex items-start gap-2 text-sm cursor-pointer">
+                    <input
+                      type="checkbox"
+                      className="mt-0.5 h-4 w-4 accent-destructive"
+                      checked={cascade}
+                      onChange={(e) => onCascadeChange(e.target.checked)}
+                    />
+                    <span className="text-foreground">
+                      <strong>Permanently delete everything.</strong> This will
+                      destroy all evidence items, custody records, hash
+                      verifications, tool usage logs, analysis notes, entities,
+                      links, events, shares, and audit entries associated with
+                      this case. This action is irreversible.
+                    </span>
+                  </label>
+                </>
               )}
             </div>
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
-          <AlertDialogCancel>Cancel</AlertDialogCancel>
-          {!hasEvidenceError && (
-            <AlertDialogAction
+          <AlertDialogCancel disabled={isPending}>Cancel</AlertDialogCancel>
+          {(!hasEvidenceError || cascade) && (
+            <Button
+              variant="destructive"
               onClick={onConfirm}
               disabled={isPending}
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
             >
-              {isPending ? "Deleting…" : "Delete case"}
-            </AlertDialogAction>
+              {isPending
+                ? "Deleting…"
+                : cascade
+                  ? "Delete Everything"
+                  : "Delete case"}
+            </Button>
           )}
         </AlertDialogFooter>
       </AlertDialogContent>
@@ -245,8 +269,10 @@ function CaseDetailPage() {
     }).catch(() => {});
   }, [caseId, token]);
 
+  const [deleteDialogOpen, setDeleteDialogOpen] = React.useState(false);
   const [deleteHasEvidenceError, setDeleteHasEvidenceError] =
     React.useState(false);
+  const [deleteCascade, setDeleteCascade] = React.useState(false);
   const [reportOpen, setReportOpen] = React.useState(false);
 
   // AI state
@@ -302,8 +328,11 @@ function CaseDetailPage() {
   }, [isError, error, navigate]);
 
   const deleteMutation = useMutation({
-    mutationFn: () => caseDelete({ token, case_id: caseId }),
+    mutationFn: (opts: { cascade?: boolean }) =>
+      caseDelete({ token, case_id: caseId, cascade: opts.cascade }),
     onSuccess: () => {
+      setDeleteDialogOpen(false);
+      setDeleteCascade(false);
       queryClient.removeQueries({
         queryKey: queryKeys.cases.detail(caseId),
       });
@@ -540,7 +569,17 @@ function CaseDetailPage() {
                   caseName={c.case_name}
                   isPending={deleteMutation.isPending}
                   hasEvidenceError={deleteHasEvidenceError}
-                  onConfirm={() => deleteMutation.mutate()}
+                  cascade={deleteCascade}
+                  onCascadeChange={setDeleteCascade}
+                  open={deleteDialogOpen}
+                  onOpenChange={(open) => {
+                    setDeleteDialogOpen(open);
+                    if (open) {
+                      setDeleteHasEvidenceError(false);
+                      setDeleteCascade(false);
+                    }
+                  }}
+                  onConfirm={() => deleteMutation.mutate({ cascade: deleteCascade })}
                 />
               </div>
             </div>
@@ -684,109 +723,8 @@ function CaseDetailPage() {
           </DialogContent>
         </Dialog>
 
-        {/* Sub-panel tabs */}
-        <Tabs defaultValue="evidence">
-          <TabsList className="w-full justify-start overflow-x-auto flex-wrap h-auto gap-1 mb-4">
-            <TabsTrigger value="evidence">Evidence</TabsTrigger>
-            <TabsTrigger value="persons">Persons</TabsTrigger>
-            <TabsTrigger value="businesses">Businesses</TabsTrigger>
-            <TabsTrigger value="custody">Chain of Custody</TabsTrigger>
-            <TabsTrigger value="hashes">Hashes</TabsTrigger>
-            <TabsTrigger value="tools">Case-wide Tools</TabsTrigger>
-            <TabsTrigger value="analysis">Analysis</TabsTrigger>
-          </TabsList>
-
-          <TabsContent value="evidence">
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-base">Evidence Items</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <EvidencePanel
-                  caseId={caseId}
-                  onNavigateToCaseEdit={() =>
-                    void navigate({
-                      to: "/case/$caseId/edit",
-                      params: { caseId },
-                    })
-                  }
-                />
-              </CardContent>
-            </Card>
-          </TabsContent>
-
-          <TabsContent value="persons">
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-base">
-                  Persons of interest, suspects, victims, witnesses
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <PersonsPanel caseId={caseId} />
-              </CardContent>
-            </Card>
-          </TabsContent>
-
-          <TabsContent value="businesses">
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-base">
-                  Companies, organizations, and other business entities
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <BusinessesPanel caseId={caseId} />
-              </CardContent>
-            </Card>
-          </TabsContent>
-
-          <TabsContent value="custody">
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-base">Chain of Custody — Case Timeline</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <CustodyPanel scope={{ kind: "case", caseId }} />
-              </CardContent>
-            </Card>
-          </TabsContent>
-
-          <TabsContent value="hashes">
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-base">Hash Verifications</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <HashPanel scope={{ kind: "case", caseId }} />
-              </CardContent>
-            </Card>
-          </TabsContent>
-
-          <TabsContent value="tools">
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-base">
-                  Case-wide Tool Usage (OSINT, case-level forensics)
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <ToolsPanel caseId={caseId} />
-              </CardContent>
-            </Card>
-          </TabsContent>
-
-          <TabsContent value="analysis">
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-base">Analysis Notes</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <AnalysisPanel caseId={caseId} />
-              </CardContent>
-            </Card>
-          </TabsContent>
-        </Tabs>
+        {/* DFAR Case Wizard — replaces horizontal tabs */}
+        <CaseWizard caseId={caseId} />
       </main>
     </div>
   );

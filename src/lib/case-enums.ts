@@ -33,13 +33,13 @@ export const CASE_PRIORITIES: readonly CasePriority[] = [
 export function statusBadgeClass(status: CaseStatus): string {
   switch (status) {
     case "Active":
-      return "bg-green-600/20 text-green-400 border-green-600/30";
+      return "bg-success/20 text-success border-success/30";
     case "Pending":
-      return "bg-yellow-600/20 text-yellow-400 border-yellow-600/30";
+      return "bg-warning/20 text-warning border-warning/30";
     case "Closed":
-      return "bg-slate-600/20 text-slate-400 border-slate-600/30";
+      return "bg-primary/20 text-primary border-primary/30";
     case "Archived":
-      return "bg-zinc-600/20 text-zinc-400 border-zinc-600/30";
+      return "bg-muted text-muted-foreground border-border";
   }
 }
 
@@ -47,13 +47,13 @@ export function statusBadgeClass(status: CaseStatus): string {
 export function priorityBadgeClass(priority: CasePriority): string {
   switch (priority) {
     case "Critical":
-      return "bg-red-600/20 text-red-400 border-red-600/30";
+      return "bg-destructive/20 text-destructive border-destructive/30";
     case "High":
-      return "bg-orange-600/20 text-orange-400 border-orange-600/30";
+      return "bg-warning/20 text-warning border-warning/30";
     case "Medium":
-      return "bg-blue-600/20 text-blue-400 border-blue-600/30";
+      return "bg-primary/20 text-primary border-primary/30";
     case "Low":
-      return "bg-slate-600/20 text-slate-400 border-slate-600/30";
+      return "bg-muted text-muted-foreground border-border";
   }
 }
 

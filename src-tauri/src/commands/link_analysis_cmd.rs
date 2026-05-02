@@ -26,6 +26,7 @@ use crate::{
     audit,
     auth::session::require_session,
     db::{
+        audit_entries::{self, AuditEntryInput},
         business_identifiers::{BusinessIdentifier, BusinessIdentifierInput},
         entities::{Entity, EntityInput},
         events::{CaseEvent, EventInput},
@@ -91,6 +92,19 @@ pub async fn entity_add(
         ),
     );
 
+    let _ = audit_entries::add_entry(
+        &state.db.forensics,
+        &AuditEntryInput {
+            case_id: Some(case_id.to_string()),
+            actor: format!("user:{}", session.username),
+            action: ENTITY_ADDED.into(),
+            details: Some(format!(
+                "entity_id={} type={:?} name={:?}",
+                entity.entity_id, entity.entity_type, entity.display_name,
+            )),
+        },
+    ).await;
+
     Ok(entity)
 }
 
@@ -152,6 +166,19 @@ pub async fn entity_update(
         ),
     );
 
+    let _ = audit_entries::add_entry(
+        &state.db.forensics,
+        &AuditEntryInput {
+            case_id: Some(entity.case_id.to_string()),
+            actor: format!("user:{}", session.username),
+            action: ENTITY_UPDATED.into(),
+            details: Some(format!(
+                "entity_id={entity_id} type={:?} name={:?}",
+                entity.entity_type, entity.display_name,
+            )),
+        },
+    ).await;
+
     Ok(entity)
 }
 
@@ -188,6 +215,19 @@ pub async fn entity_delete(
             entity.entity_type, entity.display_name,
         ),
     );
+
+    let _ = audit_entries::add_entry(
+        &state.db.forensics,
+        &AuditEntryInput {
+            case_id: Some(case_id.to_string()),
+            actor: format!("user:{}", session.username),
+            action: ENTITY_DELETED.into(),
+            details: Some(format!(
+                "entity_id={entity_id} type={:?} name={:?}",
+                entity.entity_type, entity.display_name,
+            )),
+        },
+    ).await;
 
     Ok(())
 }
@@ -227,6 +267,21 @@ pub async fn link_add(
             link.target_type, link.target_id,
         ),
     );
+
+    let _ = audit_entries::add_entry(
+        &state.db.forensics,
+        &AuditEntryInput {
+            case_id: Some(case_id.to_string()),
+            actor: format!("user:{}", session.username),
+            action: LINK_ADDED.into(),
+            details: Some(format!(
+                "link_id={} {}:{} → {}:{}",
+                link.link_id,
+                link.source_type, link.source_id,
+                link.target_type, link.target_id,
+            )),
+        },
+    ).await;
 
     Ok(link)
 }
@@ -279,6 +334,20 @@ pub async fn link_delete(
         ),
     );
 
+    let _ = audit_entries::add_entry(
+        &state.db.forensics,
+        &AuditEntryInput {
+            case_id: Some(case_id.to_string()),
+            actor: format!("user:{}", session.username),
+            action: LINK_DELETED.into(),
+            details: Some(format!(
+                "link_id={link_id} {}:{} → {}:{}",
+                link.source_type, link.source_id,
+                link.target_type, link.target_id,
+            )),
+        },
+    ).await;
+
     Ok(())
 }
 
@@ -315,6 +384,19 @@ pub async fn event_add(
             event.event_id, event.title, event.event_datetime,
         ),
     );
+
+    let _ = audit_entries::add_entry(
+        &state.db.forensics,
+        &AuditEntryInput {
+            case_id: Some(case_id.to_string()),
+            actor: format!("user:{}", session.username),
+            action: EVENT_ADDED.into(),
+            details: Some(format!(
+                "event_id={} title={:?} dt={:?}",
+                event.event_id, event.title, event.event_datetime,
+            )),
+        },
+    ).await;
 
     Ok(event)
 }
@@ -359,6 +441,18 @@ pub async fn event_update(
         &format!("event_id={event_id} title={:?}", event.title),
     );
 
+    let _ = audit_entries::add_entry(
+        &state.db.forensics,
+        &AuditEntryInput {
+            case_id: Some(event.case_id.to_string()),
+            actor: format!("user:{}", session.username),
+            action: EVENT_UPDATED.into(),
+            details: Some(format!(
+                "event_id={event_id} title={:?}", event.title,
+            )),
+        },
+    ).await;
+
     Ok(event)
 }
 
@@ -392,6 +486,18 @@ pub async fn event_delete(
         EVENT_DELETED,
         &format!("event_id={event_id} title={:?}", event.title),
     );
+
+    let _ = audit_entries::add_entry(
+        &state.db.forensics,
+        &AuditEntryInput {
+            case_id: Some(case_id.to_string()),
+            actor: format!("user:{}", session.username),
+            action: EVENT_DELETED.into(),
+            details: Some(format!(
+                "event_id={event_id} title={:?}", event.title,
+            )),
+        },
+    ).await;
 
     Ok(())
 }
@@ -501,6 +607,22 @@ pub async fn person_identifier_add(
         ),
     );
 
+    let _ = audit_entries::add_entry(
+        &state.db.forensics,
+        &AuditEntryInput {
+            case_id: Some(entity.case_id.to_string()),
+            actor: format!("user:{}", session.username),
+            action: PERSON_IDENTIFIER_ADDED.into(),
+            details: Some(format!(
+                "identifier_id={} entity_id={} kind={:?} platform={:?}",
+                identifier.identifier_id,
+                entity_id,
+                identifier.kind,
+                identifier.platform.as_deref().unwrap_or(""),
+            )),
+        },
+    ).await;
+
     Ok(identifier)
 }
 
@@ -565,6 +687,22 @@ pub async fn person_identifier_update(
         ),
     );
 
+    let _ = audit_entries::add_entry(
+        &state.db.forensics,
+        &AuditEntryInput {
+            case_id: Some(entity.case_id.to_string()),
+            actor: format!("user:{}", session.username),
+            action: PERSON_IDENTIFIER_UPDATED.into(),
+            details: Some(format!(
+                "identifier_id={} entity_id={} kind={:?} platform={:?}",
+                identifier_id,
+                identifier.entity_id,
+                identifier.kind,
+                identifier.platform.as_deref().unwrap_or(""),
+            )),
+        },
+    ).await;
+
     Ok(identifier)
 }
 
@@ -602,6 +740,19 @@ pub async fn person_identifier_delete(
             identifier_id, existing.entity_id, existing.kind
         ),
     );
+
+    let _ = audit_entries::add_entry(
+        &state.db.forensics,
+        &AuditEntryInput {
+            case_id: Some(entity.case_id.to_string()),
+            actor: format!("user:{}", session.username),
+            action: PERSON_IDENTIFIER_DELETED.into(),
+            details: Some(format!(
+                "identifier_id={} entity_id={} kind={:?}",
+                identifier_id, existing.entity_id, existing.kind
+            )),
+        },
+    ).await;
 
     Ok(())
 }
@@ -651,6 +802,22 @@ pub async fn business_identifier_add(
             identifier.platform.as_deref().unwrap_or(""),
         ),
     );
+
+    let _ = audit_entries::add_entry(
+        &state.db.forensics,
+        &AuditEntryInput {
+            case_id: Some(entity.case_id.to_string()),
+            actor: format!("user:{}", session.username),
+            action: BUSINESS_IDENTIFIER_ADDED.into(),
+            details: Some(format!(
+                "identifier_id={} entity_id={} kind={:?} platform={:?}",
+                identifier.identifier_id,
+                entity_id,
+                identifier.kind,
+                identifier.platform.as_deref().unwrap_or(""),
+            )),
+        },
+    ).await;
 
     Ok(identifier)
 }
@@ -716,6 +883,22 @@ pub async fn business_identifier_update(
         ),
     );
 
+    let _ = audit_entries::add_entry(
+        &state.db.forensics,
+        &AuditEntryInput {
+            case_id: Some(entity.case_id.to_string()),
+            actor: format!("user:{}", session.username),
+            action: BUSINESS_IDENTIFIER_UPDATED.into(),
+            details: Some(format!(
+                "identifier_id={} entity_id={} kind={:?} platform={:?}",
+                identifier_id,
+                identifier.entity_id,
+                identifier.kind,
+                identifier.platform.as_deref().unwrap_or(""),
+            )),
+        },
+    ).await;
+
     Ok(identifier)
 }
 
@@ -753,6 +936,19 @@ pub async fn business_identifier_delete(
             identifier_id, existing.entity_id, existing.kind
         ),
     );
+
+    let _ = audit_entries::add_entry(
+        &state.db.forensics,
+        &AuditEntryInput {
+            case_id: Some(entity.case_id.to_string()),
+            actor: format!("user:{}", session.username),
+            action: BUSINESS_IDENTIFIER_DELETED.into(),
+            details: Some(format!(
+                "identifier_id={} entity_id={} kind={:?}",
+                identifier_id, existing.entity_id, existing.kind
+            )),
+        },
+    ).await;
 
     Ok(())
 }
@@ -815,6 +1011,22 @@ pub async fn person_employers_set(
             new_business_names.len()
         ),
     );
+
+    let _ = audit_entries::add_entry(
+        &state.db.forensics,
+        &AuditEntryInput {
+            case_id: Some(entity.case_id.to_string()),
+            actor: format!("user:{}", session.username),
+            action: PERSON_EMPLOYERS_SET.into(),
+            details: Some(format!(
+                "entity_id={} employers_count={} existing={} new={}",
+                entity_id,
+                pairs.len(),
+                existing_business_ids.len(),
+                new_business_names.len()
+            )),
+        },
+    ).await;
 
     Ok(pairs
         .into_iter()

@@ -18,7 +18,7 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { openPath } from "@tauri-apps/plugin-opener";
-import { FileText, Loader2, AlertCircle, RefreshCw, Download } from "lucide-react";
+import { FileText, Loader2, AlertCircle, RefreshCw, Download, Share2 } from "lucide-react";
 
 import { caseReportPreview, caseReportGenerate } from "@/lib/bindings";
 import { getToken } from "@/lib/session";
@@ -34,6 +34,7 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
+import { ShareDialog } from "@/components/share-dialog";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Label } from "@/components/ui/label";
@@ -63,6 +64,7 @@ export function ReportDialog({ caseId, open, onClose }: ReportDialogProps) {
   const token = getToken() ?? "";
   const [format, setFormat] = useState<ReportFormat>("Markdown");
   const [template, setTemplate] = useState<ReportTemplate>("Standard");
+  const [shareOpen, setShareOpen] = useState(false);
 
   const { data: markdown, isLoading, isError, error, refetch } = useQuery<string>({
     queryKey: queryKeys.reports.preview(caseId),
@@ -205,11 +207,28 @@ export function ReportDialog({ caseId, open, onClose }: ReportDialogProps) {
               </>
             )}
           </Button>
+          <Button
+            variant="outline"
+            onClick={() => setShareOpen(true)}
+            disabled={generateMutation.isPending || isLoading}
+          >
+            <Share2 className="h-4 w-4 mr-2" aria-hidden="true" />
+            Log Share
+          </Button>
           <Button variant="outline" onClick={onClose}>
             Close
           </Button>
         </DialogFooter>
       </DialogContent>
+
+      <ShareDialog
+        caseId={caseId}
+        recordType="report"
+        recordId={caseId}
+        recordSummary={`Case report (${format}${format === "Pdf" ? ", " + template : ""})`}
+        open={shareOpen}
+        onClose={() => setShareOpen(false)}
+      />
     </Dialog>
   );
 }

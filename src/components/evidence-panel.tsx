@@ -22,6 +22,7 @@ import {
   Sparkles,
   FlaskConical,
   Wrench,
+  Share2,
 } from "lucide-react";
 
 import {
@@ -66,6 +67,7 @@ import { HashPanel } from "@/components/hash-panel";
 import { EvidenceFilesPanel } from "@/components/evidence-files-panel";
 import { EvidenceToolsPanel } from "@/components/evidence-tools-panel";
 import { ForensicAnalyzeDialog } from "@/components/forensic-analyze-dialog";
+import { ShareDialog } from "@/components/share-dialog";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -144,6 +146,7 @@ function EvidenceCard({
   const [filesOpen, setFilesOpen] = React.useState(false);
   const [toolsOpen, setToolsOpen] = React.useState(false);
   const [forensicOpen, setForensicOpen] = React.useState(false);
+  const [shareOpen, setShareOpen] = React.useState(false);
 
   // Polish description with AI
   const [description, setDescription] = React.useState(ev.description);
@@ -227,6 +230,16 @@ function EvidenceCard({
               <span className="sr-only">Run forensic analysis</span>
             </Button>
           )}
+          <Button
+            size="sm"
+            variant="ghost"
+            className="h-7 px-1.5 text-xs"
+            onClick={() => setShareOpen(true)}
+            title="Log share event"
+          >
+            <Share2 className="h-3.5 w-3.5" />
+            <span className="sr-only">Log share event</span>
+          </Button>
           <AlertDialog onOpenChange={handleDialogChange}>
             <AlertDialogTrigger asChild>
               <Button
@@ -400,6 +413,16 @@ function EvidenceCard({
         caseId={caseId}
         open={forensicOpen}
         onClose={() => setForensicOpen(false)}
+      />
+
+      {/* Share audit dialog */}
+      <ShareDialog
+        caseId={caseId}
+        recordType="evidence"
+        recordId={ev.evidence_id}
+        recordSummary={ev.description}
+        open={shareOpen}
+        onClose={() => setShareOpen(false)}
       />
     </div>
   );

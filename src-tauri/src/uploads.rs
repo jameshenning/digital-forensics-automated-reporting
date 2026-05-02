@@ -32,6 +32,7 @@ use unicode_normalization::UnicodeNormalization;
 use crate::{
     audit,
     db::{
+        audit_entries::{self, AuditEntryInput},
         cases,
         evidence as evidence_db,
         evidence_files::{self, EvidenceFile, EvidenceFileDownload},
@@ -247,6 +248,23 @@ pub async fn upload_file(
             source_path.display(),   // SHOULD-DO 7: provenance trail
         ),
     );
+    let _ = audit_entries::add_entry(
+        &state.db.forensics,
+        &AuditEntryInput {
+            case_id: Some(case_id.clone()),
+            actor: format!("user:{username}"),
+            action: audit::FILE_UPLOADED.into(),
+            details: Some(format!(
+                "file_id={file_id} evidence_id={evidence_id} case_id={case_id} \
+                 original_filename=\"{original_filename}\" stored_path=\"{}\" \
+                 sha256={sha256_hex} size_bytes={size_bytes} \
+                 mime_type={} source_path=\"{}\"",
+                target_path.display(),
+                sniffed_mime.as_deref().unwrap_or("unknown"),
+                source_path.display(),
+            )),
+        },
+    ).await;
 
     Ok(UploadResult {
         file: file_row,
@@ -361,6 +379,19 @@ pub async fn purge_file(
             file_row.evidence_id,
         ),
     );
+    let _ = audit_entries::add_entry(
+        &state.db.forensics,
+        &AuditEntryInput {
+            case_id: Some(case_id.clone()),
+            actor: format!("user:{username}"),
+            action: audit::FILE_PURGED.into(),
+            details: Some(format!(
+                "PURGED file_id={file_id} evidence_id={} sha256={sha256} \
+                 justification=\"{justification}\"",
+                file_row.evidence_id,
+            )),
+        },
+    ).await;
 
     Ok(())
 }

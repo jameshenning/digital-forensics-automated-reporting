@@ -22,6 +22,7 @@ export type AppErrorCode =
   | "MfaRequired"
   | "InvalidMfaCode"
   | "NoRecoveryCodesRemaining"
+  | "MfaLockout"
   | "UserAlreadyExists"
   | "UserNotFound"
   | "PasswordPolicy"
@@ -90,6 +91,58 @@ export interface SessionInfo {
   token: string; // 'sess_...' — stored in sessionStorage + React state
   username: string;
   mfa_enabled: boolean;
+}
+
+export interface GrafanaSettings {
+  enabled: boolean;
+  running: boolean;
+  url: string;
+  docker_available: boolean;
+}
+
+// ---------------------------------------------------------------------------
+// Native dashboard types (Grafana replacement)
+// ---------------------------------------------------------------------------
+
+export interface EntityTypeStat {
+  entity_type: string;
+  count: number;
+}
+
+export interface EvidenceTypeStat {
+  evidence_type: string;
+  count: number;
+}
+
+export interface LinkLabelStat {
+  link_label: string;
+  count: number;
+}
+
+export interface TimelineEvent {
+  time: number;
+  title: string;
+  category: string;
+}
+
+export interface DashboardNode {
+  id: string;
+  title: string;
+  subtitle: string;
+  mainStat: number;
+  color: string;
+}
+
+export interface DashboardEdge {
+  id: string;
+  source: string;
+  target: string;
+  mainStat: string;
+}
+
+export interface DashboardGraphPayload {
+  nodes: DashboardNode[];
+  edges: DashboardEdge[];
 }
 
 export type LoginStatus = "Success" | "MfaRequired" | "AccountLocked";
@@ -305,17 +358,53 @@ export interface CaseInput {
   tags: string[];
 }
 
+export interface StatusCount {
+  status: string;
+  count: number;
+}
+
+export interface PriorityCount {
+  priority: string;
+  count: number;
+}
+
+export interface MonthlyCount {
+  month: string;
+  count: number;
+}
+
+export interface CaseStats {
+  status_counts: StatusCount[];
+  priority_counts: PriorityCount[];
+  monthly_counts: MonthlyCount[];
+}
+
 // ---------------------------------------------------------------------------
 // Case commands
 // ---------------------------------------------------------------------------
 
-/** List cases with optional pagination. */
+/** List cases with optional pagination and search. */
 export function casesList(args: {
   token: string;
   limit?: number;
   offset?: number;
+  search?: string;
 }): Promise<CaseSummary[]> {
   return invoke<CaseSummary[]>("cases_list", args);
+}
+
+/** Return the total number of cases. */
+export function casesCount(args: {
+  token: string;
+}): Promise<number> {
+  return invoke<number>("cases_count", args);
+}
+
+/** Return aggregated dashboard stats for charts. */
+export function casesStats(args: {
+  token: string;
+}): Promise<CaseStats> {
+  return invoke<CaseStats>("cases_stats", args);
 }
 
 /** Fetch full case detail including tags. */
@@ -343,10 +432,11 @@ export function caseUpdate(args: {
   return invoke<CaseDetail>("case_update", args);
 }
 
-/** Delete a case. Rejects with CaseHasEvidence if evidence rows exist. */
+/** Delete a case. Rejects with CaseHasEvidence if evidence rows exist and cascade is false. */
 export function caseDelete(args: {
   token: string;
   case_id: string;
+  cascade?: boolean;
 }): Promise<void> {
   return invoke<void>("case_delete", args);
 }
@@ -764,6 +854,96 @@ export function debugLogFrontend(args: {
   return invoke<void>("debug_log_frontend", args);
 }
 
+/** Get the configured idle timeout in seconds. */
+export function settingsGetIdleTimeout(args: {
+  token: string;
+}): Promise<number> {
+  return invoke<number>("settings_get_idle_timeout", args);
+}
+
+/** Set the idle timeout in seconds (clamped to 60–3600). */
+export function settingsSetIdleTimeout(args: {
+  token: string;
+  seconds: number;
+}): Promise<void> {
+  return invoke<void>("settings_set_idle_timeout", args);
+}
+
+/** Get Grafana integration settings. */
+export function grafanaGetSettings(args: {
+  token: string;
+}): Promise<GrafanaSettings> {
+  return invoke<GrafanaSettings>("grafana_get_settings", args);
+}
+
+/** Enable or disable Grafana integration. */
+export function grafanaSetSettings(args: {
+  token: string;
+  input: { enabled: boolean };
+}): Promise<GrafanaSettings> {
+  return invoke<GrafanaSettings>("grafana_set_settings", args);
+}
+
+/** Start the Grafana Docker container. */
+export function grafanaStart(args: {
+  token: string;
+}): Promise<void> {
+  return invoke<void>("grafana_start", args);
+}
+
+/** Stop the Grafana Docker container. */
+export function grafanaStop(args: {
+  token: string;
+}): Promise<void> {
+  return invoke<void>("grafana_stop", args);
+}
+
+/** Check whether Grafana is running. */
+export function grafanaStatus(args: {
+  token: string;
+}): Promise<GrafanaSettings> {
+  return invoke<GrafanaSettings>("grafana_status", args);
+}
+
+// ---------------------------------------------------------------------------
+// Native dashboard commands (Grafana replacement)
+// ---------------------------------------------------------------------------
+
+export function caseDashboardEntityStats(args: {
+  token: string;
+  case_id: string;
+}): Promise<EntityTypeStat[]> {
+  return invoke<EntityTypeStat[]>("case_dashboard_entity_stats", args);
+}
+
+export function caseDashboardEvidenceStats(args: {
+  token: string;
+  case_id: string;
+}): Promise<EvidenceTypeStat[]> {
+  return invoke<EvidenceTypeStat[]>("case_dashboard_evidence_stats", args);
+}
+
+export function caseDashboardLinkStats(args: {
+  token: string;
+  case_id: string;
+}): Promise<LinkLabelStat[]> {
+  return invoke<LinkLabelStat[]>("case_dashboard_link_stats", args);
+}
+
+export function caseDashboardTimeline(args: {
+  token: string;
+  case_id: string;
+}): Promise<TimelineEvent[]> {
+  return invoke<TimelineEvent[]>("case_dashboard_timeline", args);
+}
+
+export function caseDashboardGraph(args: {
+  token: string;
+  case_id: string;
+}): Promise<DashboardGraphPayload> {
+  return invoke<DashboardGraphPayload>("case_dashboard_graph", args);
+}
+
 // ---------------------------------------------------------------------------
 // Evidence file types (Phase 3b)
 // ---------------------------------------------------------------------------
@@ -995,6 +1175,24 @@ export function settingsAcknowledgeOneDriveRisk(args: {
   token: string;
 }): Promise<void> {
   return invoke<void>("settings_acknowledge_onedrive_risk", args);
+}
+
+export interface UploadSettings {
+  max_upload_bytes: number;
+  large_file_warn_bytes: number;
+}
+
+export function settingsGetUpload(args: {
+  token: string;
+}): Promise<UploadSettings> {
+  return invoke<UploadSettings>("settings_get_upload", args);
+}
+
+export function settingsSetUpload(args: {
+  token: string;
+  max_upload_bytes: number;
+}): Promise<void> {
+  return invoke<void>("settings_set_upload", args);
 }
 
 // ---------------------------------------------------------------------------
@@ -2116,6 +2314,18 @@ export interface AuditEntry {
   entry_hash: string;
 }
 
+export interface AuditEntryWithCaseName {
+  entry_id: number;
+  case_id: string | null;
+  case_name: string | null;
+  timestamp: string;
+  actor: string;
+  action: string;
+  details: string | null;
+  prev_hash: string;
+  entry_hash: string;
+}
+
 export interface AuditExport {
   case_id: string;
   exported_at: string;
@@ -2132,6 +2342,14 @@ export function auditListForCase(args: {
   return invoke<AuditEntry[]>("audit_list_for_case", args);
 }
 
+/** List the most recent audit entries across all cases. */
+export function auditListRecent(args: {
+  token: string;
+  limit?: number;
+}): Promise<AuditEntryWithCaseName[]> {
+  return invoke<AuditEntryWithCaseName[]>("audit_list_recent", args);
+}
+
 /** Verify the hash chain for a case. Returns true if intact. */
 export function auditVerifyChain(args: {
   token: string;
@@ -2146,4 +2364,49 @@ export function auditExportCase(args: {
   case_id: string;
 }): Promise<AuditExport> {
   return invoke<AuditExport>("audit_export_case", args);
+}
+
+// ---------------------------------------------------------------------------
+// Share audit trail
+// ---------------------------------------------------------------------------
+
+export interface CaseShare {
+  share_id: number;
+  case_id: string;
+  record_type: string;
+  record_id: string;
+  record_summary: string | null;
+  action: string;
+  recipient: string | null;
+  file_path: string | null;
+  file_hash: string;
+  narrative: string;
+  shared_by: string;
+  created_at: string;
+}
+
+/** Log that a record was shared (emailed or printed). */
+export function shareRecord(args: {
+  token: string;
+  input: {
+    case_id: string;
+    record_type: string;
+    record_id: string;
+    record_summary?: string;
+    action: string;
+    recipient?: string;
+    file_path?: string;
+    file_hash: string;
+    narrative: string;
+  };
+}): Promise<CaseShare> {
+  return invoke<CaseShare>("share_record", args);
+}
+
+/** List share records for a case. */
+export function sharesListForCase(args: {
+  token: string;
+  case_id: string;
+}): Promise<CaseShare[]> {
+  return invoke<CaseShare[]>("shares_list_for_case", args);
 }

@@ -23,7 +23,7 @@ import {
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import {
   ShieldCheck,
   ShieldOff,
@@ -35,6 +35,7 @@ import {
   ShieldAlert,
   RefreshCw,
   ArrowDownToLine,
+  Timer,
 } from "lucide-react";
 
 import {
@@ -45,6 +46,8 @@ import {
   authTokensRevoke,
   settingsGetSecurityPosture,
   settingsCheckForUpdates,
+  settingsGetIdleTimeout,
+  settingsSetIdleTimeout,
 } from "@/lib/bindings";
 import type { UpdateCheckResult } from "@/lib/bindings";
 import { useSession } from "@/lib/session";
@@ -376,8 +379,8 @@ function CreateTokenDialog({ sessionToken }: CreateTokenDialogProps) {
 
         {plaintext ? (
           <div className="flex flex-col gap-4">
-            <Alert className="border-amber-500/50 bg-amber-500/10">
-              <AlertDescription className="text-amber-700 dark:text-amber-400">
+            <Alert className="border-warning/50 bg-warning/10">
+              <AlertDescription className="text-warning">
                 <strong>Copy this token now.</strong> It will not be shown
                 again.
               </AlertDescription>
@@ -454,9 +457,9 @@ function UpdateStatusPill({
 }) {
   const pillClasses: Record<string, string> = {
     UpToDate:
-      "inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium bg-green-500/15 text-green-700 dark:text-green-400 border border-green-500/30",
+      "inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium bg-success/15 text-success border border-success/30",
     UpdateAvailable:
-      "inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium bg-amber-500/15 text-amber-700 dark:text-amber-400 border border-amber-500/30",
+      "inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium bg-warning/15 text-warning border border-warning/30",
     NotConfigured:
       "inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium bg-muted text-muted-foreground border",
     NetworkError:
@@ -616,9 +619,9 @@ function SecurityPage() {
       <main className="mx-auto max-w-3xl px-6 py-8 flex flex-col gap-6">
         {/* Security posture warning banner (SEC-1 SHOULD-DO 6) */}
         {posture && posture.key_source !== "keyring" && (
-          <Alert className="border-amber-500/50 bg-amber-500/10">
-            <ShieldAlert className="h-4 w-4 text-amber-600" />
-            <AlertDescription className="text-amber-700 dark:text-amber-400">
+          <Alert className="border-warning/50 bg-warning/10">
+            <ShieldAlert className="h-4 w-4 text-warning" />
+            <AlertDescription className="text-warning">
               <strong>Encryption key stored in file, not Windows Credential Manager.</strong>{" "}
               Your encryption key is stored in a file ({posture.key_source === "keyfile" ? "%APPDATA%\\DFARS\\.keyfile" : "a new generated file"}),
               which is less secure than Windows Credential Manager. Consider upgrading to keyring
@@ -657,7 +660,7 @@ function SecurityPage() {
             {posture?.mfa_enabled || session.mfa_enabled ? (
               <>
                 <div className="flex items-center gap-3">
-                  <Badge className="bg-green-500/20 text-green-700 dark:text-green-400 border-green-500/30">
+                  <Badge className="bg-success/20 text-success border-success/30">
                     Enabled
                   </Badge>
                   <span className="text-sm text-muted-foreground">
@@ -675,9 +678,9 @@ function SecurityPage() {
                 </p>
 
                 {(posture?.recovery_codes_remaining ?? 10) < 3 && (
-                  <Alert className="border-amber-500/50 bg-amber-500/10">
-                    <AlertTriangle className="h-4 w-4 text-amber-600" />
-                    <AlertDescription className="text-amber-700 dark:text-amber-400">
+                  <Alert className="border-warning/50 bg-warning/10">
+                    <AlertTriangle className="h-4 w-4 text-warning" />
+                    <AlertDescription className="text-warning">
                       Only {posture?.recovery_codes_remaining} recovery code
                       {posture?.recovery_codes_remaining !== 1 ? "s" : ""}{" "}
                       left. Disable and re-enroll MFA to generate a fresh
@@ -788,9 +791,97 @@ function SecurityPage() {
           </CardContent>
         </Card>
 
+        {/* Idle timeout section */}
+        <IdleTimeoutSection />
+
         {/* Updates section (Phase 6 — SEC-8 SHOULD-DO 3) */}
         <UpdatesSection />
       </main>
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Idle timeout section
+// ---------------------------------------------------------------------------
+
+function IdleTimeoutSection() {
+  const token = getToken() ?? "";
+  const queryClient = useQueryClient();
+  const [minutes, setMinutes] = useState<number>(5);
+
+  const { data: timeoutSeconds, isLoading } = useQuery({
+    queryKey: queryKeys.idleTimeout.settings,
+    queryFn: () => settingsGetIdleTimeout({ token }),
+    enabled: !!token,
+    refetchOnWindowFocus: false,
+  });
+
+  // Sync local state when data loads
+  useEffect(() => {
+    if (timeoutSeconds !== undefined) {
+      setMinutes(Math.round(timeoutSeconds / 60));
+    }
+  }, [timeoutSeconds]);
+
+  const saveMutation = useMutation({
+    mutationFn: () => settingsSetIdleTimeout({ token, seconds: minutes * 60 }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.idleTimeout.settings });
+      toastSuccess(`Idle timeout set to ${minutes} minute${minutes !== 1 ? "s" : ""}.`);
+    },
+    onError: toastError,
+  });
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2 text-base">
+          <Timer className="h-4 w-4" />
+          Session Auto-Lock
+        </CardTitle>
+        <CardDescription>
+          Automatically lock your session after a period of inactivity.
+          Requires password (and MFA if enabled) to unlock.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-4">
+        {isLoading ? (
+          <p className="text-sm text-muted-foreground">Loading…</p>
+        ) : (
+          <>
+            <div className="flex items-center gap-4">
+              <div className="flex-1">
+                <Label htmlFor="idle-timeout" className="mb-1.5 block">
+                  Lock after {minutes} minute{minutes !== 1 ? "s" : ""} of inactivity
+                </Label>
+                <input
+                  id="idle-timeout"
+                  type="range"
+                  min={1}
+                  max={30}
+                  value={minutes}
+                  onChange={(e) => setMinutes(Number(e.target.value))}
+                  className="w-full accent-primary"
+                />
+                <div className="flex justify-between text-xs text-muted-foreground mt-1">
+                  <span>1 min</span>
+                  <span>15 min</span>
+                  <span>30 min</span>
+                </div>
+              </div>
+            </div>
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={saveMutation.isPending}
+              onClick={() => saveMutation.mutate()}
+            >
+              {saveMutation.isPending ? "Saving…" : "Save"}
+            </Button>
+          </>
+        )}
+      </CardContent>
+    </Card>
   );
 }

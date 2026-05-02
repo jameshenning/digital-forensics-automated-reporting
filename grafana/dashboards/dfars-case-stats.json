@@ -1,0 +1,130 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": "-- Grafana --",
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "editable": true,
+  "gnetId": null,
+  "graphTooltip": 0,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "datasource": "DFARS",
+      "fieldConfig": {
+        "defaults": { "displayName": "Entities" },
+        "overrides": []
+      },
+      "gridPos": { "h": 4, "w": 8, "x": 0, "y": 0 },
+      "id": 1,
+      "targets": [
+        {
+          "refId": "A",
+          "urlPath": "/cases/${caseId}/stats/entities",
+          "query": ".",
+          "columns": [
+            { "text": "entityType", "type": "string" },
+            { "text": "count", "type": "number" }
+          ]
+        }
+      ],
+      "title": "Entities by Type",
+      "type": "bargauge"
+    },
+    {
+      "datasource": "DFARS",
+      "fieldConfig": {
+        "defaults": { "displayName": "Evidence" },
+        "overrides": []
+      },
+      "gridPos": { "h": 4, "w": 8, "x": 8, "y": 0 },
+      "id": 2,
+      "targets": [
+        {
+          "refId": "A",
+          "urlPath": "/cases/${caseId}/stats/evidence",
+          "query": ".",
+          "columns": [
+            { "text": "evidenceType", "type": "string" },
+            { "text": "count", "type": "number" }
+          ]
+        }
+      ],
+      "title": "Evidence by Type",
+      "type": "bargauge"
+    },
+    {
+      "datasource": "DFARS",
+      "fieldConfig": {
+        "defaults": { "displayName": "Links" },
+        "overrides": []
+      },
+      "gridPos": { "h": 4, "w": 8, "x": 16, "y": 0 },
+      "id": 3,
+      "targets": [
+        {
+          "refId": "A",
+          "urlPath": "/cases/${caseId}/stats/links",
+          "query": ".",
+          "columns": [
+            { "text": "linkLabel", "type": "string" },
+            { "text": "count", "type": "number" }
+          ]
+        }
+      ],
+      "title": "Links by Label",
+      "type": "bargauge"
+    },
+    {
+      "datasource": "DFARS",
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 4 },
+      "id": 4,
+      "targets": [
+        {
+          "refId": "A",
+          "urlPath": "/cases/${caseId}/timeline",
+          "query": ".",
+          "columns": [
+            { "text": "time", "type": "time" },
+            { "text": "title", "type": "string" },
+            { "text": "category", "type": "string" }
+          ]
+        }
+      ],
+      "title": "Case Timeline",
+      "type": "table"
+    }
+  ],
+  "schemaVersion": 36,
+  "style": "dark",
+  "tags": ["dfars", "statistics"],
+  "templating": {
+    "list": [
+      {
+        "current": { "value": "CASE-001", "text": "CASE-001" },
+        "hide": 0,
+        "label": "Case ID",
+        "name": "caseId",
+        "options": [],
+        "query": "CASE-001",
+        "skipUrlSync": false,
+        "type": "textbox"
+      }
+    ]
+  },
+  "time": { "from": "now-30d", "to": "now" },
+  "timepicker": {},
+  "timezone": "",
+  "title": "DFARS Case Statistics",
+  "uid": "dfars-case-stats",
+  "version": 1
+}

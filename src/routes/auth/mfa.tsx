@@ -111,6 +111,9 @@ function MfaPage() {
         setInvalidCode(true);
       } else if (appErr?.code === "NoRecoveryCodesRemaining") {
         setNoCodesRemaining(true);
+      } else if (appErr?.code === "MfaLockout") {
+        toastError(err);
+        void navigate({ to: "/auth/login" });
       } else {
         toastError(err);
       }

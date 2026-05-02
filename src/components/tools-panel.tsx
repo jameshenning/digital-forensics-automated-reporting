@@ -186,6 +186,7 @@ export function ToolsPanel({ caseId }: ToolsPanelProps) {
               key={t.tool_id}
               usage={t}
               caseToolNames={caseToolNames}
+              caseId={caseId}
               hideScopeBadge
             />
           ))}

@@ -336,7 +336,7 @@ export function LinkForm({
                   <FormItem>
                     <FormLabel>
                       Author{" "}
-                      <span className="font-normal text-amber-600">(recommended)</span>
+                      <span className="font-normal text-warning">(recommended)</span>
                     </FormLabel>
                     <FormControl>
                       <Input

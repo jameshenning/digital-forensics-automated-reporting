@@ -17,6 +17,7 @@ import {
   ShieldCheck,
   User as UserIcon,
   Wrench,
+  Share2,
 } from "lucide-react";
 
 import {
@@ -48,6 +49,7 @@ import {
 } from "@/components/ui/dialog";
 import { AnalysisForm } from "@/components/analysis-form";
 import { AnalysisReviewDialog } from "@/components/analysis-review-dialog";
+import { ShareDialog } from "@/components/share-dialog";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -271,6 +273,7 @@ export function AnalysisPanel({ caseId }: AnalysisPanelProps) {
                 key={note.note_id}
                 note={note}
                 reviews={reviewsByNote.get(note.note_id) ?? []}
+                caseId={caseId}
               />
             ))}
           </div>
@@ -306,11 +309,14 @@ export function AnalysisPanel({ caseId }: AnalysisPanelProps) {
 function AnalysisNoteCard({
   note,
   reviews,
+  caseId,
 }: {
   note: AnalysisNote;
   reviews: AnalysisReview[];
+  caseId: string;
 }) {
   const [reviewOpen, setReviewOpen] = React.useState(false);
+  const [shareOpen, setShareOpen] = React.useState(false);
   const isReviewed = reviews.length > 0;
 
   return (
@@ -412,6 +418,16 @@ function AnalysisNoteCard({
         <Button
           size="sm"
           variant="ghost"
+          className="h-6 px-1.5 text-xs"
+          onClick={() => setShareOpen(true)}
+          title="Log share event"
+        >
+          <Share2 className="h-3.5 w-3.5" />
+          <span className="sr-only">Log share event</span>
+        </Button>
+        <Button
+          size="sm"
+          variant="ghost"
           className="ml-auto h-6 text-xs"
           onClick={() => setReviewOpen(true)}
         >
@@ -442,6 +458,15 @@ function AnalysisNoteCard({
         noteFinding={note.finding}
         open={reviewOpen}
         onOpenChange={setReviewOpen}
+      />
+
+      <ShareDialog
+        caseId={caseId}
+        recordType="analysis"
+        recordId={String(note.note_id)}
+        recordSummary={note.finding}
+        open={shareOpen}
+        onClose={() => setShareOpen(false)}
       />
     </div>
   );

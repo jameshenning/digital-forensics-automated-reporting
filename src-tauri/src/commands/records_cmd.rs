@@ -25,6 +25,7 @@ use crate::{
     db::{
         analysis::{AnalysisInput, AnalysisNote},
         analysis_reviews::{AnalysisReview, AnalysisReviewInput},
+        audit_entries::{self, AuditEntryInput},
         custody::{CustodyEvent, CustodyInput},
         evidence::{Evidence, EvidenceInput},
         hashes::{HashInput, HashRecord},
@@ -80,6 +81,18 @@ pub async fn evidence_add(
             ev.evidence_id, ev.description, ev.collected_by,
         ),
     );
+    let _ = audit_entries::add_entry(
+        &state.db.forensics,
+        &AuditEntryInput {
+            case_id: Some(case_id),
+            actor: format!("user:{}", session.username),
+            action: EVIDENCE_ADDED.into(),
+            details: Some(format!(
+                "evidence_id={:?} description={:?} collected_by={:?}",
+                ev.evidence_id, ev.description, ev.collected_by,
+            )),
+        },
+    ).await;
 
     Ok(ev)
 }
@@ -143,6 +156,15 @@ pub async fn evidence_delete(
         EVIDENCE_DELETED,
         &format!("evidence_id={evidence_id:?}"),
     );
+    let _ = audit_entries::add_entry(
+        &state.db.forensics,
+        &AuditEntryInput {
+            case_id: Some(case_id),
+            actor: format!("user:{}", session.username),
+            action: EVIDENCE_DELETED.into(),
+            details: Some(format!("evidence_id={evidence_id:?}")),
+        },
+    ).await;
 
     Ok(())
 }
@@ -185,6 +207,18 @@ pub async fn custody_add(
             ev.custody_id, evidence_id, ev.action, ev.custody_sequence,
         ),
     );
+    let _ = audit_entries::add_entry(
+        &state.db.forensics,
+        &AuditEntryInput {
+            case_id: Some(case_id),
+            actor: format!("user:{}", session.username),
+            action: CUSTODY_ADDED.into(),
+            details: Some(format!(
+                "custody_id={} evidence_id={:?} action={:?} seq={}",
+                ev.custody_id, evidence_id, ev.action, ev.custody_sequence,
+            )),
+        },
+    ).await;
 
     Ok(ev)
 }
@@ -253,6 +287,18 @@ pub async fn custody_update(
             updated.action,
         ),
     );
+    let _ = audit_entries::add_entry(
+        &state.db.forensics,
+        &AuditEntryInput {
+            case_id: Some(case_id),
+            actor: format!("user:{}", session.username),
+            action: CUSTODY_UPDATED.into(),
+            details: Some(format!(
+                "custody_id={custody_id} evidence_id={evidence_id:?} action={:?}",
+                updated.action,
+            )),
+        },
+    ).await;
 
     Ok(updated)
 }
@@ -288,6 +334,15 @@ pub async fn custody_delete(
         CUSTODY_DELETED,
         &format!("custody_id={custody_id} evidence_id={evidence_id:?}"),
     );
+    let _ = audit_entries::add_entry(
+        &state.db.forensics,
+        &AuditEntryInput {
+            case_id: Some(case_id),
+            actor: format!("user:{}", session.username),
+            action: CUSTODY_DELETED.into(),
+            details: Some(format!("custody_id={custody_id} evidence_id={evidence_id:?}")),
+        },
+    ).await;
 
     Ok(())
 }
@@ -330,6 +385,18 @@ pub async fn hash_add(
             record.hash_id, evidence_id, record.algorithm,
         ),
     );
+    let _ = audit_entries::add_entry(
+        &state.db.forensics,
+        &AuditEntryInput {
+            case_id: Some(case_id),
+            actor: format!("user:{}", session.username),
+            action: HASH_ADDED.into(),
+            details: Some(format!(
+                "hash_id={} evidence_id={:?} algorithm={:?}",
+                record.hash_id, evidence_id, record.algorithm,
+            )),
+        },
+    ).await;
 
     Ok(record)
 }
@@ -394,6 +461,18 @@ pub async fn tool_add(
             record.tool_id, record.tool_name, record.evidence_id,
         ),
     );
+    let _ = audit_entries::add_entry(
+        &state.db.forensics,
+        &AuditEntryInput {
+            case_id: Some(case_id),
+            actor: format!("user:{}", session.username),
+            action: TOOL_LOGGED.into(),
+            details: Some(format!(
+                "tool_id={} tool={:?} evidence_id={:?}",
+                record.tool_id, record.tool_name, record.evidence_id,
+            )),
+        },
+    ).await;
 
     Ok(record)
 }
@@ -463,6 +542,23 @@ pub async fn analysis_add(
             note.created_by,
         ),
     );
+    let _ = audit_entries::add_entry(
+        &state.db.forensics,
+        &AuditEntryInput {
+            case_id: Some(case_id),
+            actor: format!("user:{}", session.username),
+            action: ANALYSIS_ADDED.into(),
+            details: Some(format!(
+                "note_id={} category={:?} confidence={:?} validation_level={} evidence_id={:?} created_by={:?}",
+                note.note_id,
+                note.category,
+                note.confidence_level,
+                note.validation_level,
+                note.evidence_id,
+                note.created_by,
+            )),
+        },
+    ).await;
 
     Ok(note)
 }
@@ -516,6 +612,18 @@ pub async fn analysis_mark_reviewed(
                     note_id, review.review_id, review.reviewed_by, review.reviewed_at,
                 ),
             );
+            let _ = audit_entries::add_entry(
+                &state.db.forensics,
+                &AuditEntryInput {
+                    case_id: Some(cid),
+                    actor: format!("user:{}", session.username),
+                    action: ANALYSIS_REVIEWED.into(),
+                    details: Some(format!(
+                        "note_id={} review_id={} reviewed_by={:?} reviewed_at={:?}",
+                        note_id, review.review_id, review.reviewed_by, review.reviewed_at,
+                    )),
+                },
+            ).await;
         }
         Ok(None) => {
             warn!(

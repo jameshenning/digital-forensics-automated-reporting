@@ -12,7 +12,7 @@
 
 import React from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Plus, Pencil, Trash2, AlertCircle } from "lucide-react";
+import { Plus, Pencil, Trash2, AlertCircle, Share2 } from "lucide-react";
 
 import {
   custodyListForEvidence,
@@ -49,6 +49,7 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { CustodyForm } from "@/components/custody-form";
+import { ShareDialog } from "@/components/share-dialog";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -124,6 +125,7 @@ export function CustodyPanel({ scope }: CustodyPanelProps) {
 
   const [addOpen, setAddOpen] = React.useState(false);
   const [editTarget, setEditTarget] = React.useState<CustodyEvent | null>(null);
+  const [shareTarget, setShareTarget] = React.useState<CustodyEvent | null>(null);
 
   // Derive caseId for invalidation — both scope kinds carry caseId
   const caseIdForInvalidation = scope.caseId;
@@ -275,6 +277,16 @@ export function CustodyPanel({ scope }: CustodyPanelProps) {
                 <Button
                   size="sm"
                   variant="ghost"
+                  className="h-7 px-1.5 text-xs"
+                  onClick={() => setShareTarget(ev)}
+                  title="Log share event"
+                >
+                  <Share2 className="h-3.5 w-3.5" />
+                  <span className="sr-only">Log share event</span>
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
                   className="h-7 w-7 p-0"
                   onClick={() => setEditTarget(ev)}
                   aria-label="Edit custody event"
@@ -330,6 +342,18 @@ export function CustodyPanel({ scope }: CustodyPanelProps) {
           />
         </DialogContent>
       </Dialog>
+
+      {/* Share Dialog */}
+      {shareTarget && (
+        <ShareDialog
+          caseId={caseIdForInvalidation}
+          recordType="custody"
+          recordId={String(shareTarget.custody_id)}
+          recordSummary={`${shareTarget.action}: ${shareTarget.from_party} → ${shareTarget.to_party}`}
+          open={!!shareTarget}
+          onClose={() => setShareTarget(null)}
+        />
+      )}
 
       {/* Edit Dialog */}
       <Dialog open={editTarget !== null} onOpenChange={(open) => { if (!open) setEditTarget(null); }}>

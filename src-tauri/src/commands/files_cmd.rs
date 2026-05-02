@@ -22,7 +22,9 @@ use tracing::info;
 use crate::{
     audit,
     auth::session::require_session,
+    config,
     db::{
+        audit_entries::{self, AuditEntryInput},
         entities,
         evidence_files::{EvidenceFile, EvidenceFileDownload},
     },
@@ -64,7 +66,7 @@ pub async fn evidence_files_upload(
     // MUST-DO 3 (SEC-1): session guard is the first call
     let session = require_session(&state, &token)?;
 
-    let max_bytes = DEFAULT_MAX_UPLOAD_BYTES;
+    let max_bytes = state.config.max_upload_bytes.unwrap_or(DEFAULT_MAX_UPLOAD_BYTES);
     let appdata = appdata_root();
 
     let result = uploads::upload_file(
@@ -151,6 +153,20 @@ pub async fn evidence_files_soft_delete(
             file_row.sha256,
         ),
     );
+    let _ = audit_entries::add_entry(
+        &state.db.forensics,
+        &AuditEntryInput {
+            case_id: Some(ev.case_id.clone()),
+            actor: format!("user:{}", session.username),
+            action: audit::FILE_SOFT_DELETED.into(),
+            details: Some(format!(
+                "file_id={file_id} evidence_id={} original_filename=\"{}\" sha256={}",
+                file_row.evidence_id,
+                file_row.original_filename,
+                file_row.sha256,
+            )),
+        },
+    ).await;
 
     info!(
         username = %session.username,
@@ -158,6 +174,48 @@ pub async fn evidence_files_soft_delete(
         "evidence file soft-deleted"
     );
 
+    Ok(())
+}
+
+// ─── Upload settings ──────────────────────────────────────────────────────────
+
+#[derive(Debug, serde::Serialize)]
+pub struct UploadSettings {
+    pub max_upload_bytes: u64,
+    pub large_file_warn_bytes: u64,
+}
+
+/// Get current upload size limits.
+#[tauri::command(rename_all = "snake_case")]
+pub async fn settings_get_upload(
+    token: String,
+    state: State<'_, Arc<AppState>>,
+) -> Result<UploadSettings, AppError> {
+    let _session = require_session(&state, &token)?;
+    Ok(UploadSettings {
+        max_upload_bytes: state.config.max_upload_bytes.unwrap_or(DEFAULT_MAX_UPLOAD_BYTES),
+        large_file_warn_bytes: uploads::LARGE_FILE_WARN_BYTES,
+    })
+}
+
+/// Set upload size limit. `max_upload_bytes` must be >= 1 GiB.
+#[tauri::command(rename_all = "snake_case")]
+pub async fn settings_set_upload(
+    token: String,
+    max_upload_bytes: u64,
+    state: State<'_, Arc<AppState>>,
+) -> Result<(), AppError> {
+    let _session = require_session(&state, &token)?;
+    const ONE_GIB: u64 = 1024 * 1024 * 1024;
+    if max_upload_bytes < ONE_GIB {
+        return Err(AppError::ValidationError {
+            field: "max_upload_bytes".into(),
+            message: "Upload limit must be at least 1 GiB".into(),
+        });
+    }
+    let mut cfg = state.config.clone();
+    cfg.max_upload_bytes = Some(max_upload_bytes);
+    config::save(&state.config_path, &cfg)?;
     Ok(())
 }
 

@@ -10,7 +10,7 @@
 
 import React from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Plus, AlertCircle, ShieldCheck } from "lucide-react";
+import { Plus, AlertCircle, ShieldCheck, Share2 } from "lucide-react";
 
 import {
   hashListForCase,
@@ -34,6 +34,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { HashForm } from "@/components/hash-form";
+import { ShareDialog } from "@/components/share-dialog";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -93,6 +94,7 @@ export function HashPanel({ scope }: HashPanelProps) {
   const token = getToken() ?? "";
   const queryClient = useQueryClient();
   const [addOpen, setAddOpen] = React.useState(false);
+  const [shareTarget, setShareTarget] = React.useState<HashRecord | null>(null);
 
   const queryKey =
     scope.kind === "evidence"
@@ -194,25 +196,39 @@ export function HashPanel({ scope }: HashPanelProps) {
           {records.map((hr) => (
             <div
               key={hr.hash_id}
-              className="flex items-start gap-3 rounded-md border p-3 text-sm"
+              className="flex items-start justify-between gap-3 rounded-md border p-3 text-sm"
             >
-              <ShieldCheck className="h-4 w-4 text-green-500 shrink-0 mt-0.5" />
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2 flex-wrap">
-                  <span className="font-medium text-xs">{hr.algorithm}</span>
-                  {scope.kind === "case" && (
-                    <span className="font-mono text-xs text-muted-foreground">
-                      {hr.evidence_id}
-                    </span>
-                  )}
+              <div className="flex items-start gap-3 flex-1 min-w-0">
+                <ShieldCheck className="h-4 w-4 text-success shrink-0 mt-0.5" />
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="font-medium text-xs">{hr.algorithm}</span>
+                    {scope.kind === "case" && (
+                      <span className="font-mono text-xs text-muted-foreground">
+                        {hr.evidence_id}
+                      </span>
+                    )}
+                  </div>
+                  <p className="font-mono text-xs break-all mt-0.5 text-muted-foreground">
+                    {hr.hash_value}
+                  </p>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    Verified by {hr.verified_by} &middot; {fmtDatetime(hr.verification_datetime)}
+                    {hr.notes && <span className="italic"> &middot; {hr.notes}</span>}
+                  </p>
                 </div>
-                <p className="font-mono text-xs break-all mt-0.5 text-muted-foreground">
-                  {hr.hash_value}
-                </p>
-                <p className="text-xs text-muted-foreground mt-0.5">
-                  Verified by {hr.verified_by} &middot; {fmtDatetime(hr.verification_datetime)}
-                  {hr.notes && <span className="italic"> &middot; {hr.notes}</span>}
-                </p>
+              </div>
+              <div className="flex gap-1 shrink-0">
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="h-7 px-1.5 text-xs"
+                  onClick={() => setShareTarget(hr)}
+                  title="Log share event"
+                >
+                  <Share2 className="h-3.5 w-3.5" />
+                  <span className="sr-only">Log share event</span>
+                </Button>
               </div>
             </div>
           ))}
@@ -232,6 +248,18 @@ export function HashPanel({ scope }: HashPanelProps) {
           />
         </DialogContent>
       </Dialog>
+
+      {/* Share Dialog */}
+      {shareTarget && (
+        <ShareDialog
+          caseId={scope.caseId}
+          recordType="hash"
+          recordId={String(shareTarget.hash_id)}
+          recordSummary={`${shareTarget.algorithm} hash for ${shareTarget.evidence_id}`}
+          open={!!shareTarget}
+          onClose={() => setShareTarget(null)}
+        />
+      )}
     </div>
   );
 }

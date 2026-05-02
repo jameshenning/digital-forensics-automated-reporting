@@ -254,38 +254,158 @@ async fn get_tags(pool: &SqlitePool, case_id: &str) -> Result<Vec<String>, AppEr
 ///
 /// Default pagination: limit=100, offset=0.
 /// Results ordered by `created_at DESC`.
+/// Optional `search` filters across case metadata and evidence descriptions.
 pub async fn list_cases(
     pool: &SqlitePool,
     limit: i64,
     offset: i64,
+    search: Option<&str>,
 ) -> Result<Vec<CaseSummary>, AppError> {
-    let rows = sqlx::query_as::<_, CaseSummary>(
+    let query = if let Some(q) = search {
+        let pattern = format!("%{}%", q);
+        sqlx::query_as::<_, CaseSummary>(
+            r#"
+            SELECT
+                c.case_id,
+                c.case_name,
+                c.investigator,
+                c.start_date,
+                c.status,
+                c.priority,
+                COALESCE(ec.evidence_count, 0) AS evidence_count,
+                c.created_at
+            FROM cases c
+            LEFT JOIN (
+                SELECT case_id, COUNT(*) AS evidence_count
+                FROM evidence
+                GROUP BY case_id
+            ) ec ON c.case_id = ec.case_id
+            WHERE c.case_id LIKE ?
+               OR c.case_name LIKE ?
+               OR c.investigator LIKE ?
+               OR c.case_id IN (
+                   SELECT DISTINCT case_id FROM evidence WHERE description LIKE ?
+               )
+            ORDER BY c.created_at DESC
+            LIMIT ? OFFSET ?
+            "#,
+        )
+        .bind(&pattern)
+        .bind(&pattern)
+        .bind(&pattern)
+        .bind(&pattern)
+        .bind(limit)
+        .bind(offset)
+        .fetch_all(pool)
+        .await?
+    } else {
+        sqlx::query_as::<_, CaseSummary>(
+            r#"
+            SELECT
+                c.case_id,
+                c.case_name,
+                c.investigator,
+                c.start_date,
+                c.status,
+                c.priority,
+                COALESCE(ec.evidence_count, 0) AS evidence_count,
+                c.created_at
+            FROM cases c
+            LEFT JOIN (
+                SELECT case_id, COUNT(*) AS evidence_count
+                FROM evidence
+                GROUP BY case_id
+            ) ec ON c.case_id = ec.case_id
+            ORDER BY c.created_at DESC
+            LIMIT ? OFFSET ?
+            "#,
+        )
+        .bind(limit)
+        .bind(offset)
+        .fetch_all(pool)
+        .await?
+    };
+    Ok(query)
+}
+
+/// Count total cases for pagination.
+pub async fn count_cases(pool: &SqlitePool) -> Result<i64, AppError> {
+    let row: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM cases")
+        .fetch_one(pool)
+        .await?;
+    Ok(row.0)
+}
+
+/// Aggregated dashboard stats for charts.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CaseStats {
+    pub status_counts: Vec<StatusCount>,
+    pub priority_counts: Vec<PriorityCount>,
+    pub monthly_counts: Vec<MonthlyCount>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct StatusCount {
+    pub status: String,
+    pub count: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct PriorityCount {
+    pub priority: String,
+    pub count: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct MonthlyCount {
+    pub month: String,
+    pub count: i64,
+}
+
+/// Return aggregated stats: status distribution, priority distribution,
+/// and cases created per month (last 12 months).
+pub async fn case_stats(pool: &SqlitePool) -> Result<CaseStats, AppError> {
+    let status_counts: Vec<StatusCount> = sqlx::query_as(
         r#"
-        SELECT
-            c.case_id,
-            c.case_name,
-            c.investigator,
-            c.start_date,
-            c.status,
-            c.priority,
-            COALESCE(ec.evidence_count, 0) AS evidence_count,
-            c.created_at
-        FROM cases c
-        LEFT JOIN (
-            SELECT case_id, COUNT(*) AS evidence_count
-            FROM evidence
-            GROUP BY case_id
-        ) ec ON c.case_id = ec.case_id
-        ORDER BY c.created_at DESC
-        LIMIT ? OFFSET ?
+        SELECT status, COUNT(*) AS count
+        FROM cases
+        GROUP BY status
+        ORDER BY count DESC
         "#,
     )
-    .bind(limit)
-    .bind(offset)
     .fetch_all(pool)
     .await?;
 
-    Ok(rows)
+    let priority_counts: Vec<PriorityCount> = sqlx::query_as(
+        r#"
+        SELECT priority, COUNT(*) AS count
+        FROM cases
+        GROUP BY priority
+        ORDER BY count DESC
+        "#,
+    )
+    .fetch_all(pool)
+    .await?;
+
+    let monthly_counts: Vec<MonthlyCount> = sqlx::query_as(
+        r#"
+        SELECT
+            strftime('%Y-%m', created_at) AS month,
+            COUNT(*) AS count
+        FROM cases
+        WHERE created_at >= date('now', '-12 months')
+        GROUP BY month
+        ORDER BY month ASC
+        "#,
+    )
+    .fetch_all(pool)
+    .await?;
+
+    Ok(CaseStats {
+        status_counts,
+        priority_counts,
+        monthly_counts,
+    })
 }
 
 /// Fetch a single case by ID plus its sorted tags.
@@ -439,19 +559,98 @@ pub async fn update_case(
 /// etc.) also use `ON DELETE RESTRICT`. If any evidence rows exist, the case
 /// DELETE will fail.  We catch that sqlx FK-constraint error and map it to
 /// `AppError::CaseHasEvidence` so the frontend can warn the user.
-/// Evidence rows are NOT deleted — that would destroy forensic records.
+///
+/// When `cascade` is `true`, every child row is deleted in dependency order
+/// before the case row is removed.  This destroys forensic records — the
+/// caller must obtain explicit examiner confirmation before passing
+/// `cascade = true`.
 ///
 /// Returns `AppError::CaseNotFound` if the case doesn't exist (checked via
 /// rowcount == 0 after the DELETE attempt).
 ///
 /// The exact FK-constraint error string SQLite surfaces (for frontend reference):
 ///   `"FOREIGN KEY constraint failed"`
-pub async fn delete_case(pool: &SqlitePool, case_id: &str) -> Result<(), AppError> {
+pub async fn delete_case(pool: &SqlitePool, case_id: &str, cascade: bool) -> Result<(), AppError> {
     let mut tx = pool.begin().await?;
+
+    if cascade {
+        // ── Hard-delete every child table in FK dependency order ──
+        // Evidence children first
+        sqlx::query("DELETE FROM evidence_files WHERE evidence_id IN (SELECT evidence_id FROM evidence WHERE case_id = ?)")
+            .bind(case_id)
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("DELETE FROM evidence_analyses WHERE evidence_id IN (SELECT evidence_id FROM evidence WHERE case_id = ?)")
+            .bind(case_id)
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("DELETE FROM hash_verification WHERE evidence_id IN (SELECT evidence_id FROM evidence WHERE case_id = ?)")
+            .bind(case_id)
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("DELETE FROM chain_of_custody WHERE evidence_id IN (SELECT evidence_id FROM evidence WHERE case_id = ?)")
+            .bind(case_id)
+            .execute(&mut *tx)
+            .await?;
+
+        // Analysis reviews (child of analysis_notes)
+        sqlx::query("DELETE FROM analysis_reviews WHERE note_id IN (SELECT note_id FROM analysis_notes WHERE case_id = ?)")
+            .bind(case_id)
+            .execute(&mut *tx)
+            .await?;
+
+        // Case-scoped link + event + share tables
+        sqlx::query("DELETE FROM entity_links WHERE case_id = ?")
+            .bind(case_id)
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("DELETE FROM case_events WHERE case_id = ?")
+            .bind(case_id)
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("DELETE FROM case_shares WHERE case_id = ?")
+            .bind(case_id)
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("DELETE FROM tool_usage WHERE case_id = ?")
+            .bind(case_id)
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("DELETE FROM analysis_notes WHERE case_id = ?")
+            .bind(case_id)
+            .execute(&mut *tx)
+            .await?;
+
+        // Entity children, then entities
+        sqlx::query("DELETE FROM person_identifiers WHERE entity_id IN (SELECT entity_id FROM entities WHERE case_id = ?)")
+            .bind(case_id)
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("DELETE FROM business_identifiers WHERE entity_id IN (SELECT entity_id FROM entities WHERE case_id = ?)")
+            .bind(case_id)
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("DELETE FROM entities WHERE case_id = ?")
+            .bind(case_id)
+            .execute(&mut *tx)
+            .await?;
+
+        // Evidence items themselves
+        sqlx::query("DELETE FROM evidence WHERE case_id = ?")
+            .bind(case_id)
+            .execute(&mut *tx)
+            .await?;
+    }
 
     // Delete tags first — they are metadata and safe to remove.
     // case_tags has ON DELETE RESTRICT so this must happen before the case DELETE.
     sqlx::query("DELETE FROM case_tags WHERE case_id = ?")
+        .bind(case_id)
+        .execute(&mut *tx)
+        .await?;
+
+    // Audit entries for this case (no FK constraint, just indexed case_id)
+    sqlx::query("DELETE FROM audit_entries WHERE case_id = ?")
         .bind(case_id)
         .execute(&mut *tx)
         .await?;

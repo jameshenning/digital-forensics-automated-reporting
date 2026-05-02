@@ -32,6 +32,9 @@ import {
   RefreshCw,
   Eye,
   EyeOff,
+  Upload,
+  BarChart3,
+  Check,
 } from "lucide-react";
 
 import {
@@ -42,6 +45,9 @@ import {
   settingsSetSmtp,
   settingsTestSmtp,
   systemGetNetworkStatus,
+  settingsGetUpload,
+  settingsSetUpload,
+  grafanaGetSettings,
 } from "@/lib/bindings";
 import { getToken, useSession } from "@/lib/session";
 import { SettingsHeader } from "@/components/settings-header";
@@ -163,12 +169,12 @@ function AgentZeroSection() {
       return <Badge variant="secondary">Not configured</Badge>;
     if (settings.allow_custom_url)
       return (
-        <Badge className="bg-amber-500/20 text-amber-700 dark:text-amber-400 border-amber-500/30">
+        <Badge className="bg-warning/20 text-warning border-warning/30">
           Custom URL active
         </Badge>
       );
     return (
-      <Badge className="bg-green-500/20 text-green-700 dark:text-green-400 border-green-500/30">
+      <Badge className="bg-success/20 text-success border-success/30">
         Configured
       </Badge>
     );
@@ -204,9 +210,9 @@ function AgentZeroSection() {
             >
               {/* Allow custom URL warning */}
               {allowCustom && (
-                <Alert className="border-amber-500/50 bg-amber-500/10">
-                  <AlertTriangle className="h-4 w-4 text-amber-600" />
-                  <AlertDescription className="text-amber-700 dark:text-amber-400">
+                <Alert className="border-warning/50 bg-warning/10">
+                  <AlertTriangle className="h-4 w-4 text-warning" />
+                  <AlertDescription className="text-warning">
                     <strong>Custom URL is active.</strong> DFARS will send case data
                     including investigator names, custody chains, and evidence descriptions
                     to a non-standard host. Verify this URL is trustworthy before
@@ -346,7 +352,7 @@ function AgentZeroSection() {
                         Results flow into the same Tools tab and forensic report
                         — no extra user steps.
                         <br />
-                        <span className="font-medium text-amber-700 dark:text-amber-400">
+                        <span className="font-medium text-warning">
                           Operational security:
                         </span>{" "}
                         your ISP and network-level monitoring can observe that
@@ -392,7 +398,7 @@ function AgentZeroSection() {
                 <div
                   className={`rounded-md border p-3 text-sm ${
                     testResult.ok
-                      ? "border-green-500/40 bg-green-500/10 text-green-700 dark:text-green-400"
+                      ? "border-success/40 bg-success/10 text-success"
                       : "border-destructive/40 bg-destructive/10 text-destructive"
                   }`}
                 >
@@ -458,16 +464,16 @@ function NetworkBindingSection() {
             <div className="flex items-center gap-3">
               <div
                 className={`h-2.5 w-2.5 rounded-full shrink-0 ${
-                  netStatus.axum_running ? "bg-green-500" : "bg-muted"
+                  netStatus.axum_running ? "bg-success" : "bg-muted"
                 }`}
               />
               <code className="text-sm font-mono">{netStatus.axum_url}</code>
               {isWideOpen ? (
-                <Badge className="bg-amber-500/20 text-amber-700 dark:text-amber-400 border-amber-500/30">
+                <Badge className="bg-warning/20 text-warning border-warning/30">
                   LOCAL NETWORK ACCESSIBLE
                 </Badge>
               ) : (
-                <Badge className="bg-green-500/20 text-green-700 dark:text-green-400 border-green-500/30">
+                <Badge className="bg-success/20 text-success border-success/30">
                   Loopback only
                 </Badge>
               )}
@@ -475,9 +481,9 @@ function NetworkBindingSection() {
 
             {/* Amber warning for 0.0.0.0 */}
             {isWideOpen && (
-              <Alert className="border-amber-500/50 bg-amber-500/10">
-                <AlertTriangle className="h-4 w-4 text-amber-600" />
-                <AlertDescription className="text-amber-700 dark:text-amber-400">
+              <Alert className="border-warning/50 bg-warning/10">
+                <AlertTriangle className="h-4 w-4 text-warning" />
+                <AlertDescription className="text-warning">
                   <strong>Warning: bound to 0.0.0.0.</strong> The DFARS REST API
                   is reachable by any device on your local network, not just this
                   machine. Anyone on the same WiFi or LAN segment with a valid API
@@ -779,7 +785,7 @@ function SmtpSection() {
                   <div
                     className={`rounded-md border p-3 text-sm ${
                       testResult.ok
-                        ? "border-green-500/40 bg-green-500/10 text-green-700 dark:text-green-400"
+                        ? "border-success/40 bg-success/10 text-success"
                         : "border-destructive/40 bg-destructive/10 text-destructive"
                     }`}
                   >
@@ -806,6 +812,184 @@ function SmtpSection() {
 // Main page
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Upload settings section
+// ---------------------------------------------------------------------------
+
+function UploadSettingsSection() {
+  const token = getToken() ?? "";
+  const queryClient = useQueryClient();
+  const [maxGiB, setMaxGiB] = React.useState<string>("");
+
+  const { data: settings, isLoading } = useQuery({
+    queryKey: queryKeys.upload.settings,
+    queryFn: () => settingsGetUpload({ token }),
+    enabled: !!token,
+    refetchOnWindowFocus: false,
+  });
+
+  React.useEffect(() => {
+    if (settings) {
+      setMaxGiB((settings.max_upload_bytes / (1024 * 1024 * 1024)).toString());
+    }
+  }, [settings]);
+
+  const saveMutation = useMutation({
+    mutationFn: () => {
+      const gib = parseFloat(maxGiB);
+      if (isNaN(gib) || gib < 1) {
+        return Promise.reject(new Error("Must be at least 1 GiB"));
+      }
+      return settingsSetUpload({
+        token,
+        max_upload_bytes: Math.round(gib * 1024 * 1024 * 1024),
+      });
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.upload.settings });
+      toastSuccess("Upload limit saved.");
+    },
+    onError: toastError,
+  });
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2 text-base">
+          <Upload className="h-4 w-4" />
+          Evidence File Uploads
+        </CardTitle>
+        <CardDescription>
+          Configure the maximum size for evidence file uploads.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {isLoading ? (
+          <div className="h-8 w-32 bg-muted rounded animate-pulse" />
+        ) : settings ? (
+          <>
+            <div className="space-y-1.5">
+              <Label htmlFor="max-upload-gib">Maximum upload size (GiB)</Label>
+              <div className="flex gap-2">
+                <Input
+                  id="max-upload-gib"
+                  type="number"
+                  min={1}
+                  step={1}
+                  value={maxGiB}
+                  onChange={(e) => setMaxGiB(e.target.value)}
+                  className="w-32"
+                />
+                <Button
+                  type="button"
+                  onClick={() => saveMutation.mutate()}
+                  disabled={saveMutation.isPending}
+                >
+                  {saveMutation.isPending ? "Saving..." : "Save"}
+                </Button>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Default: 50 GiB. Minimum: 1 GiB. Files larger than{" "}
+                {Math.round(settings.large_file_warn_bytes / (1024 * 1024 * 1024))} GiB trigger a
+                soft warning.
+              </p>
+            </div>
+          </>
+        ) : null}
+      </CardContent>
+    </Card>
+  );
+}
+
+function GrafanaSection() {
+  const token = getToken() ?? "";
+
+  const { data: settings, isLoading } = useQuery({
+    queryKey: queryKeys.grafana.settings,
+    queryFn: () => grafanaGetSettings({ token }),
+    enabled: !!token,
+    refetchOnWindowFocus: false,
+  });
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2 text-base">
+          <BarChart3 className="h-4 w-4" />
+          Grafana Dashboards
+        </CardTitle>
+        <CardDescription>
+          Embedded Grafana dashboards for interactive entity network graphs
+          and case statistics.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {isLoading ? (
+          <div className="h-8 w-32 bg-muted rounded animate-pulse" />
+        ) : settings ? (
+          <>
+            <div className="flex items-center gap-3">
+              <div className="flex items-center gap-2">
+                <span
+                  className={`inline-flex h-2.5 w-2.5 rounded-full ${
+                    settings.running ? "bg-success" : "bg-muted"
+                  }`}
+                />
+                <span className="text-sm">
+                  {settings.running
+                    ? "Running"
+                    : settings.enabled
+                      ? "Ready to start"
+                      : "Not configured"}
+                </span>
+              </div>
+              {settings.enabled && (
+                <span className="text-xs text-muted-foreground">
+                  {settings.url}
+                </span>
+              )}
+            </div>
+
+            {!settings.docker_available && (
+              <Alert className="border-warning/50 bg-warning/10">
+                <AlertTriangle className="h-4 w-4 text-warning" />
+                <AlertDescription className="text-warning">
+                  <strong>Docker is not available.</strong> Install{" "}
+                  <a
+                    href="https://www.docker.com/products/docker-desktop"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="underline"
+                  >
+                    Docker Desktop
+                  </a>{" "}
+                  and ensure the engine is running. Grafana dashboards will
+                  auto-start when you open the Grafana tab on any case.
+                </AlertDescription>
+              </Alert>
+            )}
+
+            <ul className="text-xs text-muted-foreground space-y-1">
+              <li className="flex items-center gap-1.5">
+                <Check className="h-3 w-3 text-success" />
+                Auto-starts when you open the Grafana tab on any case
+              </li>
+              <li className="flex items-center gap-1.5">
+                <Check className="h-3 w-3 text-success" />
+                Generates a secure service token on first use
+              </li>
+              <li className="flex items-center gap-1.5">
+                <Check className="h-3 w-3 text-success" />
+                Network graphs, entity stats, and case timelines
+              </li>
+            </ul>
+          </>
+        ) : null}
+      </CardContent>
+    </Card>
+  );
+}
+
 function IntegrationsPage() {
   const { session } = useSession();
   if (!session) return null;
@@ -817,6 +1001,8 @@ function IntegrationsPage() {
         <AgentZeroSection />
         <NetworkBindingSection />
         <SmtpSection />
+        <UploadSettingsSection />
+        <GrafanaSection />
       </main>
     </div>
   );

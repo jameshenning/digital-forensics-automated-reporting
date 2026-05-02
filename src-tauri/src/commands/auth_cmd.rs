@@ -260,10 +260,11 @@ pub async fn auth_verify_mfa(
                 audit::log_auth(&username, audit::LOGIN_FAILED, "Invalid recovery code");
                 match state.sessions.record_mfa_failure(&pending_token) {
                     Ok(()) => return Err(AppError::InvalidMfaCode),
-                    Err(_) => {
+                    Err(AppError::MfaLockout) => {
                         warn!(username = %username, "session invalidated after MFA failure limit");
-                        return Err(AppError::Unauthorized);
+                        return Err(AppError::MfaLockout);
                     }
+                    Err(e) => return Err(e),
                 }
             }
             Err(AppError::NoRecoveryCodesRemaining) => {
@@ -289,10 +290,11 @@ pub async fn auth_verify_mfa(
             audit::log_auth(&username, audit::LOGIN_FAILED, "Invalid TOTP code");
             match state.sessions.record_mfa_failure(&pending_token) {
                 Ok(()) => Err(AppError::InvalidMfaCode),
-                Err(_) => {
+                Err(AppError::MfaLockout) => {
                     warn!(username = %username, "session invalidated after MFA failure limit");
-                    Err(AppError::Unauthorized)
+                    Err(AppError::MfaLockout)
                 }
+                Err(e) => Err(e),
             }
         }
     }

@@ -20,7 +20,7 @@ use crate::{
     auth::session::require_session,
     db::{
         audit_entries::{self, AuditEntryInput},
-        cases::{CaseDetail, CaseInput, CaseSummary},
+        cases::{CaseDetail, CaseInput, CaseStats, CaseSummary},
     },
     error::AppError,
     state::AppState,
@@ -32,12 +32,14 @@ const DEFAULT_OFFSET: i64 = 0;
 /// Return a paginated list of case summaries.
 ///
 /// `limit` defaults to 100, `offset` defaults to 0.
+/// Optional `search` filters across case metadata and evidence descriptions.
 /// Ordered by `created_at DESC`.
 #[tauri::command(rename_all = "snake_case")]
 pub async fn cases_list(
     token: String,
     limit: Option<i64>,
     offset: Option<i64>,
+    search: Option<String>,
     state: State<'_, Arc<AppState>>,
 ) -> Result<Vec<CaseSummary>, AppError> {
     info!(command = "cases_list", token_prefix = %token.chars().take(8).collect::<String>(), "cases_list entered");
@@ -49,12 +51,34 @@ pub async fn cases_list(
     let limit = limit.unwrap_or(DEFAULT_LIMIT);
     let offset = offset.unwrap_or(DEFAULT_OFFSET);
 
-    let result = crate::db::cases::list_cases(&state.db.forensics, limit, offset).await;
+    let result = crate::db::cases::list_cases(
+        &state.db.forensics, limit, offset, search.as_deref(),
+    ).await;
     match &result {
         Ok(rows) => info!(command = "cases_list", count = rows.len(), "cases_list success"),
         Err(e) => info!(command = "cases_list", error = %e, "cases_list db error"),
     }
     result
+}
+
+/// Return the total number of cases.
+#[tauri::command(rename_all = "snake_case")]
+pub async fn cases_count(
+    token: String,
+    state: State<'_, Arc<AppState>>,
+) -> Result<i64, AppError> {
+    let _session = require_session(&state, &token)?;
+    crate::db::cases::count_cases(&state.db.forensics).await
+}
+
+/// Return aggregated dashboard stats for charts.
+#[tauri::command(rename_all = "snake_case")]
+pub async fn cases_stats(
+    token: String,
+    state: State<'_, Arc<AppState>>,
+) -> Result<CaseStats, AppError> {
+    let _session = require_session(&state, &token)?;
+    crate::db::cases::case_stats(&state.db.forensics).await
 }
 
 /// Return a single case with its full metadata and sorted tag list.
@@ -166,9 +190,14 @@ pub async fn case_update(
 
 /// Delete a case by ID.
 ///
-/// Respects the schema's `ON DELETE RESTRICT` FK on `evidence.case_id` —
-/// returns `AppError::CaseHasEvidence` if any evidence rows exist.
-/// Evidence is NOT deleted — that would destroy forensic records.
+/// When `cascade` is `false` (default), respects the schema's `ON DELETE RESTRICT`
+/// FK on `evidence.case_id` — returns `AppError::CaseHasEvidence` if any evidence
+/// rows exist.
+///
+/// When `cascade` is `true`, every child row (evidence, custody, hashes, tools,
+/// analysis notes, entities, links, events, shares, and audit entries) is deleted
+/// in dependency order before the case row is removed.  This destroys forensic
+/// records and must only be invoked after explicit examiner confirmation.
 ///
 /// Logs `CASE_DELETED` to the auth audit trail (case audit file no longer
 /// exists after deletion).
@@ -176,23 +205,26 @@ pub async fn case_update(
 pub async fn case_delete(
     token: String,
     case_id: String,
+    cascade: Option<bool>,
     state: State<'_, Arc<AppState>>,
 ) -> Result<(), AppError> {
     // MUST-DO 3 — session guard first
     let session = require_session(&state, &token)?;
 
-    crate::db::cases::delete_case(&state.db.forensics, &case_id).await?;
+    let cascade = cascade.unwrap_or(false);
+    crate::db::cases::delete_case(&state.db.forensics, &case_id, cascade).await?;
 
     info!(
         username = %session.username,
         case_id = %case_id,
+        cascade = cascade,
         "case deleted"
     );
     // Log to auth audit since the case audit file is gone.
     audit::log_auth(
         &session.username,
         audit::CASE_DELETED,
-        &format!("case_id={case_id}"),
+        &format!("case_id={case_id} cascade={cascade}"),
     );
     let _ = audit_entries::add_entry(
         &state.db.forensics,
@@ -200,7 +232,7 @@ pub async fn case_delete(
             case_id: None, // global auth event
             actor: format!("user:{}", session.username),
             action: audit::CASE_DELETED.into(),
-            details: Some(format!("case_id={case_id}")),
+            details: Some(format!("case_id={case_id} cascade={cascade}")),
         },
     ).await;
 
